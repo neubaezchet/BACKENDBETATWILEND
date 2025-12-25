@@ -10,29 +10,3 @@
     "restartPolicyMaxRetries": 10
   }
 }
-```
-
-4. **Guarda** (`Ctrl + S`)
-
----
-
-## 📝 **ARCHIVO 3: .railwayignore (CREAR)**
-
-1. Crea otro archivo nuevo
-2. Nómbralo: `.railwayignore` (con el punto al inicio)
-3. Pega esto:
-```
-__pycache__/
-*.pyc
-*.pyo
-*.db
-*.sqlite
-venv/
-env/
-.env
-data/
-crede/
-neon/
-*.xlsx
-~$*
-*.sql
