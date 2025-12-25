@@ -177,7 +177,97 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
 
 def send_html_email(to_email, subject, html_body, caso=None):
     """✅ Wrapper sin adjuntos"""
-    return def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], caso=None, db=None):
+    return enviar_email_con_adjuntos(to_email, subject, html_body, [], caso=caso)
+
+def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=[], caso=None, db=None):
+    """
+    ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
+    """
+    import base64
+    from app.n8n_notifier import enviar_a_n8n
+    
+    # Convertir adjuntos a base64
+    adjuntos_base64 = []
+    for path in adjuntos_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'rb') as f:
+                    content = base64.b64encode(f.read()).decode('utf-8')
+                    adjuntos_base64.append({
+                        'filename': os.path.basename(path),
+                        'content': content,
+                        'mimetype': 'application/pdf'
+                    })
+            except Exception as e:
+                print(f"⚠️ Error procesando adjunto {path}: {e}")
+    
+    # Determinar tipo de notificación desde el subject
+    tipo_map = {
+        'Confirmación': 'confirmacion',
+        'Incompleta': 'incompleta',
+        'Ilegible': 'ilegible',
+        'Validada': 'completa',
+        'EPS': 'eps',
+        'TTHH': 'tthh',
+        'Extra': 'extra',
+        'Recordatorio': 'recordatorio',
+        'Seguimiento': 'alerta_jefe'
+    }
+    
+    tipo_notificacion = 'confirmacion'
+    for key, value in tipo_map.items():
+        if key in subject:
+            tipo_notificacion = value
+            break
+    
+    # ✅ OBTENER EMAILS DE COPIA Y TELÉFONO
+    cc_empresa = None
+    correo_bd = None
+    whatsapp = None
+    
+    if caso:
+        if hasattr(caso, 'empresa') and caso.empresa:
+            if hasattr(caso.empresa, 'email_copia') and caso.empresa.email_copia:
+                cc_empresa = caso.empresa.email_copia
+                print(f"📧 CC empresa: {cc_empresa}")
+        
+        if hasattr(caso, 'empleado') and caso.empleado:
+            if hasattr(caso.empleado, 'correo') and caso.empleado.correo:
+                correo_bd = caso.empleado.correo
+                print(f"📧 CC empleado BD: {correo_bd}")
+        
+        if hasattr(caso, 'telefono_form') and caso.telefono_form:
+            whatsapp = caso.telefono_form
+            print(f"📱 WhatsApp: {whatsapp}")
+    
+    # Enviar a n8n
+    resultado = enviar_a_n8n(
+        tipo_notificacion=tipo_notificacion,
+        email=to_email,
+        serial=caso.serial if caso else 'N/A',
+        subject=subject,
+        html_content=html_body,
+        cc_email=cc_empresa,
+        correo_bd=correo_bd,
+        whatsapp=whatsapp,
+        whatsapp_message=None,
+        adjuntos_base64=adjuntos_base64
+    )
+    
+    if resultado:
+        print(f"✅ Email enviado: TO={to_email}, CC_EMPRESA={cc_empresa or 'N/A'}, CC_BD={correo_bd or 'N/A'}")
+    else:
+        print(f"❌ Error enviando email")
+    
+    return resultado
+
+
+def send_html_email(to_email, subject, html_body, caso=None):
+    """✅ Wrapper sin adjuntos"""
+    return enviar_email_con_adjuntos(to_email, subject, html_body, [], caso=caso)
+
+
+def obtener_email_tthh(empresa_nombre):
     """
     ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
     """
@@ -1622,97 +1712,7 @@ def send_html_email(to_email, subject, html_body, caso=None):
 
 def send_html_email(to_email, subject, html_body, caso=None):
     """✅ Wrapper sin adjuntos"""
-    return def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], caso=None, db=None):
-    """
-    ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
-    """
-    import base64
-    from app.n8n_notifier import enviar_a_n8n
-    
-    # Convertir adjuntos a base64
-    adjuntos_base64 = []
-    for path in adjuntos_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, 'rb') as f:
-                    content = base64.b64encode(f.read()).decode('utf-8')
-                    adjuntos_base64.append({
-                        'filename': os.path.basename(path),
-                        'content': content,
-                        'mimetype': 'application/pdf'
-                    })
-            except Exception as e:
-                print(f"⚠️ Error procesando adjunto {path}: {e}")
-    
-    # Determinar tipo de notificación desde el subject
-    tipo_map = {
-        'Confirmación': 'confirmacion',
-        'Incompleta': 'incompleta',
-        'Ilegible': 'ilegible',
-        'Validada': 'completa',
-        'EPS': 'eps',
-        'TTHH': 'tthh',
-        'Extra': 'extra',
-        'Recordatorio': 'recordatorio',
-        'Seguimiento': 'alerta_jefe'
-    }
-    
-    tipo_notificacion = 'confirmacion'
-    for key, value in tipo_map.items():
-        if key in subject:
-            tipo_notificacion = value
-            break
-    
-    # ✅ OBTENER EMAILS DE COPIA Y TELÉFONO
-    cc_empresa = None
-    correo_bd = None
-    whatsapp = None
-    
-    if caso:
-        if hasattr(caso, 'empresa') and caso.empresa:
-            if hasattr(caso.empresa, 'email_copia') and caso.empresa.email_copia:
-                cc_empresa = caso.empresa.email_copia
-                print(f"📧 CC empresa: {cc_empresa}")
-        
-        if hasattr(caso, 'empleado') and caso.empleado:
-            if hasattr(caso.empleado, 'correo') and caso.empleado.correo:
-                correo_bd = caso.empleado.correo
-                print(f"📧 CC empleado BD: {correo_bd}")
-        
-        if hasattr(caso, 'telefono_form') and caso.telefono_form:
-            whatsapp = caso.telefono_form
-            print(f"📱 WhatsApp: {whatsapp}")
-    
-    # Enviar a n8n
-    resultado = enviar_a_n8n(
-        tipo_notificacion=tipo_notificacion,
-        email=to_email,
-        serial=caso.serial if caso else 'N/A',
-        subject=subject,
-        html_content=html_body,
-        cc_email=cc_empresa,
-        correo_bd=correo_bd,
-        whatsapp=whatsapp,
-        whatsapp_message=None,
-        adjuntos_base64=adjuntos_base64
-    )
-    
-    if resultado:
-        print(f"✅ Email enviado: TO={to_email}, CC_EMPRESA={cc_empresa or 'N/A'}, CC_BD={correo_bd or 'N/A'}")
-    else:
-        print(f"❌ Error enviando email")
-    
-    return resultado
-
-
-def send_html_email(to_email, subject, html_body, caso=None):
-    """✅ Wrapper sin adjuntos"""
-    return enviar_email_con_adjuntos(to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)to_email, subject, html_body, [], caso=caso)(to_email, subject, html_body, adjuntos_paths=[], caso=None, db=None):
-    """
-    ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
-    """
-    import base64
-    from app.n8n_notifier import enviar_a_n8n
+    return enviar_email_con_adjuntos(to_email, subject, html_body, [], caso=caso)
     
     # Convertir adjuntos a base64
     adjuntos_base64 = []
