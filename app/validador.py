@@ -3170,9 +3170,6 @@ async def editar_pdf_caso(
         if os.path.exists(temp_output):
             os.remove(temp_output)
         raise HTTPException(status_code=500, detail=f"Error editando PDF: {str(e)}")
-    db: Session = Depends(get_db),
-    _: bool = Depends(verificar_token_admin)
-):
     """
     Edita el PDF de un caso con múltiples operaciones
     
