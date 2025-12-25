@@ -1,44 +1,41 @@
-
 # FastAPI y servidor
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
 
-# Base de datos (sin versiones específicas para evitar compilación)
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.0
+# Base de datos
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
 
 # Excel y Data
-pandas>=2.1.0
-openpyxl>=3.1.0
+pandas==2.1.4
+openpyxl==3.1.2
 
 # PDFs
-pymupdf>=1.23.0
-pillow>=10.0.0
+pymupdf==1.23.8
+pillow==10.2.0
 
 # Emails
-sib-api-v3-sdk>=7.6.0
+sib-api-v3-sdk==7.6.0
 
 # Google Drive
-google-auth>=2.27.0
-google-auth-oauthlib>=1.2.0
-google-auth-httplib2>=0.2.0
-google-api-python-client>=2.115.0
+google-auth==2.27.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.115.0
 
-# Sincronización automática
-apscheduler>=3.10.0
+# Sincronización
+apscheduler==3.10.4
 
 # Utilidades
-python-multipart>=0.0.6
-python-dotenv>=1.0.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+requests==2.31.0
 
-# Para descargar PDFs desde Drive (NUEVO)
-requests>=2.31.0
+# PDF editing
+opencv-python-headless==4.9.0.80
+numpy==1.26.3
+scikit-image==0.22.0
+reportlab==4.0.9
 
-# PDF editing y mejora de calidad (AGREGAR AL FINAL)
-pdf2image>=1.16.0
-opencv-python-headless>=4.8.0
-numpy>=1.24.0
-scikit-image>=0.21.0
-reportlab>=4.0.0
-# ✅ NUEVO: Anthropic para Claude Haiku
+# IA
 anthropic==0.40.0
