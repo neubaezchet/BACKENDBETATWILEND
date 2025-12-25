@@ -280,44 +280,19 @@ def obtener_email_tthh(empresa_nombre):
 
 @router.get("/empresas")
 async def listar_empresas(
-    """
-    ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
-    """
-    import base64
-    from app.n8n_notifier import enviar_a_n8n
-    
-    # Convertir adjuntos a base64
-    adjuntos_base64 = []
-    for path in adjuntos_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, 'rb') as f:
-                    content = base64.b64encode(f.read()).decode('utf-8')
-                    adjuntos_base64.append({
-                        'filename': os.path.basename(path),
-                        'content': content,
-                        'mimetype': 'application/pdf'
-                    })
-            except Exception as e:
-                print(f"⚠️ Error procesando adjunto {path}: {e}")
-    
-    # Determinar tipo de notificación desde el subject
-    tipo_map = {
-        'Confirmación': 'confirmacion',
-        'Incompleta': 'incompleta',
-        'Ilegible': 'ilegible',
-        'Validada': 'completa',
-        'EPS': 'eps',
-        'TTHH': 'tthh',
-        'Extra': 'extra',
-        'Recordatorio': 'recordatorio',
-        'Seguimiento': 'alerta_jefe'
-    }
-    
-    tipo_notificacion = 'confirmacion'
-    for key, value in tipo_map.items():
-        if key in subject:
-            tipo_notificacion = value
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """✅ Listar todas las empresas"""
+    try:
+        empresas = db.query(Empresa).all()
+        return {
+            "status": "ok",
+            "total": len(empresas),
+            "empresas": [e.to_dict() for e in empresas] if empresas else []
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
             break
     
     # ✅ OBTENER EMAILS DE COPIA Y TELÉFONO
