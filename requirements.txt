@@ -6,9 +6,10 @@ uvicorn[standard]==0.27.0
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 
-# Excel y Data
-pandas==2.1.4
+# Excel y Data - VERSIONES COMPATIBLES CON PYTHON 3.11
+pandas==2.2.0
 openpyxl==3.1.2
+numpy==1.26.4
 
 # PDFs
 pymupdf==1.23.8
@@ -31,9 +32,8 @@ python-multipart==0.0.6
 python-dotenv==1.0.0
 requests==2.31.0
 
-# PDF editing
+# PDF editing - VERSIONES COMPATIBLES
 opencv-python-headless==4.9.0.80
-numpy==1.26.3
 scikit-image==0.22.0
 reportlab==4.0.9
 
