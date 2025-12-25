@@ -1,0 +1,1 @@
+$RENDER_URL = "postgresql://incapacidades_user:bkDh3quckWXSnhBNSD0qSYEkJt4BQoM1@dpg-d3l5qojuibrs73ce5vp0-a.ohio-postgres.render.com/incapacidades"

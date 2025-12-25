@@ -1,0 +1,39 @@
+name: Keep Render Services Alive
+
+on:
+  schedule:
+    # Cada 14 minutos (100% gratis, dentro de límite)
+    - cron: '*/14 * * * *'
+  
+  workflow_dispatch:  # Ejecutar manualmente si quieres
+
+jobs:
+  ping-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Ping Backend
+        continue-on-error: true
+        run: |
+          echo "🔄 Pinging Backend..."
+          curl -s -o /dev/null -w "✅ Backend: HTTP %{http_code}\n" \
+            --max-time 10 \
+            https://bakcend-gemi-cha-2.onrender.com/health || echo "⚠️ Backend falló"
+      
+      - name: Ping N8N
+        continue-on-error: true
+        run: |
+          echo "🔄 Pinging N8N..."
+          curl -s -o /dev/null -w "✅ N8N: HTTP %{http_code}\n" \
+            --max-time 10 \
+            https://n8n-incaneurobaeza.onrender.com/healthz || echo "⚠️ N8N falló"
+      
+      - name: Summary
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "✅ Keep-Alive completado"
+          echo "📅 $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "⏰ Próxima ejecución: en 14 minutos"
+          echo "=========================================="
