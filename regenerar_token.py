@@ -26,7 +26,7 @@ def main():
         "web": {
             "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
-            "redirect_uris": ["https://bakcend-gemi-cha-2.onrender.com/auth/callback"],
+            "redirect_uris": ["https://web-production-95ed.up.railway.app"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
         }
@@ -37,7 +37,7 @@ def main():
         flow = Flow.from_client_config(
             client_config,
             scopes=SCOPES,
-            redirect_uri='https://bakcend-gemi-cha-2.onrender.com/auth/callback'
+            redirect_uri='https://web-production-95ed.up.railway.app/auth/callback'
         )
         
         # Generar URL de autorización
@@ -61,7 +61,7 @@ def main():
         print("4️⃣  Serás redirigido a una página que puede mostrar error")
         print("     (esto es normal)")
         print("5️⃣  COPIA la URL COMPLETA de esa página")
-        print("     Ejemplo: https://bakcend-gemi-cha-2.onrender.com/auth/callback?code=4/0A...")
+        print("     Ejemplo: https://web-production-95ed.up.railway.app/auth/callback?code=4/0A...")
         print()
         
         # Intentar abrir en navegador
