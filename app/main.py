@@ -834,6 +834,8 @@ async def subir_incapacidad(
     isPhantomVehicle: Optional[str] = Form(None),
     daysOfIncapacity: Optional[str] = Form(None),
     subType: Optional[str] = Form(None),
+    incapacityStartDate: Optional[str] = Form(None),
+    incapacityEndDate: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     """Endpoint de recepción de incapacidades"""
@@ -884,6 +886,8 @@ async def subir_incapacidad(
     metadata_form = {}
     tiene_soat = None
     tiene_licencia = None
+    fecha_inicio = None
+    fecha_fin = None
     
     if births:
         metadata_form['nacidos_vivos'] = births
@@ -902,6 +906,21 @@ async def subir_incapacidad(
     
     if subType:
         metadata_form['subtipo'] = subType
+    
+    # ✅ NUEVAS FECHAS DE INCAPACIDAD
+    if incapacityStartDate:
+        try:
+            fecha_inicio = datetime.fromisoformat(incapacityStartDate.replace('Z', '+00:00'))
+            metadata_form['fecha_inicio_incapacidad'] = incapacityStartDate
+        except:
+            fecha_inicio = None
+    
+    if incapacityEndDate:
+        try:
+            fecha_fin = datetime.fromisoformat(incapacityEndDate.replace('Z', '+00:00'))
+            metadata_form['fecha_fin_incapacidad'] = incapacityEndDate
+        except:
+            fecha_fin = None
     
     try:
         empresa_destino = empleado_bd.empresa.nombre if empleado_bd else "OTRA_EMPRESA"
