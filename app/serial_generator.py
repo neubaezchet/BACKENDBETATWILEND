@@ -16,28 +16,15 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     """
     Genera un serial único para una incapacidad o certificado
     
-    Formato V3: CEDULA-YYYYMMDD-YYYYMMDD
-    
-    Ejemplo:
-        cedula = "1085043374"
-        fecha_inicio = 2025-01-15
-        fecha_fin = 2025-01-20
-        
-        Serial → 1085043374-20250115-20250120
-    
-    Args:
-        db: Sesión de base de datos
-        nombre: Nombre completo del empleado (compatibilidad)
-        cedula: Cédula del empleado
-        fecha_inicio: Fecha de inicio (opcional, si no se proporciona genera serial tradicional)
-        fecha_fin: Fecha de fin (opcional)
-    
-    Returns:
-        Serial único (str)
+        Genera un serial único en formato V3: CEDULA-YYYYMMDD-YYYYMMDD
+        SIEMPRE usa fechas, si no se proporcionan usa la fecha actual
     """
     
-    # Si se proporcionan fechas, usar formato V3 simplificado
-    if fecha_inicio:
+        # ✅ Si no hay fecha_inicio, usar fecha actual
+        if not fecha_inicio:
+            fecha_inicio = date.today()
+        
+        # ✅ Si no hay fecha_fin, usar la misma fecha_inicio
         if not fecha_fin:
             fecha_fin = fecha_inicio
         
@@ -59,43 +46,6 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
             print(f"   Usando: {serial}")
         
         print(f"✅ Serial V3 generado: {serial}")
-        return serial
-    
-    # FORMATO TRADICIONAL (si no hay fechas)
-    # Paso 1: Extraer iniciales del nombre
-    iniciales = extraer_iniciales(nombre)
-    
-    # Paso 2: Construir prefijo base (iniciales + cedula)
-    prefijo_base = f"{iniciales}{cedula}"
-    
-    # Paso 3: Buscar el último contador usado para esta persona
-    patron = f"{prefijo_base}%"
-    casos_existentes = db.query(Case.serial).filter(
-        Case.serial.like(patron)
-    ).order_by(Case.serial.desc()).all()
-    
-    # Paso 4: Determinar el siguiente contador
-    if not casos_existentes:
-        contador = 0
-    else:
-        ultimo_serial = casos_existentes[0][0]
-        try:
-            ultimo_contador = int(ultimo_serial.replace(prefijo_base, ''))
-            contador = ultimo_contador + 1
-        except (ValueError, AttributeError):
-            contador = 0
-    
-    # Paso 5: Construir serial completo
-    serial = f"{prefijo_base}{contador}"
-    
-    # Paso 6: Verificar que no exista
-    existe = db.query(Case).filter(Case.serial == serial).first()
-    if existe:
-        while db.query(Case).filter(Case.serial == f"{prefijo_base}{contador}").first():
-            contador += 1
-        serial = f"{prefijo_base}{contador}"
-    
-    print(f"✅ Serial tradicional generado: {serial} (contador: {contador})")
     return serial
 
 def extraer_iniciales(nombre_completo: str) -> str:
@@ -227,33 +177,14 @@ def generar_serial_automatico(
     fecha_fin: date = None
 ) -> str:
     """
-    Generador automático que decide qué formato usar
-    
-    Args:
-        db: Sesión de BD
-        cedula: Cédula del empleado
-        tipo: Tipo de documento
-        nombre: Nombre del empleado (para serial tradicional)
-        fecha_inicio: Fecha inicio (para certificados)
-        fecha_fin: Fecha fin (para certificados)
-    
-    Returns:
-        Serial apropiado según el tipo
+    Generador automático - SIEMPRE usa formato V3 con fechas
+
+    Ahora todos los tipos usan `generar_serial_unico` en formato V3.
+    Si `fecha_inicio` o `fecha_fin` no se proporcionan, `generar_serial_unico`
+    usará la fecha actual y hará que `fecha_fin` sea igual a `fecha_inicio`.
     """
-    
-    tipo_lower = tipo.lower()
-    
-    # NUEVOS TIPOS: Serial V3
-    if tipo_lower in ['certificado_hospitalizacion', 'prelicencia', 'hospitalizacion']:
-        
-        if not fecha_inicio:
-            fecha_inicio = date.today()
-        
-        return generar_serial_unico(db, nombre, cedula, fecha_inicio, fecha_fin)
-    
-    # INCAPACIDADES TRADICIONALES
-    else:
-        return generar_serial_unico(db, nombre, cedula)
+
+    return generar_serial_unico(db, nombre, cedula, fecha_inicio, fecha_fin)
 
 # ==================== TESTS ====================
 

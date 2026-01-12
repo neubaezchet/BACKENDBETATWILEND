@@ -861,6 +861,28 @@ async def subir_incapacidad(
         except:
             empleado_encontrado = False
     
+    # ✅ INICIALIZAR METADATA Y EXTRAER FECHAS DEL FORMULARIO ANTES DE GENERAR SERIAL
+    metadata_form = {}
+    tiene_soat = None
+    tiene_licencia = None
+    fecha_inicio = None
+    fecha_fin = None
+
+    # ✅ EXTRAER FECHAS DEL FORMULARIO (si vienen mal, quedan como None)
+    if incapacityStartDate:
+        try:
+            fecha_inicio = datetime.fromisoformat(incapacityStartDate.replace('Z', '+00:00'))
+            metadata_form['fecha_inicio_incapacidad'] = incapacityStartDate
+        except:
+            fecha_inicio = None
+
+    if incapacityEndDate:
+        try:
+            fecha_fin = datetime.fromisoformat(incapacityEndDate.replace('Z', '+00:00'))
+            metadata_form['fecha_fin_incapacidad'] = incapacityEndDate
+        except:
+            fecha_fin = None
+
     # ✅ Generar serial único basado en nombre y cédula
     if empleado_bd:
         consecutivo = generar_serial_automatico(
@@ -897,12 +919,6 @@ async def subir_incapacidad(
                 "mensaje": f"Caso pendiente ({caso_bloqueante.serial}) debe completarse primero."
             })
     
-    metadata_form = {}
-    tiene_soat = None
-    tiene_licencia = None
-    fecha_inicio = None
-    fecha_fin = None
-    
     if births:
         metadata_form['nacidos_vivos'] = births
     
@@ -921,20 +937,7 @@ async def subir_incapacidad(
     if subType:
         metadata_form['subtipo'] = subType
     
-    # ✅ NUEVAS FECHAS DE INCAPACIDAD
-    if incapacityStartDate:
-        try:
-            fecha_inicio = datetime.fromisoformat(incapacityStartDate.replace('Z', '+00:00'))
-            metadata_form['fecha_inicio_incapacidad'] = incapacityStartDate
-        except:
-            fecha_inicio = None
     
-    if incapacityEndDate:
-        try:
-            fecha_fin = datetime.fromisoformat(incapacityEndDate.replace('Z', '+00:00'))
-            metadata_form['fecha_fin_incapacidad'] = incapacityEndDate
-        except:
-            fecha_fin = None
     
     try:
         empresa_destino = empleado_bd.empresa.nombre if empleado_bd else "OTRA_EMPRESA"
