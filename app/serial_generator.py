@@ -16,36 +16,36 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     """
     Genera un serial único para una incapacidad o certificado
     
-        Genera un serial único en formato V3: CEDULA-YYYYMMDD-YYYYMMDD
-        SIEMPRE usa fechas, si no se proporcionan usa la fecha actual
+    Genera un serial único en formato V3: CEDULA-YYYYMMDD-YYYYMMDD
+    SIEMPRE usa fechas, si no se proporcionan usa la fecha actual
     """
-    
-        # ✅ Si no hay fecha_inicio, usar fecha actual
-        if not fecha_inicio:
-            fecha_inicio = date.today()
-        
-        # ✅ Si no hay fecha_fin, usar la misma fecha_inicio
-        if not fecha_fin:
-            fecha_fin = fecha_inicio
-        
-        # Formatear fechas
-        fecha_ini_str = fecha_inicio.strftime("%Y%m%d")
-        fecha_fin_str = fecha_fin.strftime("%Y%m%d")
-        
-        # Construir serial V3
-        serial = f"{cedula}-{fecha_ini_str}-{fecha_fin_str}"
-        
-        # Verificar duplicado
-        existe = db.query(Case).filter(Case.serial == serial).first()
-        if existe:
-            print(f"⚠️ Serial {serial} ya existe")
-            contador = 1
-            while db.query(Case).filter(Case.serial == f"{serial}-{contador}").first():
-                contador += 1
-            serial = f"{serial}-{contador}"
-            print(f"   Usando: {serial}")
-        
-        print(f"✅ Serial V3 generado: {serial}")
+
+    # Si no hay fecha_inicio, usar fecha actual
+    if not fecha_inicio:
+        fecha_inicio = date.today()
+
+    # Si no hay fecha_fin, usar la misma fecha_inicio
+    if not fecha_fin:
+        fecha_fin = fecha_inicio
+
+    # Formatear fechas
+    fecha_ini_str = fecha_inicio.strftime("%Y%m%d")
+    fecha_fin_str = fecha_fin.strftime("%Y%m%d")
+
+    # Construir serial V3
+    serial = f"{cedula}-{fecha_ini_str}-{fecha_fin_str}"
+
+    # Verificar duplicado
+    existe = db.query(Case).filter(Case.serial == serial).first()
+    if existe:
+        print(f"⚠️ Serial {serial} ya existe")
+        contador = 1
+        while db.query(Case).filter(Case.serial == f"{serial}-{contador}").first():
+            contador += 1
+        serial = f"{serial}-{contador}"
+        print(f"   Usando: {serial}")
+
+    print(f"✅ Serial V3 generado: {serial}")
     return serial
 
 def extraer_iniciales(nombre_completo: str) -> str:
