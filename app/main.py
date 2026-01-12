@@ -187,13 +187,15 @@ DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "base_empleado
 
 from app.sync_scheduler import iniciar_sincronizacion_automatica
 from app.scheduler_recordatorios import iniciar_scheduler_recordatorios  # ✅ NUEVO
+from app.scheduler_token_drive import iniciar_scheduler_token
 
 scheduler_sync = None
 scheduler_recordatorios = None  # ✅ NUEVO
+scheduler_token = None
 
 @app.on_event("startup")
 def startup_event():
-    global scheduler_sync, scheduler_recordatorios
+    global scheduler_sync, scheduler_recordatorios, scheduler_token
     init_db()
     print("🚀 API iniciada")
     
@@ -210,10 +212,17 @@ def startup_event():
         print("✅ Sistema de recordatorios activado")
     except Exception as e:
         print(f"⚠️ Error iniciando recordatorios: {e}")
+    
+    try:
+        # ✅ NUEVO: Scheduler de renovación de token
+        scheduler_token = iniciar_scheduler_token()
+        print("✅ Sistema de auto-renovación de token activado")
+    except Exception as e:
+        print(f"⚠️ Error iniciando scheduler token: {e}")
 
 @app.on_event("shutdown")
 def shutdown_event():
-    global scheduler_sync, scheduler_recordatorios
+    global scheduler_sync, scheduler_recordatorios, scheduler_token
     
     if scheduler_sync:
         scheduler_sync.shutdown()
@@ -222,6 +231,10 @@ def shutdown_event():
     if scheduler_recordatorios:  # ✅ NUEVO
         scheduler_recordatorios.shutdown()
         print("🛑 Recordatorios detenidos")
+    
+    if scheduler_token:
+        scheduler_token.shutdown()
+        print("🛑 Renovación de token detenida")
 
 # ==================== UTILIDADES ====================
 
