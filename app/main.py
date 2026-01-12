@@ -10,6 +10,7 @@ from datetime import datetime, date
 import calendar
 
 from app.drive_uploader import upload_to_drive
+from app.drive_uploader_v3 import upload_inteligente
 from app.pdf_merger import merge_pdfs_from_uploads
 from app.email_templates import get_confirmation_template, get_alert_template
 from app.database import (
@@ -19,6 +20,7 @@ from app.database import (
 from app.validador import router as validador_router
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
 from app.serial_generator import generar_serial_unico  # ✅ NUEVO
+from app.serial_generator_v3 import generar_serial_automatico
 
 from app.n8n_notifier import enviar_a_n8n
 from fastapi import Request, Header
@@ -863,10 +865,24 @@ async def subir_incapacidad(
     
     # ✅ Generar serial único basado en nombre y cédula
     if empleado_bd:
-        consecutivo = generar_serial_unico(db, empleado_bd.nombre, cedula)
+        consecutivo = generar_serial_automatico(
+            db=db,
+            cedula=cedula,
+            tipo=tipo,
+            nombre=empleado_bd.nombre,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin
+        )
     else:
         # Si no hay empleado, usar iniciales genéricas
-        consecutivo = generar_serial_unico(db, "DESCONOCIDO", cedula)
+        consecutivo = generar_serial_automatico(
+            db=db,
+            cedula=cedula,
+            tipo=tipo,
+            nombre="DESCONOCIDO",
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin
+        )
     
     # Verificar si hay casos bloqueantes
     if empleado_bd:
@@ -927,14 +943,16 @@ async def subir_incapacidad(
         
         pdf_final_path, original_filenames = await merge_pdfs_from_uploads(archivos, cedula, tipo)
         
-        link_pdf = upload_to_drive(
-            pdf_final_path, 
-            empresa_destino, 
-            cedula, 
-            tipo, 
-            consecutivo,
+        link_pdf = upload_inteligente(
+            file_path=pdf_final_path,
+            empresa=empresa_destino,
+            cedula=cedula,
+            tipo=tipo,
+            serial=consecutivo,
+            fecha_inicio=fecha_inicio,
             tiene_soat=tiene_soat,
-            tiene_licencia=tiene_licencia
+            tiene_licencia=tiene_licencia,
+            subtipo=subType
         )
         
         pdf_final_path.unlink()

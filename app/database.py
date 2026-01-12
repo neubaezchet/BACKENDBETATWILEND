@@ -277,3 +277,163 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# ==================== MIGRACIÓN Y VERIFICACIÓN DE COLUMNAS ====================
+
+def verificar_columnas_fechas():
+    """
+    Script para verificar si las columnas de fechas ya existen en la tabla cases
+    Ejecutar antes de migrar para validar el estado actual
+    """
+    from sqlalchemy import inspect
+    
+    try:
+        inspector = inspect(engine)
+        columns = inspector.get_columns('cases')
+        
+        tiene_fecha_inicio = any(c['name'] == 'fecha_inicio' for c in columns)
+        tiene_fecha_fin = any(c['name'] == 'fecha_fin' for c in columns)
+        tiene_eps = any(c['name'] == 'eps' for c in columns)
+        
+        print("📋 Estado de columnas en tabla 'cases':")
+        print(f"   eps: {'✅ Existe' if tiene_eps else '❌ No existe'}")
+        print(f"   fecha_inicio: {'✅ Existe' if tiene_fecha_inicio else '❌ No existe'}")
+        print(f"   fecha_fin: {'✅ Existe' if tiene_fecha_fin else '❌ No existe'}")
+        
+        if tiene_fecha_inicio and tiene_fecha_fin and tiene_eps:
+            print("\n✅ Todo listo, todas las columnas están presentes")
+            return True
+        else:
+            print("\n⚠️ Faltan columnas. Debes ejecutar la migración SQL")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error verificando columnas: {e}")
+        return False
+
+def migrar_columnas_fechas():
+    """
+    Ejecuta la migración SQL para agregar las columnas de fechas
+    EJECUTAR SOLO UNA VEZ - Agrega columnas y sus índices a la tabla cases
+    
+    Para PostgreSQL:
+        - Agrega columna fecha_inicio como DATE
+        - Agrega columna fecha_fin como DATE
+        - Crea índices para optimizar búsquedas
+    
+    Para SQLite:
+        - Agrega las columnas (SQLite no tiene control estricto de tipos)
+    """
+    try:
+        db = SessionLocal()
+        
+        print("🔄 Iniciando migración de columnas...")
+        
+        # Verificar primero si las columnas ya existen
+        if verificar_columnas_fechas():
+            print("\n✅ No es necesario migrar, las columnas ya existen")
+            db.close()
+            return True
+        
+        # Ejecutar migraciones
+        try:
+            db.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS eps VARCHAR(100)"))
+            print("✅ Columna 'eps' agregada")
+        except Exception as e:
+            print(f"⚠️ eps: {e}")
+        
+        try:
+            # Intenta agregar como DATE (PostgreSQL)
+            db.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_inicio DATE"))
+            print("✅ Columna 'fecha_inicio' agregada como DATE")
+        except Exception:
+            # Si falla, intenta como DateTime (SQLite)
+            try:
+                db.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_inicio DATETIME"))
+                print("✅ Columna 'fecha_inicio' agregada como DATETIME")
+            except:
+                print("⚠️ No se pudo agregar fecha_inicio")
+        
+        try:
+            # Intenta agregar como DATE (PostgreSQL)
+            db.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_fin DATE"))
+            print("✅ Columna 'fecha_fin' agregada como DATE")
+        except Exception:
+            # Si falla, intenta como DateTime (SQLite)
+            try:
+                db.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_fin DATETIME"))
+                print("✅ Columna 'fecha_fin' agregada como DATETIME")
+            except:
+                print("⚠️ No se pudo agregar fecha_fin")
+        
+        # Crear índices (si la BD lo soporta)
+        try:
+            db.execute(text("CREATE INDEX IF NOT EXISTS idx_cases_eps ON cases(eps)"))
+            print("✅ Índice en 'eps' creado")
+        except:
+            pass
+        
+        try:
+            db.execute(text("CREATE INDEX IF NOT EXISTS idx_cases_fecha_inicio ON cases(fecha_inicio)"))
+            print("✅ Índice en 'fecha_inicio' creado")
+        except:
+            pass
+        
+        try:
+            db.execute(text("CREATE INDEX IF NOT EXISTS idx_cases_fecha_fin ON cases(fecha_fin)"))
+            print("✅ Índice en 'fecha_fin' creado")
+        except:
+            pass
+        
+        db.commit()
+        print("\n✅ Migración completada exitosamente")
+        db.close()
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ Error en la migración: {e}")
+        db.rollback()
+        db.close()
+        return False
+
+# ==================== PUNTO DE ENTRADA PARA MIGRACIÓN ====================
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("HERRAMIENTAS DE VERIFICACIÓN Y MIGRACIÓN - database.py")
+    print("=" * 60)
+    print("\nOpciones disponibles:")
+    print("  1. Verificar columnas (python database.py verify)")
+    print("  2. Migrar columnas (python database.py migrate)")
+    print("  3. Inicializar BD (python database.py init)")
+    
+    import sys
+    
+    if len(sys.argv) > 1:
+        comando = sys.argv[1].lower()
+        
+        if comando == "verify":
+            print("\n🔍 Verificando estado de columnas...")
+            verificar_columnas_fechas()
+            
+        elif comando == "migrate":
+            print("\n⚠️ ADVERTENCIA: Esta operación modificará la base de datos")
+            print("Asegúrate de tener una copia de seguridad antes de continuar\n")
+            confirmacion = input("¿Deseas continuar? (si/no): ").strip().lower()
+            if confirmacion in ['si', 'yes', 'y']:
+                migrar_columnas_fechas()
+            else:
+                print("Migración cancelada")
+                
+        elif comando == "init":
+            print("\n🔨 Inicializando base de datos...")
+            init_db()
+            
+        else:
+            print(f"\n❌ Comando desconocido: {comando}")
+    else:
+        print("\nUso: python database.py [verify|migrate|init]")
+        print("\nEjemplos:")
+        print("  python database.py verify    # Verifica columnas")
+        print("  python database.py migrate   # Ejecuta migración")
+        print("  python database.py init      # Inicializa BD")

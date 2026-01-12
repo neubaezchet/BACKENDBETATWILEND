@@ -441,3 +441,249 @@ def get_folder_link(empresa: str) -> str:
         return f"https://drive.google.com/drive/folders/{empresa_folder_id}"
     except Exception as e:
         return f"Error: {str(e)}"
+
+# ==================== DRIVE UPLOADER V3 - CERTIFICADOS Y PRELICENCIAS ====================
+"""
+Drive Uploader V3 - Solo para Certificados y Prelicencias
+IncaNeurobaeza - 2025
+
+NO TOCA NADA DE INCAPACIDADES NI INCOMPLETAS
+"""
+
+from datetime import date as date_type
+
+def get_quinzena_from_date(fecha: date_type) -> str:
+    """Determina la quincena desde una fecha"""
+    meses_es = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
+    
+    mes_nombre = meses_es[fecha.month]
+    
+    if fecha.day <= 15:
+        return f"Primera_Quincena_{mes_nombre}"
+    else:
+        return f"Segunda_Quincena_{mes_nombre}"
+
+
+def upload_certificado_o_prelicencia(
+    file_path: Path,
+    empresa: str,
+    cedula: str,
+    tipo: str,  # 'certificado_hospitalizacion' o 'prelicencia'
+    serial: str,
+    fecha_inicio: date_type
+) -> str:
+    """
+    Sube certificado o prelicencia a Drive
+    
+    Estructura:
+    Certificados_Hospitalizacion/  o  Prelicencias/
+    └── 2025/
+        └── {Empresa}/
+            └── Primera_Quincena_Enero/
+                └── 1085043374-20250115-20250120.pdf
+    
+    Args:
+        file_path: Ruta del PDF
+        empresa: Nombre de la empresa
+        cedula: Cédula del empleado
+        tipo: 'certificado_hospitalizacion' o 'prelicencia'
+        serial: Serial completo (ej: "1085043374-20250115-20250120")
+        fecha_inicio: Fecha de inicio para determinar quincena
+    
+    Returns:
+        str: Link de Google Drive
+    """
+    
+    try:
+        service = get_authenticated_service()
+        
+        # Determinar carpeta raíz
+        if 'certificado' in tipo.lower() or 'hospitalizacion' in tipo.lower():
+            carpeta_raiz_nombre = 'Certificados_Hospitalizacion'
+        elif 'prelicencia' in tipo.lower():
+            carpeta_raiz_nombre = 'Prelicencias'
+        else:
+            raise ValueError(f"Tipo no soportado: {tipo}")
+        
+        # === CREAR ESTRUCTURA ===
+        
+        # 1. Carpeta raíz
+        carpeta_raiz_id = create_folder_if_not_exists(
+            service,
+            carpeta_raiz_nombre.encode(),
+            'root'
+        )
+        
+        # 2. Año
+        año_str = str(fecha_inicio.year)
+        año_folder_id = create_folder_if_not_exists(
+            service,
+            año_str.encode(),
+            carpeta_raiz_id
+        )
+        
+        # 3. Empresa
+        empresa_folder_id = create_folder_if_not_exists(
+            service,
+            empresa.encode() if isinstance(empresa, str) else empresa,
+            año_folder_id
+        )
+        
+        # 4. Quincena
+        quinzena_nombre = get_quinzena_from_date(fecha_inicio)
+        quinzena_folder_id = create_folder_if_not_exists(
+            service,
+            quinzena_nombre.encode(),
+            empresa_folder_id
+        )
+        
+        # === SUBIR ARCHIVO ===
+        
+        filename = f"{serial}.pdf"
+        
+        print(f"📤 Subiendo {carpeta_raiz_nombre}:")
+        print(f"   📁 {año_str}/{empresa}/{quinzena_nombre}/")
+        print(f"   📄 {filename}")
+        
+        file_metadata = {
+            'name': filename,
+            'parents': [quinzena_folder_id],
+            'description': f'{tipo.upper()} - Cédula: {cedula} - Empresa: {empresa} - Fecha: {fecha_inicio}'
+        }
+        
+        media = MediaFileUpload(
+            str(file_path),
+            mimetype='application/pdf',
+            resumable=True
+        )
+        
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id,webViewLink,webContentLink'
+        ).execute()
+        
+        # Hacer público
+        try:
+            service.permissions().create(
+                fileId=file.get('id'),
+                body={'role': 'reader', 'type': 'anyone'}
+            ).execute()
+        except Exception as e:
+            print(f"⚠️ No se pudo hacer público: {e}")
+        
+        link = file.get('webViewLink', f"https://drive.google.com/file/d/{file.get('id')}/view")
+        
+        print(f"✅ Subido exitosamente")
+        print(f"🔗 Link: {link}")
+        
+        return link
+        
+    except Exception as e:
+        print(f"❌ Error subiendo a Drive: {e}")
+        raise
+
+
+def upload_inteligente(
+    file_path: Path,
+    empresa: str,
+    cedula: str,
+    tipo: str,
+    serial: str,
+    fecha_inicio: date_type = None,
+    **kwargs  # Para mantener compatibilidad
+) -> str:
+    """
+    Upload inteligente que decide automáticamente:
+    - Certificados/Prelicencias → Nueva estructura
+    - Incapacidades → Sistema actual (sin tocar)
+    
+    Args:
+        file_path: Ruta del archivo
+        empresa: Empresa
+        cedula: Cédula
+        tipo: Tipo de documento
+        serial: Serial único
+        fecha_inicio: Fecha inicio (requerida para certificados)
+        **kwargs: tiene_soat, tiene_licencia, subtipo (para incapacidades)
+    
+    Returns:
+        str: Link de Drive
+    """
+    
+    tipo_lower = tipo.lower()
+    
+    # CERTIFICADOS O PRELICENCIAS → Nueva estructura
+    if tipo_lower in ['certificado_hospitalizacion', 'prelicencia', 'hospitalizacion']:
+        
+        if not fecha_inicio:
+            fecha_inicio = date_type.today()
+            print(f"⚠️ No se proporcionó fecha, usando hoy: {fecha_inicio}")
+        
+        return upload_certificado_o_prelicencia(
+            file_path, empresa, cedula, tipo, serial, fecha_inicio
+        )
+    
+    # INCAPACIDADES TRADICIONALES → Mantener sistema actual
+    else:
+        print(f"📋 Usando sistema tradicional para: {tipo}")
+        
+        return upload_to_drive(
+            file_path,
+            empresa,
+            cedula,
+            tipo,
+            serial,
+            tiene_soat=kwargs.get('tiene_soat'),
+            tiene_licencia=kwargs.get('tiene_licencia'),
+            subtipo=kwargs.get('subtipo')
+        )
+
+
+# ==================== WRAPPER INTELIGENTE ====================
+
+def upload_to_drive_v3(file_path, empresa, cedula, tipo, serial, **kwargs):
+    """
+    Wrapper inteligente que detecta automáticamente:
+    - Certificados/Prelicencias → Nueva estructura V3
+    - Incapacidades → Sistema tradicional
+    
+    NOTA: No reemplaza la función upload_to_drive original
+    """
+    
+    fecha_inicio = kwargs.get('fecha_inicio')
+    
+    return upload_inteligente(
+        file_path, empresa, cedula, tipo, serial,
+        fecha_inicio, **kwargs
+    )
+
+
+# ==================== TESTS ====================
+
+def test_estructura_certificados():
+    """Prueba la creación de estructura para certificados"""
+    
+    print("🧪 Probando estructura Drive V3...\n")
+    
+    # Test 1: Determinar quincena
+    print("Test 1: Determinación de quincena")
+    test_dates = [
+        date_type(2025, 1, 10),   # Primera quincena enero
+        date_type(2025, 1, 20),   # Segunda quincena enero
+        date_type(2025, 2, 1)     # Primera quincena febrero
+    ]
+    
+    for test_date in test_dates:
+        quinzena = get_quinzena_from_date(test_date)
+        print(f"  {test_date} → {quinzena}")
+    
+    print("\n✅ Tests completados")
+
+
+if __name__ == "__main__":
+    test_estructura_certificados()
