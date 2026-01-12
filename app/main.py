@@ -9,8 +9,7 @@ from pathlib import Path
 from datetime import datetime, date
 import calendar
 
-from app.drive_uploader import upload_to_drive
-from app.drive_uploader_v3 import upload_inteligente
+from app.drive_uploader import upload_to_drive, upload_inteligente
 from app.pdf_merger import merge_pdfs_from_uploads
 from app.email_templates import get_confirmation_template, get_alert_template
 from app.database import (
@@ -19,8 +18,7 @@ from app.database import (
 )
 from app.validador import router as validador_router
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
-from app.serial_generator import generar_serial_unico  # ✅ NUEVO
-from app.serial_generator_v3 import generar_serial_automatico
+from app.serial_generator import generar_serial_unico, generar_serial_automatico  # ✅ NUEVO
 
 from app.n8n_notifier import enviar_a_n8n
 from fastapi import Request, Header
