@@ -28,11 +28,11 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     if not fecha_fin:
         fecha_fin = fecha_inicio
 
-    # Formatear fechas
-    fecha_ini_str = fecha_inicio.strftime("%Y%m%d")
-    fecha_fin_str = fecha_fin.strftime("%Y%m%d")
+    # Formatear fechas en formato DD-MM-YYYY
+    fecha_ini_str = fecha_inicio.strftime("%d-%m-%Y")
+    fecha_fin_str = fecha_fin.strftime("%d-%m-%Y")
 
-    # Construir serial V3
+    # Construir serial V3 con formato legible
     serial = f"{cedula}-{fecha_ini_str}-{fecha_fin_str}"
 
     # Verificar duplicado

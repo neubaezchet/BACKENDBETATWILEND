@@ -871,14 +871,14 @@ async def subir_incapacidad(
     # ✅ EXTRAER FECHAS DEL FORMULARIO (si vienen mal, quedan como None)
     if incapacityStartDate:
         try:
-            fecha_inicio = datetime.fromisoformat(incapacityStartDate.replace('Z', '+00:00'))
+            fecha_inicio = datetime.fromisoformat(incapacityStartDate.replace('Z', '+00:00')).date()
             metadata_form['fecha_inicio_incapacidad'] = incapacityStartDate
         except:
             fecha_inicio = None
 
     if incapacityEndDate:
         try:
-            fecha_fin = datetime.fromisoformat(incapacityEndDate.replace('Z', '+00:00'))
+            fecha_fin = datetime.fromisoformat(incapacityEndDate.replace('Z', '+00:00')).date()
             metadata_form['fecha_fin_incapacidad'] = incapacityEndDate
         except:
             fecha_fin = None

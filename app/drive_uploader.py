@@ -481,17 +481,17 @@ def upload_certificado_o_prelicencia(
     
     Estructura:
     Certificados_Hospitalizacion/  o  Prelicencias/
-    └── 2025/
+    └── 2026/
         └── {Empresa}/
             └── Primera_Quincena_Enero/
-                └── 1085043374-20250115-20250120.pdf
+                └── 1085043374-12-01-2026-02-02-2026.pdf
     
     Args:
         file_path: Ruta del PDF
         empresa: Nombre de la empresa
         cedula: Cédula del empleado
         tipo: 'certificado_hospitalizacion' o 'prelicencia'
-        serial: Serial completo (ej: "1085043374-20250115-20250120")
+        serial: Serial completo (ej: "1085043374-12-01-2026-02-02-2026" en formato DD-MM-YYYY)
         fecha_inicio: Fecha de inicio para determinar quincena
     
     Returns:
