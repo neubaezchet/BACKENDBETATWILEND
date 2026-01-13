@@ -16,7 +16,9 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     """
     Genera un serial único para una incapacidad o certificado
     
-    Genera un serial único en formato V3: CEDULA-YYYYMMDD-YYYYMMDD
+    Formato V3:
+    - Con fecha_fin: CEDULA-DDMMYYYY-DDMMYYYY (ej: 1085043374-15012025-20012025)
+    - Sin fecha_fin: CEDULA-DDMMYYYY (ej: 1085043374-15012025)
     SIEMPRE usa fechas, si no se proporcionan usa la fecha actual
     """
 
@@ -24,16 +26,20 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     if not fecha_inicio:
         fecha_inicio = date.today()
 
-    # Si no hay fecha_fin, usar la misma fecha_inicio
+    # Formatear fecha_inicio en formato DDMMYYYY
+    fecha_ini_str = fecha_inicio.strftime("%d%m%Y")
+    
+    # ✅ NUEVO: Si no hay fecha_fin, NO duplicar
     if not fecha_fin:
-        fecha_fin = fecha_inicio
+        fecha_fin_str = None
+    else:
+        fecha_fin_str = fecha_fin.strftime("%d%m%Y")
 
-    # Formatear fechas en formato DD-MM-YYYY
-    fecha_ini_str = fecha_inicio.strftime("%d-%m-%Y")
-    fecha_fin_str = fecha_fin.strftime("%d-%m-%Y")
-
-    # Construir serial V3 con formato legible
-    serial = f"{cedula}-{fecha_ini_str}-{fecha_fin_str}"
+    # Construir serial V3
+    if fecha_fin_str:
+        serial = f"{cedula}-{fecha_ini_str}-{fecha_fin_str}"
+    else:
+        serial = f"{cedula}-{fecha_ini_str}"
 
     # Verificar duplicado
     existe = db.query(Case).filter(Case.serial == serial).first()

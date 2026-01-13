@@ -868,19 +868,37 @@ async def subir_incapacidad(
     fecha_inicio = None
     fecha_fin = None
 
-    # ✅ EXTRAER FECHAS DEL FORMULARIO (si vienen mal, quedan como None)
+    # ✅ EXTRAER FECHAS DEL FORMULARIO (maneja ambos formatos: ISO con hora y YYYY-MM-DD)
     if incapacityStartDate:
         try:
-            fecha_inicio = datetime.fromisoformat(incapacityStartDate.replace('Z', '+00:00')).date()
+            # Detectar formato: YYYY-MM-DD (date) vs ISO con hora (datetime)
+            if 'T' in incapacityStartDate or 'Z' in incapacityStartDate:
+                # Formato ISO completo: 2025-01-15T00:00:00Z
+                fecha_inicio = datetime.fromisoformat(incapacityStartDate.replace('Z', '+00:00')).date()
+            else:
+                # Formato simple: 2025-01-15
+                fecha_inicio = datetime.strptime(incapacityStartDate, '%Y-%m-%d').date()
+            
             metadata_form['fecha_inicio_incapacidad'] = incapacityStartDate
-        except:
+            print(f"✅ Fecha inicio parseada: {fecha_inicio}")
+        except Exception as e:
+            print(f"⚠️ Error parseando fecha inicio '{incapacityStartDate}': {e}")
             fecha_inicio = None
 
     if incapacityEndDate:
         try:
-            fecha_fin = datetime.fromisoformat(incapacityEndDate.replace('Z', '+00:00')).date()
+            # Detectar formato: YYYY-MM-DD (date) vs ISO con hora (datetime)
+            if 'T' in incapacityEndDate or 'Z' in incapacityEndDate:
+                # Formato ISO completo: 2025-01-15T00:00:00Z
+                fecha_fin = datetime.fromisoformat(incapacityEndDate.replace('Z', '+00:00')).date()
+            else:
+                # Formato simple: 2025-01-15
+                fecha_fin = datetime.strptime(incapacityEndDate, '%Y-%m-%d').date()
+            
             metadata_form['fecha_fin_incapacidad'] = incapacityEndDate
-        except:
+            print(f"✅ Fecha fin parseada: {fecha_fin}")
+        except Exception as e:
+            print(f"⚠️ Error parseando fecha fin '{incapacityEndDate}': {e}")
             fecha_fin = None
 
     # ✅ Generar serial único basado en nombre y cédula
