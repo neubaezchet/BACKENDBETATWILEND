@@ -1089,7 +1089,8 @@ else:
         for i, adjunto in enumerate(adjuntos):
             temp_path = os.path.join(tempfile.gettempdir(), f"{serial}_adjunto_{i}_{adjunto.filename}")
             with open(temp_path, "wb") as f:
-                f.write(await adjunto.read())
+                contenido = await adjunto.read()
+f.write(contenido)
             adjuntos_paths.append(temp_path)
     
     # ✅ SISTEMA HÍBRIDO: IA vs Plantillas
@@ -1313,7 +1314,8 @@ async def notificar_libre_con_ia(
         for i, adjunto in enumerate(adjuntos):
             temp_path = os.path.join(tempfile.gettempdir(), f"{serial}_extra_{i}_{adjunto.filename}")
             with open(temp_path, "wb") as f:
-                f.write(await adjunto.read())
+                contenido = await adjunto.read()
+f.write(contenido)
             adjuntos_paths.append(temp_path)
     
     # Insertar en plantilla
