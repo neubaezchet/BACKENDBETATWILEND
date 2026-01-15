@@ -975,18 +975,70 @@ async def validar_caso_con_checks(
         raise HTTPException(status_code=404, detail="Caso no encontrado")
     
     empleado = caso.empleado
+# ✅ MAPEAR ACCIÓN A ESTADO
+estado_map = {
+    'completa': EstadoCaso.COMPLETA,
+    'incompleta': EstadoCaso.INCOMPLETA,
+    'ilegible': EstadoCaso.ILEGIBLE,
+    'eps': EstadoCaso.EPS_TRANSCRIPCION,
+    'tthh': EstadoCaso.DERIVADO_TTHH,
+    'falsa': EstadoCaso.DERIVADO_TTHH
+}
+nuevo_estado = estado_map[accion]
+
+# ✅ INICIALIZAR VARIABLES
+es_reenvio = False
+casos_borrados = []
+
+# ✅ SI SE APRUEBA COMO COMPLETA Y ES UN REENVÍO
+if nuevo_estado == EstadoCaso.COMPLETA:
+    es_reenvio = caso.metadata_form.get('es_reenvio', False) if caso.metadata_form else False
     
-   # ✅ Cambiar estado en BD
-    estado_map = {
-        'completa': EstadoCaso.COMPLETA,
-        'incompleta': EstadoCaso.INCOMPLETA,
-        'ilegible': EstadoCaso.ILEGIBLE,
-        'eps': EstadoCaso.EPS_TRANSCRIPCION,
-        'tthh': EstadoCaso.DERIVADO_TTHH,
-        'falsa': EstadoCaso.DERIVADO_TTHH
-    }
-    nuevo_estado = estado_map[accion]
+    if es_reenvio:
+        # ✅ BUSCAR Y BORRAR VERSIONES ANTERIORES INCOMPLETAS
+        casos_anteriores = db.query(Case).filter(
+            Case.cedula == caso.cedula,
+            Case.fecha_inicio == caso.fecha_inicio,
+            Case.id != caso.id,  # No borrar el actual
+            Case.estado.in_([
+                EstadoCaso.INCOMPLETA,
+                EstadoCaso.ILEGIBLE,
+                EstadoCaso.INCOMPLETA_ILEGIBLE
+            ])
+        ).all()
+        
+        for caso_anterior in casos_anteriores:
+            print(f"🗑️ Borrando caso anterior incompleto: {caso_anterior.serial}")
+            casos_borrados.append(caso_anterior.serial)
+            
+            # ✅ Intentar archivar en Drive (opcional)
+            try:
+                organizer = CaseFileOrganizer()
+                organizer.archivar_caso(caso_anterior)
+                print(f"   ✅ Archivos movidos a carpeta de archivados")
+            except Exception as e:
+                print(f"   ⚠️ No se pudieron archivar archivos: {e}")
+            
+            # ✅ Eliminar registro de BD
+            db.delete(caso_anterior)
+        
+        print(f"✅ Eliminados {len(casos_borrados)} casos anteriores: {casos_borrados}")
+    
+        # ✅ LIMPIAR METADATA DE REENVÍO
+        if caso.metadata_form:
+            caso.metadata_form.pop('es_reenvio', None)
+            caso.metadata_form.pop('total_reenvios', None)
+            caso.metadata_form.pop('caso_original_id', None)
+            caso.metadata_form.pop('caso_original_serial', None)
+    
+    # ✅ Cambiar estado y desbloquear
+    caso.estado = EstadoCaso.COMPLETA
+    caso.bloquea_nueva = False
+
+else:
+    # ✅ Si es INCOMPLETA, ILEGIBLE, etc. → bloquea nuevas
     caso.estado = nuevo_estado
+    caso.bloquea_nueva = True
     
     # ✅ GUARDAR CHECKS EN METADATA (para sistema de reenvío)
     if checks:
@@ -1213,14 +1265,16 @@ async def validar_caso_con_checks(
         print(f"⚠️ Error sincronizando con Sheets: {e}")
     
     return {
-        "status": "ok",
-        "serial": serial,
-        "accion": accion,
-        "checks": checks,
-        "nuevo_link": caso.drive_link,
-        "usa_ia": bool(contenido_ia),
-        "mensaje": f"Caso {accion} correctamente"
-    }
+    "status": "ok",
+    "serial": serial,
+    "accion": accion,
+    "checks": checks,
+    "nuevo_link": caso.drive_link,
+    "usa_ia": bool(contenido_ia),
+    "es_reenvio": es_reenvio if nuevo_estado == EstadoCaso.COMPLETA else False,
+    "casos_borrados": len(casos_borrados) if nuevo_estado == EstadoCaso.COMPLETA and es_reenvio else 0,
+    "mensaje": f"Caso {accion} correctamente"
+}
 
 
 # ✅ NUEVO: Endpoint para notificación libre con IA
@@ -2118,3 +2172,119 @@ async def guardar_pdf_editado(
         if os.path.exists(temp_path):
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+
+    """
+    Endpoint para validar casos: COMPLETA, INCOMPLETA, ILEGIBLE, etc.
+    Si es un reenvío que se aprueba como COMPLETA, borra versiones anteriores.
+    """
+    # ✅ Verificar token admin
+    verificar_token_admin(token)
+    
+    # ✅ Buscar caso
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+    
+    # ✅ Validar acción
+    acciones_validas = ['completa', 'incompleta', 'ilegible', 'incompleta_ilegible']
+    if accion.lower() not in acciones_validas:
+        raise HTTPException(status_code=400, detail=f"Acción inválida. Usa: {', '.join(acciones_validas)}")
+    
+    # ✅ MAPEAR ACCIÓN A ESTADO
+    estado_map = {
+        'completa': EstadoCaso.COMPLETA,
+        'incompleta': EstadoCaso.INCOMPLETA,
+        'ilegible': EstadoCaso.ILEGIBLE,
+        'incompleta_ilegible': EstadoCaso.INCOMPLETA_ILEGIBLE
+    }
+    nuevo_estado = estado_map[accion.lower()]
+    
+    # ✅ INICIALIZAR VARIABLES
+    es_reenvio = False
+    casos_borrados = []
+    
+    # ✅ SI SE APRUEBA COMO COMPLETA Y ES UN REENVÍO
+    if nuevo_estado == EstadoCaso.COMPLETA:
+        es_reenvio = caso.metadata_form.get('es_reenvio', False) if caso.metadata_form else False
+        
+        if es_reenvio:
+            # ✅ BUSCAR Y BORRAR VERSIONES ANTERIORES INCOMPLETAS
+            casos_anteriores = db.query(Case).filter(
+                Case.cedula == caso.cedula,
+                Case.fecha_inicio == caso.fecha_inicio,
+                Case.id != caso.id,  # No borrar el actual
+                Case.estado.in_([
+                    EstadoCaso.INCOMPLETA,
+                    EstadoCaso.ILEGIBLE,
+                    EstadoCaso.INCOMPLETA_ILEGIBLE
+                ])
+            ).all()
+            
+            for caso_anterior in casos_anteriores:
+                print(f"🗑️ Borrando caso anterior incompleto: {caso_anterior.serial}")
+                casos_borrados.append(caso_anterior.serial)
+                
+                # ✅ Intentar archivar en Drive (opcional)
+                try:
+                    organizer = CaseFileOrganizer()
+                    organizer.archivar_caso(caso_anterior)
+                    print(f"   ✅ Archivos movidos a carpeta de archivados")
+                except Exception as e:
+                    print(f"   ⚠️ No se pudieron archivar archivos: {e}")
+                
+                # ✅ Eliminar registro de BD
+                db.delete(caso_anterior)
+            
+            print(f"✅ Eliminados {len(casos_borrados)} casos anteriores: {casos_borrados}")
+        
+        # ✅ LIMPIAR METADATA DE REENVÍO
+        if caso.metadata_form:
+            caso.metadata_form.pop('es_reenvio', None)
+            caso.metadata_form.pop('total_reenvios', None)
+            caso.metadata_form.pop('caso_original_id', None)
+            caso.metadata_form.pop('caso_original_serial', None)
+        
+        # ✅ Cambiar estado y desbloquear
+        caso.estado = EstadoCaso.COMPLETA
+        caso.bloquea_nueva = False
+    
+    else:
+        # ✅ Si es INCOMPLETA, ILEGIBLE, etc. → bloquea nuevas
+        caso.estado = nuevo_estado
+        caso.bloquea_nueva = True
+    
+    # ✅ GUARDAR MOTIVO SI SE PROPORCIONA
+    if motivo:
+        if not caso.metadata_form:
+            caso.metadata_form = {}
+        caso.metadata_form['motivo_validacion'] = motivo
+    
+    # ✅ GUARDAR EN BD
+    db.commit()
+    db.refresh(caso)
+    
+    # ✅ REGISTRAR EVENTO
+    try:
+        registrar_evento(
+            db, caso.id,
+            f"validacion_{accion.lower()}",
+            actor="Sistema",
+            estado_anterior=None,
+            estado_nuevo=nuevo_estado.value,
+            motivo=motivo or f"Validado como {accion}",
+            metadata={'es_reenvio': es_reenvio if nuevo_estado == EstadoCaso.COMPLETA else None}
+        )
+    except Exception as e:
+        print(f"⚠️ Error registrando evento: {e}")
+    
+    # ✅ RESPUESTA
+    return {
+        "status": "ok",
+        "serial": serial,
+        "estado_nuevo": nuevo_estado.value,
+        "es_reenvio": es_reenvio if nuevo_estado == EstadoCaso.COMPLETA else False,
+        "casos_borrados": len(casos_borrados) if nuevo_estado == EstadoCaso.COMPLETA and es_reenvio else 0,
+        "mensaje": f"Caso {serial} validado como {accion}"
+    }

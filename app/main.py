@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, Form, File, Depends
+from fastapi import FastAPI, UploadFile, Form, File, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -516,18 +516,13 @@ def obtener_empleado(cedula: str, db: Session = Depends(get_db)):
         }
     
     return JSONResponse(status_code=404, content={"error": "Empleado no encontrado"})
-
 @app.get("/verificar-bloqueo/{cedula}")
 def verificar_bloqueo_empleado(
     cedula: str,
     db: Session = Depends(get_db)
 ):
+    """Verifica si el empleado tiene casos pendientes que bloquean nuevos envíos"""
     
-    """
-    Verifica si el empleado tiene casos pendientes que bloquean nuevos envíos
-    """
-    
-    # Buscar casos incompletos que bloquean
     caso_bloqueante = db.query(Case).filter(
         Case.cedula == cedula,
         Case.estado.in_([
@@ -544,6 +539,11 @@ def verificar_bloqueo_empleado(
         if hasattr(caso_bloqueante, 'metadata_form') and caso_bloqueante.metadata_form:
             checks_faltantes = caso_bloqueante.metadata_form.get('checks_seleccionados', [])
         
+        # ✅ NUEVO: Obtener total de reenvíos
+        total_reenvios = 0
+        if caso_bloqueante.metadata_form:
+            total_reenvios = caso_bloqueante.metadata_form.get('total_reenvios', 0)
+        
         return {
             "bloqueado": True,
             "mensaje": f"Tienes una incapacidad pendiente de completar",
@@ -552,9 +552,12 @@ def verificar_bloqueo_empleado(
                 "tipo": caso_bloqueante.tipo.value if caso_bloqueante.tipo else "General",
                 "estado": caso_bloqueante.estado.value,
                 "fecha_envio": caso_bloqueante.created_at.strftime("%d/%m/%Y"),
+                "fecha_inicio": caso_bloqueante.fecha_inicio.isoformat() if caso_bloqueante.fecha_inicio else None,  # ← NUEVO
+                "fecha_fin": caso_bloqueante.fecha_fin.isoformat() if caso_bloqueante.fecha_fin else None,  # ← NUEVO
                 "motivo": caso_bloqueante.diagnostico or "Documentos faltantes o ilegibles",
                 "checks_faltantes": checks_faltantes,
-                "drive_link": caso_bloqueante.drive_link
+                "drive_link": caso_bloqueante.drive_link,
+                "total_reenvios": total_reenvios  # ← NUEVO
             }
         }
     
@@ -562,7 +565,6 @@ def verificar_bloqueo_empleado(
         "bloqueado": False,
         "mensaje": "Puedes continuar con el envío"
     }
-
 @app.post("/casos/{serial}/reenviar")
 async def reenviar_caso_incompleto(
     serial: str,
@@ -901,9 +903,32 @@ async def subir_incapacidad(
             print(f"⚠️ Error parseando fecha fin '{incapacityEndDate}': {e}")
             fecha_fin = None
 
+    # ✅ NUEVO: Verificar si ya existe caso con las MISMAS FECHAS (reenvío)
+    caso_existente = None
+    nuevo_numero_reenvio = None
+    es_reenvio = False
+    
+    if fecha_inicio and cedula:
+        caso_existente = db.query(Case).filter(
+            Case.cedula == cedula,
+            Case.fecha_inicio == fecha_inicio,
+            Case.estado.in_([
+                EstadoCaso.INCOMPLETA,
+                EstadoCaso.ILEGIBLE,
+                EstadoCaso.INCOMPLETA_ILEGIBLE
+            ])
+        ).first()
+    
+    if caso_existente:
+        # ✅ HAY CASO PREVIO INCOMPLETO → CONTAR REENVÍOS
+        es_reenvio = True
+        total_reenvios = caso_existente.metadata_form.get('total_reenvios', 0) if caso_existente.metadata_form else 0
+        nuevo_numero_reenvio = total_reenvios + 1
+        print(f"🔄 Reenvío #{nuevo_numero_reenvio} detectado para caso {caso_existente.serial}")
+    
     # ✅ Generar serial único basado en nombre y cédula
     if empleado_bd:
-        consecutivo = generar_serial_automatico(
+        serial_base = generar_serial_automatico(
             db=db,
             cedula=cedula,
             tipo=tipo,
@@ -913,7 +938,7 @@ async def subir_incapacidad(
         )
     else:
         # Si no hay empleado, usar iniciales genéricas
-        consecutivo = generar_serial_automatico(
+        serial_base = generar_serial_automatico(
             db=db,
             cedula=cedula,
             tipo=tipo,
@@ -921,6 +946,13 @@ async def subir_incapacidad(
             fecha_inicio=fecha_inicio,
             fecha_fin=fecha_fin
         )
+    
+    # ✅ MODIFICAR SERIAL SI ES REENVÍO
+    if es_reenvio:
+        consecutivo = f"{serial_base}-R{nuevo_numero_reenvio}"
+        print(f"   Serial modificado para reenvío: {consecutivo}")
+    else:
+        consecutivo = serial_base
     
     # Verificar si hay casos bloqueantes
     if empleado_bd:
@@ -995,8 +1027,22 @@ async def subir_incapacidad(
         drive_link=link_pdf,
         email_form=email,
         telefono_form=telefono,
-        bloquea_nueva=False
+        bloquea_nueva=False,
+        fecha_inicio=fecha_inicio,  # ← NUEVO: Guardar fecha de inicio
+        fecha_fin=fecha_fin,        # ← NUEVO: Guardar fecha de fin
     )
+    
+    # ✅ Si es reenvío, guardar metadata de reenvío
+    if es_reenvio:
+        if not nuevo_caso.metadata_form:
+            nuevo_caso.metadata_form = {}
+        
+        nuevo_caso.metadata_form['es_reenvio'] = True
+        nuevo_caso.metadata_form['total_reenvios'] = nuevo_numero_reenvio
+        nuevo_caso.metadata_form['caso_original_id'] = caso_existente.id
+        nuevo_caso.metadata_form['caso_original_serial'] = caso_existente.serial
+        print(f"✅ Reenvío #{nuevo_numero_reenvio} guardado - Original: {caso_existente.serial}")
+    
     
     db.add(nuevo_caso)
     db.commit()

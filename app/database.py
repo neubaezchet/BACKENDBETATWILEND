@@ -4,7 +4,7 @@ Modelos SQLAlchemy para gestión de casos de incapacidades
 VERSIÓN 3.0 - Con soporte para jefes y recordatorios
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index, Index, Index, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -132,6 +132,12 @@ class Case(Base):
     documentos = relationship("CaseDocument", back_populates="caso", cascade="all, delete-orphan")
     eventos = relationship("CaseEvent", back_populates="caso", cascade="all, delete-orphan")
     notas = relationship("CaseNote", back_populates="caso", cascade="all, delete-orphan")
+    
+    # ✅ Índice compuesto para búsquedas por cédula + fecha
+    __table_args__ = (
+        Index('idx_cedula_fecha_inicio', 'cedula', 'fecha_inicio'),
+        Index('idx_cedula_fecha_estado', 'cedula', 'fecha_inicio', 'estado'),
+    )
 
 class CaseDocument(Base):
     """Documentos asociados a un caso"""
