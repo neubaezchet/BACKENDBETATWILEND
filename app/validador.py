@@ -1090,7 +1090,7 @@ else:
             temp_path = os.path.join(tempfile.gettempdir(), f"{serial}_adjunto_{i}_{adjunto.filename}")
             with open(temp_path, "wb") as f:
                 contenido = await adjunto.read()
-f.write(contenido)
+                f.write(contenido)
             adjuntos_paths.append(temp_path)
     
     # ✅ SISTEMA HÍBRIDO: IA vs Plantillas
@@ -1266,16 +1266,16 @@ f.write(contenido)
         print(f"⚠️ Error sincronizando con Sheets: {e}")
     
     return {
-    "status": "ok",
-    "serial": serial,
-    "accion": accion,
-    "checks": checks,
-    "nuevo_link": caso.drive_link,
-    "usa_ia": bool(contenido_ia),
-    "es_reenvio": es_reenvio if nuevo_estado == EstadoCaso.COMPLETA else False,
-    "casos_borrados": len(casos_borrados) if nuevo_estado == EstadoCaso.COMPLETA and es_reenvio else 0,
-    "mensaje": f"Caso {accion} correctamente"
-}
+        "status": "ok",
+        "serial": serial,
+        "accion": accion,
+        "checks": checks,
+        "nuevo_link": caso.drive_link,
+        "usa_ia": bool(contenido_ia),
+        "es_reenvio": es_reenvio if nuevo_estado == EstadoCaso.COMPLETA else False,
+        "casos_borrados": len(casos_borrados) if nuevo_estado == EstadoCaso.COMPLETA and es_reenvio else 0,
+        "mensaje": f"Caso {accion} correctamente"
+    }
 
 
 # ✅ NUEVO: Endpoint para notificación libre con IA
@@ -1315,7 +1315,7 @@ async def notificar_libre_con_ia(
             temp_path = os.path.join(tempfile.gettempdir(), f"{serial}_extra_{i}_{adjunto.filename}")
             with open(temp_path, "wb") as f:
                 contenido = await adjunto.read()
-f.write(contenido)
+                f.write(contenido)
             adjuntos_paths.append(temp_path)
     
     # Insertar en plantilla
