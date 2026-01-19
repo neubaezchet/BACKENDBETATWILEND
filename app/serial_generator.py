@@ -2,8 +2,9 @@
 Generador de Seriales V3 - Super Simplificado
 IncaNeurobaeza - 2025
 
-FORMATO: CEDULA-YYYYMMDD-YYYYMMDD
-Ejemplo: 1085043374-20250115-20250120
+FORMATO: CEDULA DD MM YYYY DD MM YYYY
+Ejemplo: 1085043374 01 01 2025 20 01 2025
+Sin fecha_fin: 1085043374 01 01 2025
 """
 
 from datetime import date
@@ -17,8 +18,8 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     Genera un serial único para una incapacidad o certificado
     
     Formato V3:
-    - Con fecha_fin: CEDULA-DDMMYYYY-DDMMYYYY (ej: 1085043374-15012025-20012025)
-    - Sin fecha_fin: CEDULA-DDMMYYYY (ej: 1085043374-15012025)
+    - Con fecha_fin: CEDULA DD MM YYYY DD MM YYYY (ej: 1085043374 01 01 2025 20 01 2025)
+    - Sin fecha_fin: CEDULA DD MM YYYY (ej: 1085043374 01 01 2025)
     SIEMPRE usa fechas, si no se proporcionan usa la fecha actual
     """
 
@@ -26,20 +27,20 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     if not fecha_inicio:
         fecha_inicio = date.today()
 
-    # Formatear fecha_inicio en formato DDMMYYYY
-    fecha_ini_str = fecha_inicio.strftime("%d%m%Y")
+    # Formatear fecha_inicio en formato DD MM YYYY (espacios)
+    fecha_ini_str = fecha_inicio.strftime("%d %m %Y")
     
-    # ✅ NUEVO: Si no hay fecha_fin, NO duplicar
+    # Si no hay fecha_fin, NO duplicar
     if not fecha_fin:
         fecha_fin_str = None
     else:
-        fecha_fin_str = fecha_fin.strftime("%d%m%Y")
+        fecha_fin_str = fecha_fin.strftime("%d %m %Y")
 
-    # Construir serial V3
+    # Construir serial V3: documento + fechas con espacios
     if fecha_fin_str:
-        serial = f"{cedula}-{fecha_ini_str}-{fecha_fin_str}"
+        serial = f"{cedula} {fecha_ini_str} {fecha_fin_str}"
     else:
-        serial = f"{cedula}-{fecha_ini_str}"
+        serial = f"{cedula} {fecha_ini_str}"
 
     # Verificar duplicado
     existe = db.query(Case).filter(Case.serial == serial).first()
@@ -88,8 +89,9 @@ def validar_serial(serial: str) -> bool:
     Valida que un serial tenga el formato correcto
     
     Formatos válidos:
+    - V3: CEDULA DD MM YYYY DD MM YYYY (1085043374 01 01 2025 20 01 2025)
+    - V3 sin fecha_fin: CEDULA DD MM YYYY (1085043374 01 01 2025)
     - Tradicional: LETRAS + NUMEROS (DB10850433740)
-    - V3: CEDULA-YYYYMMDD-YYYYMMDD (1085043374-20250115-20250120)
     
     Args:
         serial: Serial a validar
@@ -100,38 +102,59 @@ def validar_serial(serial: str) -> bool:
     if not serial:
         return False
     
-    # Patrón V3: 10-11 dígitos, guion, 8 dígitos, guion, 8 dígitos
-    patron_v3 = r'^\d{7,11}-\d{8}-\d{8}(-\d+)?$'
+    # Patrón V3 con espacios: cedula + espacios + DD MM YYYY + espacios + DD MM YYYY
+    patron_v3_completo = r'^\d{7,11}\s+\d{2}\s+\d{2}\s+\d{4}\s+\d{2}\s+\d{2}\s+\d{4}(-\d+)?$'
+    
+    # Patrón V3 sin fecha_fin: cedula + espacios + DD MM YYYY
+    patron_v3_simple = r'^\d{7,11}\s+\d{2}\s+\d{2}\s+\d{4}(-\d+)?$'
     
     # Patrón tradicional: LETRAS + NUMEROS
     patron_tradicional = r'^[A-Z]+\d+$'
     
-    return bool(re.match(patron_v3, serial) or re.match(patron_tradicional, serial))
+    return bool(re.match(patron_v3_completo, serial) or 
+                re.match(patron_v3_simple, serial) or 
+                re.match(patron_tradicional, serial))
 
 def validar_serial_certificado(serial: str) -> dict:
     """
     Valida y extrae información de un serial de certificado V3
+    
+    Formatos soportados:
+    - Con fecha_fin: CEDULA DD MM YYYY DD MM YYYY
+    - Sin fecha_fin: CEDULA DD MM YYYY
     
     Returns:
         dict con: {
             'valido': bool,
             'cedula': str,
             'fecha_inicio': date,
-            'fecha_fin': date
+            'fecha_fin': date (o None si no existe)
         }
     """
     
     try:
-        partes = serial.split('-')
+        partes = serial.split()
         
-        if len(partes) < 3:
+        if len(partes) < 4:  # Al menos: cedula + DD + MM + YYYY
             return {'valido': False}
         
-        cedula, fecha_ini_str, fecha_fin_str = partes[0], partes[1], partes[2]
+        cedula = partes[0]
+        
+        # Extraer primera fecha: DD MM YYYY
+        dia_ini = int(partes[1])
+        mes_ini = int(partes[2])
+        ano_ini = int(partes[3])
         
         from datetime import datetime
-        fecha_inicio = datetime.strptime(fecha_ini_str, "%Y%m%d").date()
-        fecha_fin = datetime.strptime(fecha_fin_str, "%Y%m%d").date()
+        fecha_inicio = datetime(ano_ini, mes_ini, dia_ini).date()
+        
+        # Si hay más partes, extraer fecha_fin: DD MM YYYY
+        fecha_fin = None
+        if len(partes) >= 8:  # cedula + DD + MM + YYYY + DD + MM + YYYY
+            dia_fin = int(partes[4])
+            mes_fin = int(partes[5])
+            ano_fin = int(partes[6])
+            fecha_fin = datetime(ano_fin, mes_fin, dia_fin).date()
         
         return {
             'valido': True,
@@ -217,10 +240,11 @@ def test_generador_seriales():
     
     print("\nTest 2: Validación de seriales")
     tests_validacion = [
-        # Formato V3
-        ("1085043374-20250115-20250120", True),
-        ("1095043375-20250115-20250115", True),
-        ("1085043374-20250115-20250120-1", True),  # Con sufijo
+        # Formato V3 con espacios
+        ("1085043374 01 01 2025 20 01 2025", True),
+        ("1095043375 15 03 2025 15 03 2025", True),
+        ("1085043374 01 01 2025", True),  # Sin fecha_fin
+        ("1085043374 01 01 2025-1", True),  # Con sufijo
         # Formato tradicional
         ("DB10850433740", True),
         ("JCP12345670", True),
@@ -239,7 +263,7 @@ def test_generador_seriales():
         print(f"  {estado} '{serial}' → {resultado} (esperado: {esperado})")
     
     print("\nTest 3: Validación de serial V3")
-    info = validar_serial_certificado("1085043374-20250115-20250120")
+    info = validar_serial_certificado("1085043374 01 01 2025 20 01 2025")
     print(f"  Válido: {info['valido']}")
     print(f"  Cédula: {info.get('cedula', 'N/A')}")
     print(f"  Fecha inicio: {info.get('fecha_inicio', 'N/A')}")
