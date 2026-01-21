@@ -2081,6 +2081,57 @@ async def obtener_historial_reenvios(
         "historial": reenvios
     }
 
+@router.post("/casos/{serial}/toggle-bloqueo")
+async def toggle_bloqueo(
+    serial: str,
+    accion: str = Form(...),
+    motivo: str = Form(...),
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Permite al validador bloquear o desbloquear un caso.
+    - accion: 'bloquear' o 'desbloquear'
+    - motivo: razón del bloqueo/desbloqueo
+    """
+    
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+    
+    estado_actual = caso.estado.value if caso.estado else 'DESCONOCIDO'
+    
+    if accion == 'bloquear':
+        caso.bloquea_nueva = True
+    elif accion == 'desbloquear':
+        caso.bloquea_nueva = False
+    else:
+        raise HTTPException(status_code=400, detail="Acción inválida. Use 'bloquear' o 'desbloquear'")
+    
+    # Registrar evento
+    registrar_evento(
+        db, caso.id,
+        accion=f"{accion}_manual",
+        actor="Validador",
+        estado_anterior=estado_actual,
+        estado_nuevo=estado_actual,
+        motivo=motivo
+    )
+    
+    db.commit()
+    
+    emoji = '🔒' if accion == 'bloquear' else '🔓'
+    print(f"{emoji} Caso {serial} {accion}do manualmente. Motivo: {motivo}")
+    
+    return {
+        "success": True,
+        "serial": serial,
+        "mensaje": f"Caso {accion}do exitosamente. Motivo: {motivo}",
+        "bloquea_nueva": caso.bloquea_nueva,
+        "accion": accion
+    }
+
 @router.post("/casos/{serial}/desbloquear")
 async def desbloquear_caso_manual(
     serial: str,
