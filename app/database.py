@@ -215,7 +215,7 @@ class SearchHistory(Base):
 
 def get_database_url():
     """Obtiene la URL de la base de datos desde variables de entorno"""
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = os.environ.get("DATABASE_URL") or os.environ.get("RENDER_URL")
     
     if not database_url:
         database_url = "sqlite:///./incapacidades.db"
