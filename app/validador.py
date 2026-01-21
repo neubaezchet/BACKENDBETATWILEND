@@ -975,295 +975,295 @@ async def validar_caso_con_checks(
         raise HTTPException(status_code=404, detail="Caso no encontrado")
     
     empleado = caso.empleado
-# ✅ MAPEAR ACCIÓN A ESTADO
-estado_map = {
-    'completa': EstadoCaso.COMPLETA,
-    'incompleta': EstadoCaso.INCOMPLETA,
-    'ilegible': EstadoCaso.ILEGIBLE,
-    'eps': EstadoCaso.EPS_TRANSCRIPCION,
-    'tthh': EstadoCaso.DERIVADO_TTHH,
-    'falsa': EstadoCaso.DERIVADO_TTHH
-}
-nuevo_estado = estado_map[accion]
+    # ✅ MAPEAR ACCIÓN A ESTADO
+    estado_map = {
+        'completa': EstadoCaso.COMPLETA,
+        'incompleta': EstadoCaso.INCOMPLETA,
+        'ilegible': EstadoCaso.ILEGIBLE,
+        'eps': EstadoCaso.EPS_TRANSCRIPCION,
+        'tthh': EstadoCaso.DERIVADO_TTHH,
+        'falsa': EstadoCaso.DERIVADO_TTHH
+    }
+    nuevo_estado = estado_map[accion]
 
-# ✅ INICIALIZAR VARIABLES
-es_reenvio = False
-casos_borrados = []
+    # ✅ INICIALIZAR VARIABLES
+    es_reenvio = False
+    casos_borrados = []
 
-# ✅ SI SE APRUEBA COMO COMPLETA Y ES UN REENVÍO
-if nuevo_estado == EstadoCaso.COMPLETA:
-    es_reenvio = caso.metadata_form.get('es_reenvio', False) if caso.metadata_form else False
-    
-    if es_reenvio:
-        # ✅ BUSCAR Y BORRAR VERSIONES ANTERIORES INCOMPLETAS
-        casos_anteriores = db.query(Case).filter(
-            Case.cedula == caso.cedula,
-            Case.fecha_inicio == caso.fecha_inicio,
-            Case.id != caso.id,  # No borrar el actual
-            Case.estado.in_([
-                EstadoCaso.INCOMPLETA,
-                EstadoCaso.ILEGIBLE,
-                EstadoCaso.INCOMPLETA_ILEGIBLE
-            ])
-        ).all()
+    # ✅ SI SE APRUEBA COMO COMPLETA Y ES UN REENVÍO
+    if nuevo_estado == EstadoCaso.COMPLETA:
+        es_reenvio = caso.metadata_form.get('es_reenvio', False) if caso.metadata_form else False
         
-        for caso_anterior in casos_anteriores:
-            print(f"🗑️ Borrando caso anterior incompleto: {caso_anterior.serial}")
-            casos_borrados.append(caso_anterior.serial)
+        if es_reenvio:
+            # ✅ BUSCAR Y BORRAR VERSIONES ANTERIORES INCOMPLETAS
+            casos_anteriores = db.query(Case).filter(
+                Case.cedula == caso.cedula,
+                Case.fecha_inicio == caso.fecha_inicio,
+                Case.id != caso.id,  # No borrar el actual
+                Case.estado.in_([
+                    EstadoCaso.INCOMPLETA,
+                    EstadoCaso.ILEGIBLE,
+                    EstadoCaso.INCOMPLETA_ILEGIBLE
+                ])
+            ).all()
             
-            # ✅ Intentar archivar en Drive (opcional)
-            try:
-                organizer = CaseFileOrganizer()
-                organizer.archivar_caso(caso_anterior)
-                print(f"   ✅ Archivos movidos a carpeta de archivados")
-            except Exception as e:
-                print(f"   ⚠️ No se pudieron archivar archivos: {e}")
+            for caso_anterior in casos_anteriores:
+                print(f"🗑️ Borrando caso anterior incompleto: {caso_anterior.serial}")
+                casos_borrados.append(caso_anterior.serial)
+                
+                # ✅ Intentar archivar en Drive (opcional)
+                try:
+                    organizer = CaseFileOrganizer()
+                    organizer.archivar_caso(caso_anterior)
+                    print(f"   ✅ Archivos movidos a carpeta de archivados")
+                except Exception as e:
+                    print(f"   ⚠️ No se pudieron archivar archivos: {e}")
+                
+                # ✅ Eliminar registro de BD
+                db.delete(caso_anterior)
             
-            # ✅ Eliminar registro de BD
-            db.delete(caso_anterior)
+            print(f"✅ Eliminados {len(casos_borrados)} casos anteriores: {casos_borrados}")
         
-        print(f"✅ Eliminados {len(casos_borrados)} casos anteriores: {casos_borrados}")
-    
-        # ✅ LIMPIAR METADATA DE REENVÍO
-        if caso.metadata_form:
-            caso.metadata_form.pop('es_reenvio', None)
-            caso.metadata_form.pop('total_reenvios', None)
-            caso.metadata_form.pop('caso_original_id', None)
-            caso.metadata_form.pop('caso_original_serial', None)
-    
-    # ✅ Cambiar estado y desbloquear
-    caso.estado = EstadoCaso.COMPLETA
-    caso.bloquea_nueva = False
+            # ✅ LIMPIAR METADATA DE REENVÍO
+            if caso.metadata_form:
+                caso.metadata_form.pop('es_reenvio', None)
+                caso.metadata_form.pop('total_reenvios', None)
+                caso.metadata_form.pop('caso_original_id', None)
+                caso.metadata_form.pop('caso_original_serial', None)
+        
+        # ✅ Cambiar estado y desbloquear
+        caso.estado = EstadoCaso.COMPLETA
+        caso.bloquea_nueva = False
 
-else:
-    # ✅ Si es INCOMPLETA, ILEGIBLE, etc. → bloquea nuevas
-    caso.estado = nuevo_estado
-    caso.bloquea_nueva = True
-    
-    # ✅ GUARDAR CHECKS EN METADATA (para sistema de reenvío)
-    if checks:
-        if not caso.metadata_form:
-            caso.metadata_form = {}
-        caso.metadata_form['checks_seleccionados'] = checks
-    
-    # ✅ BLOQUEAR si es incompleta/ilegible
-    if accion in ['incompleta', 'ilegible']:
-        caso.bloquea_nueva = True
-        print(f"🔒 Caso {serial} BLOQUEADO - Empleado debe reenviar")
-    
-    db.commit()
-    
-    # ✅ Mover archivo en Drive según el estado
-    if accion in ['incompleta', 'ilegible']:
-        # Usar el nuevo gestor de incompletas
-        from app.drive_manager import IncompleteFileManager
-        incomplete_mgr = IncompleteFileManager()
-        
-        # Determinar categoría
-        motivo_categoria = 'Ilegibles' if 'ilegible' in accion else 'Faltan_Soportes'
-        
-        if checks:
-            checks_str = ' '.join(checks).lower()
-            if 'ilegible' in checks_str or 'recortada' in checks_str or 'borrosa' in checks_str:
-                motivo_categoria = 'Ilegibles'
-            elif 'eps' in checks_str or 'transcri' in checks_str:
-                motivo_categoria = 'EPS_No_Transcritas'
-        
-        nuevo_link = incomplete_mgr.mover_a_incompletas(caso, motivo_categoria)
-        if nuevo_link:
-            caso.drive_link = nuevo_link
-            db.commit()
-            print(f"✅ Archivo movido a Incompletas/{motivo_categoria}: {nuevo_link}")
     else:
-        # Usar el gestor normal para otros estados
-        organizer = CaseFileOrganizer()
-        nuevo_link = organizer.mover_caso_segun_estado(caso, nuevo_estado.value, observaciones)
-        if nuevo_link:
-            caso.drive_link = nuevo_link
-            db.commit()
-            print(f"✅ Archivo movido en Drive: {nuevo_link}")
-    
-    # Procesar adjuntos si los hay
-    adjuntos_paths = []
-    if adjuntos:
-        for i, adjunto in enumerate(adjuntos):
-            temp_path = os.path.join(tempfile.gettempdir(), f"{serial}_adjunto_{i}_{adjunto.filename}")
-            with open(temp_path, "wb") as f:
-                contenido = await adjunto.read()
-                f.write(contenido)
-            adjuntos_paths.append(temp_path)
-    
-    # ✅ SISTEMA HÍBRIDO: IA vs Plantillas
-    from app.ia_redactor import (
-        redactar_email_incompleta, 
-        redactar_email_ilegible, 
-        redactar_alerta_tthh
-    )
-    
-    contenido_ia = None
-    
-    # ========== LÓGICA HÍBRIDA ==========
-    if accion in ['incompleta', 'ilegible']:
-        # ✅ USAR IA para casos complejos
-        print(f"🤖 Generando email con IA Claude Haiku para {serial}...")
+        # ✅ Si es INCOMPLETA, ILEGIBLE, etc. → bloquea nuevas
+        caso.estado = nuevo_estado
+        caso.bloquea_nueva = True
         
-        if accion == 'incompleta':
-            contenido_ia = redactar_email_incompleta(
+        # ✅ GUARDAR CHECKS EN METADATA (para sistema de reenvío)
+        if checks:
+            if not caso.metadata_form:
+                caso.metadata_form = {}
+            caso.metadata_form['checks_seleccionados'] = checks
+        
+        # ✅ BLOQUEAR si es incompleta/ilegible
+        if accion in ['incompleta', 'ilegible']:
+            caso.bloquea_nueva = True
+            print(f"🔒 Caso {serial} BLOQUEADO - Empleado debe reenviar")
+        
+        db.commit()
+        
+        # ✅ Mover archivo en Drive según el estado
+        if accion in ['incompleta', 'ilegible']:
+            # Usar el nuevo gestor de incompletas
+            from app.drive_manager import IncompleteFileManager
+            incomplete_mgr = IncompleteFileManager()
+            
+            # Determinar categoría
+            motivo_categoria = 'Ilegibles' if 'ilegible' in accion else 'Faltan_Soportes'
+            
+            if checks:
+                checks_str = ' '.join(checks).lower()
+                if 'ilegible' in checks_str or 'recortada' in checks_str or 'borrosa' in checks_str:
+                    motivo_categoria = 'Ilegibles'
+                elif 'eps' in checks_str or 'transcri' in checks_str:
+                    motivo_categoria = 'EPS_No_Transcritas'
+            
+            nuevo_link = incomplete_mgr.mover_a_incompletas(caso, motivo_categoria)
+            if nuevo_link:
+                caso.drive_link = nuevo_link
+                db.commit()
+                print(f"✅ Archivo movido a Incompletas/{motivo_categoria}: {nuevo_link}")
+        else:
+            # Usar el gestor normal para otros estados
+            organizer = CaseFileOrganizer()
+            nuevo_link = organizer.mover_caso_segun_estado(caso, nuevo_estado.value, observaciones)
+            if nuevo_link:
+                caso.drive_link = nuevo_link
+                db.commit()
+                print(f"✅ Archivo movido en Drive: {nuevo_link}")
+        
+        # Procesar adjuntos si los hay
+        adjuntos_paths = []
+        if adjuntos:
+            for i, adjunto in enumerate(adjuntos):
+                temp_path = os.path.join(tempfile.gettempdir(), f"{serial}_adjunto_{i}_{adjunto.filename}")
+                with open(temp_path, "wb") as f:
+                    contenido = await adjunto.read()
+                    f.write(contenido)
+                adjuntos_paths.append(temp_path)
+        
+        # ✅ SISTEMA HÍBRIDO: IA vs Plantillas
+        from app.ia_redactor import (
+            redactar_email_incompleta, 
+            redactar_email_ilegible, 
+            redactar_alerta_tthh
+        )
+        
+        contenido_ia = None
+        
+        # ========== LÓGICA HÍBRIDA ==========
+        if accion in ['incompleta', 'ilegible']:
+            # ✅ USAR IA para casos complejos
+            print(f"🤖 Generando email con IA Claude Haiku para {serial}...")
+            
+            if accion == 'incompleta':
+                contenido_ia = redactar_email_incompleta(
+                    empleado.nombre if empleado else 'Colaborador/a',
+                    serial,
+                    checks,
+                    caso.tipo.value if caso.tipo else 'General'
+                )
+            elif accion == 'ilegible':
+                contenido_ia = redactar_email_ilegible(
+                    empleado.nombre if empleado else 'Colaborador/a',
+                    serial,
+                    checks
+                )
+            
+            # Insertar contenido IA en plantilla
+            email_empleada = get_email_template_universal(
+                tipo_email=accion,
+                nombre=empleado.nombre if empleado else 'Colaborador/a',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link,
+                checks_seleccionados=checks,
+                contenido_ia=contenido_ia  # ✅ IA aquí
+            )
+            
+            # Enviar con formato de asunto actualizado
+            estado_label = 'Incompleta' if accion == 'incompleta' else 'Ilegible'
+            asunto = f"CC {caso.cedula} - {serial} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            enviar_email_con_adjuntos(
+                caso.email_form,
+                asunto,
+                email_empleada,
+                adjuntos_paths,
+                caso=caso  # ✅ COPIA AUTOMÁTICA
+            )
+        
+        elif accion == 'tthh':
+            # ✅ USAR IA para alerta a TTHH
+            print(f"🚨 Generando alerta TTHH con IA para {serial}...")
+            
+            contenido_ia_tthh = redactar_alerta_tthh(
                 empleado.nombre if empleado else 'Colaborador/a',
                 serial,
+                caso.empresa.nombre if caso.empresa else 'N/A',
                 checks,
-                caso.tipo.value if caso.tipo else 'General'
+                observaciones
             )
-        elif accion == 'ilegible':
-            contenido_ia = redactar_email_ilegible(
-                empleado.nombre if empleado else 'Colaborador/a',
-                serial,
-                checks
+            
+            # Email al jefe/TTHH
+            email_tthh_destinatario = obtener_email_tthh(caso.empresa.nombre if caso.empresa else 'Default')
+            
+            email_tthh = get_email_template_universal(
+                tipo_email='tthh',
+                nombre='Equipo de Talento Humano',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link,
+                checks_seleccionados=checks,
+                contenido_ia=contenido_ia_tthh,  # ✅ IA aquí
+                empleado_nombre=empleado.nombre if empleado else 'Colaborador/a'
+            )
+            
+            asunto_tthh = f"CC {caso.cedula} - {serial} - TTHH - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            enviar_email_con_adjuntos(
+                email_tthh_destinatario,
+                asunto_tthh,
+                email_tthh,
+                adjuntos_paths
+            )
+            
+            # Email confirmación a la empleada (plantilla estática)
+            email_empleada_falsa = get_email_template_universal(
+                tipo_email='falsa',
+                nombre=empleado.nombre if empleado else 'Colaborador/a',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link
+            )
+            
+            asunto_confirmacion = f"CC {caso.cedula} - {serial} - Confirmación - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            send_html_email(
+                caso.email_form,
+                asunto_confirmacion,
+                email_empleada_falsa,
+                caso=caso  # ✅ COPIA AUTOMÁTICA
             )
         
-        # Insertar contenido IA en plantilla
-        email_empleada = get_email_template_universal(
-            tipo_email=accion,
-            nombre=empleado.nombre if empleado else 'Colaborador/a',
-            serial=serial,
-            empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-            tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-            telefono=caso.telefono_form,
-            email=caso.email_form,
-            link_drive=caso.drive_link,
-            checks_seleccionados=checks,
-            contenido_ia=contenido_ia  # ✅ IA aquí
-        )
+        elif accion in ['completa', 'eps', 'falsa']:
+            # ✅ PLANTILLAS ESTÁTICAS (Gratis)
+            print(f"📄 Usando plantilla estática para {accion}...")
+            
+            email_empleada = get_email_template_universal(
+                tipo_email=accion,
+                nombre=empleado.nombre if empleado else 'Colaborador/a',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link
+            )
+            
+            estado_map_asunto = {
+                'completa': 'Validada',
+                'eps': 'EPS',
+                'falsa': 'Confirmación'
+            }
+            estado_label = estado_map_asunto.get(accion, 'Actualización')
+            asunto = f"CC {caso.cedula} - {serial} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            send_html_email(
+                caso.email_form,
+                asunto,
+                email_empleada,
+                caso=caso  # ✅ COPIA AUTOMÁTICA
+            )
         
-        # Enviar con formato de asunto actualizado
-        estado_label = 'Incompleta' if accion == 'incompleta' else 'Ilegible'
-        asunto = f"CC {caso.cedula} - {serial} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
-        enviar_email_con_adjuntos(
-            caso.email_form,
-            asunto,
-            email_empleada,
-            adjuntos_paths,
-            caso=caso  # ✅ COPIA AUTOMÁTICA
-        )
-    
-    elif accion == 'tthh':
-        # ✅ USAR IA para alerta a TTHH
-        print(f"🚨 Generando alerta TTHH con IA para {serial}...")
+        # Limpiar adjuntos temporales
+        for temp_file in adjuntos_paths:
+            try:
+                os.remove(temp_file)
+            except:
+                pass
         
-        contenido_ia_tthh = redactar_alerta_tthh(
-            empleado.nombre if empleado else 'Colaborador/a',
-            serial,
-            caso.empresa.nombre if caso.empresa else 'N/A',
-            checks,
-            observaciones
-        )
-        
-        # Email al jefe/TTHH
-        email_tthh_destinatario = obtener_email_tthh(caso.empresa.nombre if caso.empresa else 'Default')
-        
-        email_tthh = get_email_template_universal(
-            tipo_email='tthh',
-            nombre='Equipo de Talento Humano',
-            serial=serial,
-            empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-            tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-            telefono=caso.telefono_form,
-            email=caso.email_form,
-            link_drive=caso.drive_link,
-            checks_seleccionados=checks,
-            contenido_ia=contenido_ia_tthh,  # ✅ IA aquí
-            empleado_nombre=empleado.nombre if empleado else 'Colaborador/a'
-        )
-        
-        asunto_tthh = f"CC {caso.cedula} - {serial} - TTHH - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
-        enviar_email_con_adjuntos(
-            email_tthh_destinatario,
-            asunto_tthh,
-            email_tthh,
-            adjuntos_paths
-        )
-        
-        # Email confirmación a la empleada (plantilla estática)
-        email_empleada_falsa = get_email_template_universal(
-            tipo_email='falsa',
-            nombre=empleado.nombre if empleado else 'Colaborador/a',
-            serial=serial,
-            empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-            tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-            telefono=caso.telefono_form,
-            email=caso.email_form,
-            link_drive=caso.drive_link
-        )
-        
-        asunto_confirmacion = f"CC {caso.cedula} - {serial} - Confirmación - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
-        send_html_email(
-            caso.email_form,
-            asunto_confirmacion,
-            email_empleada_falsa,
-            caso=caso  # ✅ COPIA AUTOMÁTICA
-        )
-    
-    elif accion in ['completa', 'eps', 'falsa']:
-        # ✅ PLANTILLAS ESTÁTICAS (Gratis)
-        print(f"📄 Usando plantilla estática para {accion}...")
-        
-        email_empleada = get_email_template_universal(
-            tipo_email=accion,
-            nombre=empleado.nombre if empleado else 'Colaborador/a',
-            serial=serial,
-            empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-            tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-            telefono=caso.telefono_form,
-            email=caso.email_form,
-            link_drive=caso.drive_link
-        )
-        
-        estado_map_asunto = {
-            'completa': 'Validada',
-            'eps': 'EPS',
-            'falsa': 'Confirmación'
-        }
-        estado_label = estado_map_asunto.get(accion, 'Actualización')
-        asunto = f"CC {caso.cedula} - {serial} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
-        send_html_email(
-            caso.email_form,
-            asunto,
-            email_empleada,
-            caso=caso  # ✅ COPIA AUTOMÁTICA
-        )
-    
-    # Limpiar adjuntos temporales
-    for temp_file in adjuntos_paths:
-        try:
-            os.remove(temp_file)
-        except:
-            pass
-    
-    # Registrar evento
-    registrar_evento(
-        db, caso.id, 
-        "validacion_con_ia" if contenido_ia else "validacion_estatica",
-        actor="Validador",
-        estado_anterior=caso.estado.value,
-        estado_nuevo=nuevo_estado.value,
-        motivo=observaciones,
-        metadata={"checks": checks, "usa_ia": bool(contenido_ia)}
-    )
-    
-    # ✅ SINCRONIZAR CON GOOGLE SHEETS
-    try:
-        from app.google_sheets_tracker import actualizar_caso_en_sheet, registrar_cambio_estado_sheet
-        actualizar_caso_en_sheet(caso, accion="actualizar")
-        registrar_cambio_estado_sheet(
-            caso, 
+        # Registrar evento
+        registrar_evento(
+            db, caso.id, 
+            "validacion_con_ia" if contenido_ia else "validacion_estatica",
+            actor="Validador",
             estado_anterior=caso.estado.value,
             estado_nuevo=nuevo_estado.value,
-            validador="Sistema",
-            observaciones=observaciones
+            motivo=observaciones,
+            metadata={"checks": checks, "usa_ia": bool(contenido_ia)}
         )
-        print(f"✅ Caso {serial} sincronizado con Google Sheets")
-    except Exception as e:
-        print(f"⚠️ Error sincronizando con Sheets: {e}")
+        
+        # ✅ SINCRONIZAR CON GOOGLE SHEETS
+        try:
+            from app.google_sheets_tracker import actualizar_caso_en_sheet, registrar_cambio_estado_sheet
+            actualizar_caso_en_sheet(caso, accion="actualizar")
+            registrar_cambio_estado_sheet(
+                caso, 
+                estado_anterior=caso.estado.value,
+                estado_nuevo=nuevo_estado.value,
+                validador="Sistema",
+                observaciones=observaciones
+            )
+            print(f"✅ Caso {serial} sincronizado con Google Sheets")
+        except Exception as e:
+            print(f"⚠️ Error sincronizando con Sheets: {e}")
     
     return {
         "status": "ok",
