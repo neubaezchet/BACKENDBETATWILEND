@@ -1,10 +1,10 @@
 """
 Generador de Seriales V3 - Super Simplificado
-IncaNeurobaeza - 2025
+IncaNeurobaeza - 2026
 
-FORMATO: CEDULA DD MM YYYY DD MM YYYY
-Ejemplo: 1085043374 01 01 2025 20 01 2025
-Sin fecha_fin: 1085043374 01 01 2025
+FORMATO: CEDULA DD MM YYYY- DD MM YY YY
+Ejemplo: 1085043374 01 01 2026- 02 01 20 26
+Sin fecha_fin: 1085043374 01 01 2026
 """
 
 from datetime import date
@@ -18,8 +18,8 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     Genera un serial único para una incapacidad o certificado
     
     Formato V3:
-    - Con fecha_fin: CEDULA DD MM YYYY DD MM YYYY (ej: 1085043374 01 01 2025 20 01 2025)
-    - Sin fecha_fin: CEDULA DD MM YYYY (ej: 1085043374 01 01 2025)
+    - Con fecha_fin: CEDULA DD MM YYYY- DD MM YY YY (ej: 1085043374 01 01 2026- 02 01 20 26)
+    - Sin fecha_fin: CEDULA DD MM YYYY (ej: 1085043374 01 01 2026)
     SIEMPRE usa fechas, si no se proporcionan usa la fecha actual
     """
 
@@ -30,15 +30,22 @@ def generar_serial_unico(db: Session, nombre: str, cedula: str, fecha_inicio: da
     # Formatear fecha_inicio en formato DD MM YYYY (espacios)
     fecha_ini_str = fecha_inicio.strftime("%d %m %Y")
     
-    # Si no hay fecha_fin, NO duplicar
+    # Si no hay fecha_fin, NO agregar segunda fecha
     if not fecha_fin:
         fecha_fin_str = None
     else:
-        fecha_fin_str = fecha_fin.strftime("%d %m %Y")
+        # Formatear fecha_fin en formato DD MM YY YY (año separado en 2 partes)
+        dia = fecha_fin.strftime("%d")
+        mes = fecha_fin.strftime("%m")
+        año = fecha_fin.strftime("%Y")
+        # Separar año: 2026 → "20 26"
+        año_parte1 = año[:2]
+        año_parte2 = año[2:]
+        fecha_fin_str = f"{dia} {mes} {año_parte1} {año_parte2}"
 
-    # Construir serial V3: documento + fechas con espacios
+    # Construir serial V3: documento + fechas con espacios y guion
     if fecha_fin_str:
-        serial = f"{cedula} {fecha_ini_str} {fecha_fin_str}"
+        serial = f"{cedula} {fecha_ini_str}- {fecha_fin_str}"
     else:
         serial = f"{cedula} {fecha_ini_str}"
 
@@ -89,8 +96,8 @@ def validar_serial(serial: str) -> bool:
     Valida que un serial tenga el formato correcto
     
     Formatos válidos:
-    - V3: CEDULA DD MM YYYY DD MM YYYY (1085043374 01 01 2025 20 01 2025)
-    - V3 sin fecha_fin: CEDULA DD MM YYYY (1085043374 01 01 2025)
+    - V3: CEDULA DD MM YYYY- DD MM YY YY (1085043374 01 01 2026- 02 01 20 26)
+    - V3 sin fecha_fin: CEDULA DD MM YYYY (1085043374 01 01 2026)
     - Tradicional: LETRAS + NUMEROS (DB10850433740)
     
     Args:
@@ -102,8 +109,8 @@ def validar_serial(serial: str) -> bool:
     if not serial:
         return False
     
-    # Patrón V3 con espacios: cedula + espacios + DD MM YYYY + espacios + DD MM YYYY
-    patron_v3_completo = r'^\d{7,11}\s+\d{2}\s+\d{2}\s+\d{4}\s+\d{2}\s+\d{2}\s+\d{4}(-\d+)?$'
+    # Patrón V3 con espacios y guion: cedula + espacios + DD MM YYYY- + espacios + DD MM YY YY
+    patron_v3_completo = r'^\d{7,11}\s+\d{2}\s+\d{2}\s+\d{4}-\s+\d{2}\s+\d{2}\s+\d{2}\s+\d{2}(-\d+)?$'
     
     # Patrón V3 sin fecha_fin: cedula + espacios + DD MM YYYY
     patron_v3_simple = r'^\d{7,11}\s+\d{2}\s+\d{2}\s+\d{4}(-\d+)?$'
@@ -120,7 +127,7 @@ def validar_serial_certificado(serial: str) -> dict:
     Valida y extrae información de un serial de certificado V3
     
     Formatos soportados:
-    - Con fecha_fin: CEDULA DD MM YYYY DD MM YYYY
+    - Con fecha_fin: CEDULA DD MM YYYY- DD MM YY YY
     - Sin fecha_fin: CEDULA DD MM YYYY
     
     Returns:
@@ -133,28 +140,51 @@ def validar_serial_certificado(serial: str) -> dict:
     """
     
     try:
-        partes = serial.split()
-        
-        if len(partes) < 4:  # Al menos: cedula + DD + MM + YYYY
-            return {'valido': False}
-        
-        cedula = partes[0]
-        
-        # Extraer primera fecha: DD MM YYYY
-        dia_ini = int(partes[1])
-        mes_ini = int(partes[2])
-        ano_ini = int(partes[3])
-        
-        from datetime import datetime
-        fecha_inicio = datetime(ano_ini, mes_ini, dia_ini).date()
-        
-        # Si hay más partes, extraer fecha_fin: DD MM YYYY
-        fecha_fin = None
-        if len(partes) >= 8:  # cedula + DD + MM + YYYY + DD + MM + YYYY
-            dia_fin = int(partes[4])
-            mes_fin = int(partes[5])
-            ano_fin = int(partes[6])
-            fecha_fin = datetime(ano_fin, mes_fin, dia_fin).date()
+        # Primero separar por el guion si existe
+        if '-' in serial:
+            # Tiene fecha_fin
+            partes_principales = serial.split('-')
+            parte_inicio = partes_principales[0].strip()
+            parte_fin = partes_principales[1].strip() if len(partes_principales) > 1 else None
+            
+            # Parsear parte de inicio: CEDULA DD MM YYYY
+            tokens_inicio = parte_inicio.split()
+            if len(tokens_inicio) < 4:
+                return {'valido': False}
+            
+            cedula = tokens_inicio[0]
+            dia_ini = int(tokens_inicio[1])
+            mes_ini = int(tokens_inicio[2])
+            ano_ini = int(tokens_inicio[3])
+            
+            from datetime import datetime
+            fecha_inicio = datetime(ano_ini, mes_ini, dia_ini).date()
+            
+            # Parsear parte fin: DD MM YY YY
+            fecha_fin = None
+            if parte_fin:
+                tokens_fin = parte_fin.split()
+                if len(tokens_fin) >= 4:
+                    dia_fin = int(tokens_fin[0])
+                    mes_fin = int(tokens_fin[1])
+                    # Reconstruir año: "20 26" → 2026
+                    ano_fin = int(tokens_fin[2] + tokens_fin[3])
+                    fecha_fin = datetime(ano_fin, mes_fin, dia_fin).date()
+        else:
+            # Sin fecha_fin, solo: CEDULA DD MM YYYY
+            partes = serial.split()
+            
+            if len(partes) < 4:
+                return {'valido': False}
+            
+            cedula = partes[0]
+            dia_ini = int(partes[1])
+            mes_ini = int(partes[2])
+            ano_ini = int(partes[3])
+            
+            from datetime import datetime
+            fecha_inicio = datetime(ano_ini, mes_ini, dia_ini).date()
+            fecha_fin = None
         
         return {
             'valido': True,
@@ -240,11 +270,11 @@ def test_generador_seriales():
     
     print("\nTest 2: Validación de seriales")
     tests_validacion = [
-        # Formato V3 con espacios
-        ("1085043374 01 01 2025 20 01 2025", True),
-        ("1095043375 15 03 2025 15 03 2025", True),
-        ("1085043374 01 01 2025", True),  # Sin fecha_fin
-        ("1085043374 01 01 2025-1", True),  # Con sufijo
+        # Formato V3 con espacios y guion
+        ("1085043374 01 01 2026- 02 01 20 26", True),
+        ("1095043375 15 03 2025- 15 03 20 25", True),
+        ("1085043374 01 01 2026", True),  # Sin fecha_fin
+        ("1085043374 01 01 2026-1", True),  # Con sufijo
         # Formato tradicional
         ("DB10850433740", True),
         ("JCP12345670", True),
@@ -263,7 +293,7 @@ def test_generador_seriales():
         print(f"  {estado} '{serial}' → {resultado} (esperado: {esperado})")
     
     print("\nTest 3: Validación de serial V3")
-    info = validar_serial_certificado("1085043374 01 01 2025 20 01 2025")
+    info = validar_serial_certificado("1085043374 01 01 2026- 02 01 20 26")
     print(f"  Válido: {info['valido']}")
     print(f"  Cédula: {info.get('cedula', 'N/A')}")
     print(f"  Fecha inicio: {info.get('fecha_inicio', 'N/A')}")
