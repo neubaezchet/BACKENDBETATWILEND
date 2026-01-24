@@ -153,6 +153,15 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
             whatsapp = caso.telefono_form
             print(f"📱 WhatsApp: {whatsapp}")
     
+    # ✅ GENERAR MENSAJE DE WHATSAPP A PARTIR DEL SUBJECT Y SERIAL
+    whatsapp_message = f"""
+{subject}
+
+Serial: {caso.serial if caso else 'N/A'}
+
+Este es un mensaje automático de IncaNeurobaeza.
+    """.strip()
+    
     # Enviar a n8n
     resultado = enviar_a_n8n(
         tipo_notificacion=tipo_notificacion,
@@ -163,7 +172,7 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
         cc_email=cc_empresa,
         correo_bd=correo_bd,
         whatsapp=whatsapp,
-        whatsapp_message=None,
+        whatsapp_message=whatsapp_message,  # ✅ ACTUALIZADO: Enviar mensaje de WhatsApp
         adjuntos_base64=adjuntos_base64
     )
     
@@ -240,6 +249,15 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
             whatsapp = caso.telefono_form
             print(f"📱 WhatsApp: {whatsapp}")
     
+    # ✅ GENERAR MENSAJE DE WHATSAPP A PARTIR DEL SUBJECT Y SERIAL
+    whatsapp_message = f"""
+{subject}
+
+Serial: {caso.serial if caso else 'N/A'}
+
+Este es un mensaje automático de IncaNeurobaeza.
+    """.strip()
+    
     # Enviar a n8n
     resultado = enviar_a_n8n(
         tipo_notificacion=tipo_notificacion,
@@ -250,7 +268,7 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
         cc_email=cc_empresa,
         correo_bd=correo_bd,
         whatsapp=whatsapp,
-        whatsapp_message=None,
+        whatsapp_message=whatsapp_message,  # ✅ ACTUALIZADO: Enviar mensaje de WhatsApp
         adjuntos_base64=adjuntos_base64
     )
     

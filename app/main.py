@@ -383,6 +383,8 @@ def mapear_tipo_incapacidad(tipo_frontend: str) -> TipoIncapacidad:
         'labor': TipoIncapacidad.ENFERMEDAD_LABORAL,
         'traffic': TipoIncapacidad.ACCIDENTE_TRANSITO,
         'especial': TipoIncapacidad.ENFERMEDAD_ESPECIAL,
+        'prelicencia': TipoIncapacidad.PRELICENCIA,  # ✅ NUEVO
+        'certificado': TipoIncapacidad.CERTIFICADO,  # ✅ NUEVO
     }
     return tipo_map.get(tipo_frontend.lower(), TipoIncapacidad.ENFERMEDAD_GENERAL)
 
@@ -926,20 +928,14 @@ async def subir_incapacidad(
         nuevo_numero_reenvio = total_reenvios + 1
         print(f"🔄 Reenvío #{nuevo_numero_reenvio} detectado para caso {caso_existente.serial}")
     
-    # ✅ Generar serial único basado en nombre y cédula
-    if empleado_bd:
-        serial_base = generar_serial_unico(
-            db=db,
-            nombre=empleado_bd.nombre,
-            cedula=cedula
-        )
-    else:
-        # Si no hay empleado, usar iniciales genéricas
-        serial_base = generar_serial_unico(
-            db=db,
-            nombre="DESCONOCIDO",
-            cedula=cedula
-        )
+    # ✅ Generar serial único basado en cédula y fechas
+    # NUEVO FORMATO: CEDULA_DD_MM_YYYY_DD_MM_YYYY
+    serial_base = generar_serial_unico(
+        db=db,
+        cedula=cedula,
+        fecha_inicio=fecha_inicio or date.today(),
+        fecha_fin=fecha_fin or date.today()
+    )
     
     # ✅ MODIFICAR SERIAL SI ES REENVÍO
     if es_reenvio:
@@ -1064,25 +1060,73 @@ async def subir_incapacidad(
         if empleado_bd.empresa and empleado_bd.empresa.email_copia:
             cc_empresa = empleado_bd.empresa.email_copia
         
-        html_empleado = get_confirmation_template(
-            nombre=nombre,
-            serial=consecutivo,
-            empresa=empresa_reg,
-            tipo_incapacidad=tipo_bd.value if tipo_bd else 'General',
-            telefono=telefono,
-            email=email,
-            link_drive=link_pdf,
-            archivos_nombres=original_filenames
-        )
+        # ✅ VERIFICAR SI ES CERTIFICADO DE HOSPITALIZACIÓN (mensaje especial)
+        es_certificado = tipo_bd and tipo_bd.value.lower() == 'certificado' if tipo_bd else False
         
-        # ✅ ASUNTO DEL EMAIL (formato consistente para hilos)
-        asunto = f"Incapacidad {consecutivo} - {nombre} - {empresa_reg}"
+        if es_certificado:
+            # Mensaje simple para certificado de hospitalización
+            html_empleado = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
+                    <h1>IncaNeurobaeza</h1>
+                    <p style="margin: 0; font-style: italic;">"Trabajando para ayudarte"</p>
+                </div>
+                <div style="padding: 30px 20px;">
+                    <p>Hola {nombre},</p>
+                    <p><strong>✅ Novedad se a tomado en cuenta</strong></p>
+                    <p>Hemos recibido tu certificado de hospitalización.</p>
+                    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #667eea; margin: 20px 0;">
+                        <strong>Serial:</strong> {consecutivo}<br>
+                        <strong>Empresa:</strong> {empresa_reg}
+                    </div>
+                    <p>Gracias por usar IncaNeurobaeza.</p>
+                </div>
+            </div>
+            """
+            asunto = f"Certificado de Hospitalización {consecutivo} - {nombre}"
+            mensaje_whatsapp = f"""
+Hola {nombre},
+
+✅ Novedad se a tomado en cuenta
+
+Hemos recibido tu certificado de hospitalización.
+Serial: {consecutivo}
+
+Gracias por usar IncaNeurobaeza.
+            """.strip()
+        else:
+            # Template normal para otras incapacidades
+            html_empleado = get_confirmation_template(
+                nombre=nombre,
+                serial=consecutivo,
+                empresa=empresa_reg,
+                tipo_incapacidad=tipo_bd.value if tipo_bd else 'General',
+                telefono=telefono,
+                email=email,
+                link_drive=link_pdf,
+                archivos_nombres=original_filenames
+            )
+            asunto = f"Incapacidad {consecutivo} - {nombre} - {empresa_reg}"
+            
+            # ✅ Mensaje para WhatsApp (versión de texto del HTML)
+            mensaje_whatsapp = f"""
+Hola,
+
+Confirmo recibido de tu documentación de incapacidad.
+Serial: {consecutivo}
+Empresa: {empresa_reg}
+
+Tu solicitud está siendo revisada.
+
+Gracias por usar IncaNeurobaeza.
+            """.strip()
         
-        # ✅ ENVIAR VIA N8N con COPIAS
+        # ✅ ENVIAR VIA N8N con COPIAS Y WHATSAPP
         from app.n8n_notifier import enviar_a_n8n
         
         emails_enviados = []
         if email:  # Email del formulario como TO principal
+            
             resultado = enviar_a_n8n(
                 tipo_notificacion='confirmacion',
                 email=email,
@@ -1091,6 +1135,8 @@ async def subir_incapacidad(
                 html_content=html_empleado,
                 cc_email=cc_empresa,
                 correo_bd=correo_empleado,
+                whatsapp=phoneNumber,  # ✅ NUEVO: Enviar teléfono
+                whatsapp_message=mensaje_whatsapp,  # ✅ NUEVO: Enviar mensaje
                 adjuntos_base64=[]
             )
             if resultado:
@@ -1111,6 +1157,15 @@ async def subir_incapacidad(
             telefono=telefono
         )
         
+        # ✅ ENVIAR WHATSAPP DE SUPERVISIÓN
+        mensaje_supervision_whatsapp = f"""
+Copia de Registro - {consecutivo}
+Empresa: {empresa_reg}
+Cédula: {cedula}
+
+Documentación recibida en IncaNeurobaeza.
+        """.strip()
+        
         enviar_a_n8n(
             tipo_notificacion='extra',
             email="xoblaxbaezaospino@gmail.com",
@@ -1119,6 +1174,8 @@ async def subir_incapacidad(
             html_content=html_supervision,
             cc_email=None,
             correo_bd=None,
+            whatsapp=phoneNumber,  # ✅ NUEVO: Enviar teléfono
+            whatsapp_message=mensaje_supervision_whatsapp,  # ✅ NUEVO: Enviar mensaje
             adjuntos_base64=[]
         )
         
@@ -1160,6 +1217,19 @@ async def subir_incapacidad(
         </div>
         """
         
+        # ✅ ENVIAR WHATSAPP CONFIRMACIÓN CÉDULA NO ENCONTRADA
+        mensaje_whatsapp_desconocido = f"""
+Hola,
+
+Recibimos tu documentación de incapacidad.
+Serial: {consecutivo}
+
+Tu cédula no está en nuestra base de datos.
+Nos comunicaremos contigo pronto.
+
+Gracias por usar IncaNeurobaeza.
+        """.strip()
+        
         enviar_a_n8n(
             tipo_notificacion='confirmacion',
             email=email,
@@ -1168,6 +1238,8 @@ async def subir_incapacidad(
             html_content=html_confirmacion,
             cc_email=None,
             correo_bd=None,
+            whatsapp=phoneNumber,  # ✅ NUEVO: Enviar teléfono
+            whatsapp_message=mensaje_whatsapp_desconocido,  # ✅ NUEVO: Enviar mensaje
             adjuntos_base64=[]
         )
         
