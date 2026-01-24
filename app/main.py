@@ -18,7 +18,7 @@ from app.database import (
 )
 from app.validador import router as validador_router
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
-from app.serial_generator import generar_serial_unico, generar_serial_automatico  # ✅ NUEVO
+from app.serial_generator import generar_serial_unico  # ✅ NUEVO
 
 from app.n8n_notifier import enviar_a_n8n
 from fastapi import Request, Header
@@ -928,23 +928,17 @@ async def subir_incapacidad(
     
     # ✅ Generar serial único basado en nombre y cédula
     if empleado_bd:
-        serial_base = generar_serial_automatico(
+        serial_base = generar_serial_unico(
             db=db,
-            cedula=cedula,
-            tipo=tipo,
             nombre=empleado_bd.nombre,
-            fecha_inicio=fecha_inicio,
-            fecha_fin=fecha_fin
+            cedula=cedula
         )
     else:
         # Si no hay empleado, usar iniciales genéricas
-        serial_base = generar_serial_automatico(
+        serial_base = generar_serial_unico(
             db=db,
-            cedula=cedula,
-            tipo=tipo,
             nombre="DESCONOCIDO",
-            fecha_inicio=fecha_inicio,
-            fecha_fin=fecha_fin
+            cedula=cedula
         )
     
     # ✅ MODIFICAR SERIAL SI ES REENVÍO
