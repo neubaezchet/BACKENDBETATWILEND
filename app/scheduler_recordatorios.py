@@ -46,39 +46,6 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None) -> b
     
     print(f"❌ Error enviando email")
     return False
-    brevo_from_email = os.environ.get("BREVO_FROM_EMAIL", "notificaciones@smtp-brevo.com")
-    reply_to_email = os.environ.get("SMTP_EMAIL", "davidbaezaospino@gmail.com")
-
-    if not brevo_api_key:
-        print("❌ Error: Falta BREVO_API_KEY")
-        return False
-
-    try:
-        configuration = sib_api_v3_sdk.Configuration()
-        configuration.api_key['api-key'] = brevo_api_key
-        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
-        
-        if isinstance(html_body, bytes): 
-            html_body = html_body.decode('utf-8')
-        
-        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-            to=[{"email": to_email}],
-            sender={"name": "IncaNeurobaeza", "email": brevo_from_email},
-            reply_to={"email": reply_to_email},
-            subject=subject,
-            html_content=html_body
-        )
-        
-        api_response = api_instance.send_transac_email(send_smtp_email)
-        print(f"✅ Email enviado a {to_email} (ID: {api_response.message_id})")
-        return True
-        
-    except ApiException as e:
-        print(f"❌ Error Brevo: {e}")
-        return False
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
 
 
 def verificar_casos_pendientes():

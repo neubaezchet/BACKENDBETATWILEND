@@ -8,6 +8,10 @@ import os, uuid
 from pathlib import Path
 from datetime import datetime, date
 import calendar
+from dotenv import load_dotenv
+
+# ✅ Cargar variables de entorno desde .env
+load_dotenv()
 
 from app.drive_uploader import upload_to_drive, upload_inteligente
 from app.pdf_merger import merge_pdfs_from_uploads
