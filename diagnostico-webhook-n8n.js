@@ -5,7 +5,7 @@
 const axios = require('axios');
 
 // Configuración desde tu .env
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n-incaneurobaeza.onrender.com/webhook-test/incapacidades';
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://railway-n8n-production-5a3f.up.railway.app/webhook/incapacidades';
 
 /**
  * Test 1: Verificar que N8N esté accesible

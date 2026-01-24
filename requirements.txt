@@ -1,6 +1,7 @@
 # FastAPI y servidor
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
+python-dotenv==1.0.0
 
 # Base de datos
 sqlalchemy==2.0.25
@@ -14,9 +15,6 @@ numpy==1.26.4
 # PDFs
 pymupdf==1.23.8
 pillow==10.2.0
-
-# Emails
-sib-api-v3-sdk==7.6.0
 
 # Google Drive
 google-auth==2.27.0

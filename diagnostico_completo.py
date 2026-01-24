@@ -27,7 +27,7 @@ def test_result(passed, message):
     return passed
 
 # ==================== CONFIGURACIÓN ====================
-API_BASE_URL = "https://bakcend-gemi-cha-2.onrender.com"
+API_BASE_URL = "https://web-production-95ed.up.railway.app"
 ADMIN_TOKEN = "0b9685e9a9ff3c24652acaad881ec7b2b4c17f6082ad164d10a6e67589f3f67c"
 
 print(f"{Color.BLUE}📡 URL del Backend:{Color.END} {API_BASE_URL}")

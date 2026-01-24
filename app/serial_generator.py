@@ -1,7 +1,7 @@
 """
 Generador de seriales únicos para casos de incapacidad
-NUEVO FORMATO: CEDULA_FECHA_INICIO_FECHA_FIN
-Ejemplo: 1085043374_01_01_2026_02_02_2026
+NUEVO FORMATO: CEDULA DD MM YYYY DD MM YYYY
+Ejemplo: 1085043374 01 01 2026 02 02 2026
 """
 
 from sqlalchemy.orm import Session
@@ -13,14 +13,14 @@ def generar_serial_unico(db: Session, cedula: str, fecha_inicio: date, fecha_fin
     """
     Genera un serial único para una incapacidad
     
-    NUEVO FORMATO: CEDULA_FECHA_INICIO_FECHA_FIN
+    NUEVO FORMATO: CEDULA DD MM YYYY DD MM YYYY
     
     Ejemplo:
         cedula = "1085043374"
         fecha_inicio = "2026-01-01"
         fecha_fin = "2026-02-02"
         
-        Serial → 1085043374_01_01_2026_02_02_2026
+        Serial → 1085043374 01 01 2026 02 02 2026
     
     Args:
         db: Sesión de base de datos
@@ -32,23 +32,23 @@ def generar_serial_unico(db: Session, cedula: str, fecha_inicio: date, fecha_fin
         Serial único (str)
     """
     
-    # Formatear fechas: DD_MM_YYYY
+    # Formatear fechas: DD MM YYYY (con espacios)
     if isinstance(fecha_inicio, str):
         fecha_inicio = fecha_inicio.split('T')[0]  # Remover hora si existe
         fecha_inicio_parts = fecha_inicio.split('-')  # YYYY-MM-DD
-        fecha_inicio_fmt = f"{fecha_inicio_parts[2]}_{fecha_inicio_parts[1]}_{fecha_inicio_parts[0]}"
+        fecha_inicio_fmt = f"{fecha_inicio_parts[2]} {fecha_inicio_parts[1]} {fecha_inicio_parts[0]}"
     else:
-        fecha_inicio_fmt = fecha_inicio.strftime('%d_%m_%Y')
+        fecha_inicio_fmt = fecha_inicio.strftime('%d %m %Y')
     
     if isinstance(fecha_fin, str):
         fecha_fin = fecha_fin.split('T')[0]  # Remover hora si existe
         fecha_fin_parts = fecha_fin.split('-')  # YYYY-MM-DD
-        fecha_fin_fmt = f"{fecha_fin_parts[2]}_{fecha_fin_parts[1]}_{fecha_fin_parts[0]}"
+        fecha_fin_fmt = f"{fecha_fin_parts[2]} {fecha_fin_parts[1]} {fecha_fin_parts[0]}"
     else:
-        fecha_fin_fmt = fecha_fin.strftime('%d_%m_%Y')
+        fecha_fin_fmt = fecha_fin.strftime('%d %m %Y')
     
-    # Construir serial: CEDULA_DD_MM_YYYY_DD_MM_YYYY
-    serial = f"{cedula}_{fecha_inicio_fmt}_{fecha_fin_fmt}"
+    # Construir serial: CEDULA DD MM YYYY DD MM YYYY (con espacios)
+    serial = f"{cedula} {fecha_inicio_fmt} {fecha_fin_fmt}"
     
     # Verificar que no exista (por duplicación de fechas)
     existe = db.query(Case).filter(Case.serial == serial).first()
@@ -66,8 +66,8 @@ def validar_serial(serial: str) -> bool:
     """
     Valida que un serial tenga el formato correcto
     
-    Formato esperado: CEDULA_DD_MM_YYYY_DD_MM_YYYY
-    Ejemplo válido: 1085043374_01_01_2026_02_02_2026
+    Formato esperado: CEDULA DD MM YYYY DD MM YYYY
+    Ejemplo válido: 1085043374 01 01 2026 02 02 2026
     
     Args:
         serial: Serial a validar
@@ -78,8 +78,8 @@ def validar_serial(serial: str) -> bool:
     if not serial:
         return False
     
-    # Patrón: números_DD_MM_YYYY_DD_MM_YYYY (opcional _v número para duplicados)
-    patron = r'^\d{10}_\d{2}_\d{2}_\d{4}_\d{2}_\d{2}_\d{4}(_v\d+)?$'
+    # Patrón: números DD MM YYYY DD MM YYYY (opcional _v número para duplicados)
+    patron = r'^\d{10} \d{2} \d{2} \d{4} \d{2} \d{2} \d{4}(_v\d+)?$'
     return bool(re.match(patron, serial))
 
 # ==================== TESTS ====================

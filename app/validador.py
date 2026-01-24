@@ -16,7 +16,6 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 import pandas as pd
-import sib_api_v3_sdk
 
 from app.database import (
     get_db, Case, CaseDocument, CaseEvent, CaseNote, Employee, 
@@ -2103,52 +2102,76 @@ async def obtener_historial_reenvios(
 async def toggle_bloqueo(
     serial: str,
     accion: str = Form(...),
-    motivo: str = Form(...),
+    motivo: str = Form(default=""),
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
     """
     Permite al validador bloquear o desbloquear un caso.
     - accion: 'bloquear' o 'desbloquear'
-    - motivo: razón del bloqueo/desbloqueo
+    - motivo: razón del bloqueo/desbloqueo (opcional)
     """
     
-    caso = db.query(Case).filter(Case.serial == serial).first()
+    try:
+        print(f"\n🔄 Toggle bloqueo - Serial: {serial}, Acción: {accion}")
+        
+        caso = db.query(Case).filter(Case.serial == serial).first()
+        
+        if not caso:
+            print(f"❌ Caso no encontrado: {serial}")
+            raise HTTPException(status_code=404, detail=f"Caso {serial} no encontrado")
+        
+        print(f"   Caso actual - Bloqueado: {caso.bloquea_nueva}, Estado: {caso.estado.value if caso.estado else 'N/A'}")
+        
+        estado_actual = caso.estado.value if caso.estado else 'DESCONOCIDO'
+        
+        if accion == 'bloquear':
+            caso.bloquea_nueva = True
+            print(f"   🔒 Bloqueando caso...")
+        elif accion == 'desbloquear':
+            caso.bloquea_nueva = False
+            print(f"   🔓 Desbloqueando caso...")
+        else:
+            print(f"❌ Acción inválida: {accion}")
+            raise HTTPException(status_code=400, detail=f"Acción inválida. Use 'bloquear' o 'desbloquear'. Recibido: {accion}")
+        
+        # Registrar evento
+        try:
+            registrar_evento(
+                db, caso.id,
+                accion=f"{accion}_manual",
+                actor="Validador",
+                estado_anterior=estado_actual,
+                estado_nuevo=estado_actual,
+                motivo=motivo or f"Cambio manual de bloqueo"
+            )
+            print(f"   ✅ Evento registrado")
+        except Exception as e:
+            print(f"   ⚠️ Error registrando evento: {e}")
+        
+        # Guardar cambios
+        db.commit()
+        print(f"   ✅ Cambios guardados en BD")
+        
+        emoji = '🔒' if accion == 'bloquear' else '🔓'
+        print(f"\n{emoji} Caso {serial} {accion}do exitosamente")
+        
+        return {
+            "success": True,
+            "serial": serial,
+            "mensaje": f"Caso {accion}do exitosamente. Motivo: {motivo or 'Manual'}",
+            "bloquea_nueva": caso.bloquea_nueva,
+            "estado": caso.estado.value if caso.estado else 'DESCONOCIDO',
+            "accion": accion
+        }
     
-    if not caso:
-        raise HTTPException(status_code=404, detail="Caso no encontrado")
-    
-    estado_actual = caso.estado.value if caso.estado else 'DESCONOCIDO'
-    
-    if accion == 'bloquear':
-        caso.bloquea_nueva = True
-    elif accion == 'desbloquear':
-        caso.bloquea_nueva = False
-    else:
-        raise HTTPException(status_code=400, detail="Acción inválida. Use 'bloquear' o 'desbloquear'")
-    
-    # Registrar evento
-    registrar_evento(
-        db, caso.id,
-        accion=f"{accion}_manual",
-        actor="Validador",
-        estado_anterior=estado_actual,
-        estado_nuevo=estado_actual,
-        motivo=motivo
-    )
-    
-    db.commit()
-    
-    emoji = '🔒' if accion == 'bloquear' else '🔓'
-    print(f"{emoji} Caso {serial} {accion}do manualmente. Motivo: {motivo}")
-    
-    return {
-        "success": True,
-        "serial": serial,
-        "mensaje": f"Caso {accion}do exitosamente. Motivo: {motivo}",
-        "bloquea_nueva": caso.bloquea_nueva,
-        "accion": accion
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en toggle_bloqueo: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error al procesar bloqueo: {str(e)}")
 
 @router.post("/casos/{serial}/desbloquear")
 async def desbloquear_caso_manual(
