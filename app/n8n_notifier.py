@@ -29,7 +29,7 @@ def enviar_a_n8n(
     # ✅ URL del webhook de n8n
     n8n_webhook_url = os.environ.get(
         "N8N_WEBHOOK_URL",
-        "https://incaneurobaeza-email-whatsapp-v5-1-production.up.railway.app/webhook/incapacidades"
+        "https://railway-n8n-production-5a3f.up.railway.app/webhook/incapacidades"
     )
     
     # ✅ Construir payload
@@ -127,7 +127,7 @@ def verificar_salud_n8n() -> bool:
     """
     n8n_webhook_url = os.environ.get(
         "N8N_WEBHOOK_URL",
-        "https://incaneurobaeza-email-whatsapp-v5-1-production.up.railway.app/webhook/incapacidades"
+        "https://railway-n8n-production-5a3f.up.railway.app/webhook/incapacidades"
     )
     
     try:

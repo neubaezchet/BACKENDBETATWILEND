@@ -1129,6 +1129,7 @@ Gracias por usar IncaNeurobaeza.
         from app.n8n_notifier import enviar_a_n8n
         
         emails_enviados = []
+        notificacion_exitosa = False
         if email:  # Email del formulario como TO principal
             
             resultado = enviar_a_n8n(
@@ -1145,6 +1146,9 @@ Gracias por usar IncaNeurobaeza.
             )
             if resultado:
                 emails_enviados.append(correo_empleado)
+                notificacion_exitosa = True
+            else:
+                print(f"⚠️ Error al enviar notificación vía n8n")
         
         
         
@@ -1190,7 +1194,12 @@ Documentación recibida en IncaNeurobaeza.
             "case_id": nuevo_caso.id,
             "link_pdf": link_pdf,
             "archivos_combinados": len(original_filenames),
-            "correos_enviados": emails_enviados
+            "correos_enviados": emails_enviados,
+            "notificacion_enviada": notificacion_exitosa,
+            "canales_notificados": {
+                "email": notificacion_exitosa,
+                "whatsapp": notificacion_exitosa and bool(phoneNumber)
+            }
         }
     
     else:
@@ -1234,7 +1243,7 @@ Nos comunicaremos contigo pronto.
 Gracias por usar IncaNeurobaeza.
         """.strip()
         
-        enviar_a_n8n(
+        notificacion_exitosa = enviar_a_n8n(
             tipo_notificacion='confirmacion',
             email=email,
             serial=consecutivo,
@@ -1264,7 +1273,12 @@ Gracias por usar IncaNeurobaeza.
             "consecutivo": consecutivo,
             "case_id": nuevo_caso.id,
             "link_pdf": link_pdf,
-            "correos_enviados": [email]
+            "correos_enviados": [email],
+            "notificacion_enviada": notificacion_exitosa,
+            "canales_notificados": {
+                "email": notificacion_exitosa,
+                "whatsapp": notificacion_exitosa and bool(phoneNumber)
+            }
         }
 
 @app.post("/admin/migrar-excel")
