@@ -973,6 +973,57 @@ async def obtener_pdf_caso(
         print(f"❌ Error obteniendo PDF para {serial}: {e}")
         raise HTTPException(status_code=500, detail=f"Error procesando PDF: {str(e)}")
 
+@router.get("/casos/{serial}/pdf/stream")
+async def obtener_pdf_stream(
+    serial: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    ✅ NUEVA: Stream DIRECTO del PDF desde Drive
+    Sin procesamiento, sin conversión a imágenes
+    Carga instantánea con calidad original
+    """
+    
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso or not caso.drive_link:
+        raise HTTPException(status_code=404, detail="Caso o PDF no encontrado")
+    
+    try:
+        # Extraer file_id del link
+        if '/file/d/' in caso.drive_link:
+            file_id = caso.drive_link.split('/file/d/')[1].split('/')[0]
+        elif 'id=' in caso.drive_link:
+            file_id = caso.drive_link.split('id=')[1].split('&')[0]
+        else:
+            raise HTTPException(status_code=400, detail="Link inválido")
+        
+        # ✅ URL directa de descarga (sin conversión)
+        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        
+        # Stream desde Drive
+        response = requests.get(download_url, stream=True)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail="Error descargando PDF")
+        
+        # Retornar stream directo
+        return StreamingResponse(
+            response.iter_content(chunk_size=8192),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename={serial}.pdf",
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "public, max-age=3600"  # Cachear 1 hora
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en stream de PDF para {serial}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
 @router.post("/casos/{serial}/validar")
 async def validar_caso_con_checks(
     serial: str,
