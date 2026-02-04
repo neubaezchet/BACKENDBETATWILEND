@@ -28,6 +28,10 @@ from app.n8n_notifier import enviar_a_n8n
 from fastapi import Request, Header
 from app.database import CaseEvent
 
+# ⭐ AGREGAR ESTO - Reportes y Scheduler
+from app.routes.reportes import router as reportes_router
+from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
+
 # ==================== FUNCIÓN: DOCUMENTOS REQUERIDOS ====================
 def obtener_documentos_requeridos(tipo: str, dias: int = None, phantom: bool = None, mother_works: bool = None) -> list:
     """
@@ -83,6 +87,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# ⭐ AGREGAR ESTO - Router de reportes
+app.include_router(reportes_router)
 
 app.include_router(validador_router)
 
@@ -203,6 +210,13 @@ def startup_event():
     init_db()
     print("🚀 API iniciada")
     
+    # ⭐ AGREGAR - Scheduler de tabla viva
+    try:
+        iniciar_scheduler()
+        print("✅ Scheduler de tabla viva activado")
+    except Exception as e:
+        print(f"⚠️ Error iniciando scheduler tabla viva: {e}")
+    
     try:
         # Sincronización Excel
         scheduler_sync = iniciar_sincronizacion_automatica()
@@ -227,6 +241,13 @@ def startup_event():
 @app.on_event("shutdown")
 def shutdown_event():
     global scheduler_sync, scheduler_recordatorios, scheduler_token
+    
+    # ⭐ AGREGAR - Detener scheduler tabla viva
+    try:
+        detener_scheduler()
+        print("🛑 Scheduler de tabla viva detenido")
+    except Exception as e:
+        print(f"⚠️ Error deteniendo scheduler tabla viva: {e}")
     
     if scheduler_sync:
         scheduler_sync.shutdown()
