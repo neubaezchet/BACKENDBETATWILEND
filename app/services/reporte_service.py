@@ -63,7 +63,9 @@ class ReporteService:
             
             # Filtrar por empresa si no es "all"
             if empresa != "all":
-                query = query.filter(modelo_caso.company_name == empresa)
+                # Usar join con la tabla Company
+                from app.database import Company
+                query = query.join(Company, modelo_caso.company_id == Company.id).filter(Company.nombre == empresa)
             
             # Obtener todos los casos
             casos = query.all()
@@ -72,7 +74,7 @@ class ReporteService:
             # Calcular estadísticas por estado
             estadisticas = {}
             for caso in casos:
-                estado = caso.status
+                estado = caso.estado.value if caso.estado else "NUEVO"
                 estadisticas[estado] = estadisticas.get(estado, 0) + 1
             
             # Convertir a porcentajes
@@ -90,15 +92,19 @@ class ReporteService:
             
             casos_resumen = []
             for caso in ultimos_casos:
+                # Obtener nombre de empresa a través de relación
+                empresa_nombre = caso.empresa.nombre if caso.empresa else "N/A"
+                empleado_nombre = caso.empleado.nombre if caso.empleado else caso.cedula or "N/A"
+                
                 casos_resumen.append({
                     "id": caso.id,
-                    "serial": caso.case_number or f"CASO-{caso.id}",
-                    "empresa": caso.company_name or "N/A",
-                    "empleado": caso.employee_name or "N/A",
-                    "tipo": caso.case_type or "general",
-                    "estado": caso.status,
+                    "serial": caso.serial or f"CASO-{caso.id}",
+                    "empresa": empresa_nombre,
+                    "empleado": empleado_nombre,
+                    "tipo": caso.tipo.value if caso.tipo else "general",
+                    "estado": caso.estado.value if caso.estado else "NUEVO",
                     "fecha_creacion": caso.created_at.strftime("%Y-%m-%d %H:%M:%S") if caso.created_at else "N/A",
-                    "dias": caso.days if hasattr(caso, 'days') else None
+                    "dias": caso.dias_incapacidad or None
                 })
             
             return {
@@ -132,7 +138,8 @@ class ReporteService:
             
             # Aplicar filtros
             if filtros.get("empresa") and filtros["empresa"] != "all":
-                query = query.filter(modelo_caso.company_name == filtros["empresa"])
+                from app.database import Company
+                query = query.join(Company, modelo_caso.company_id == Company.id).filter(Company.nombre == filtros["empresa"])
             
             if filtros.get("fecha_inicio"):
                 fecha_inicio = datetime.strptime(filtros["fecha_inicio"], "%Y-%m-%d")
@@ -148,7 +155,10 @@ class ReporteService:
             
             if filtros.get("tipos"):
                 tipos_lista = filtros["tipos"].split(",")
-                query = query.filter(modelo_caso.case_type.in_(tipos_lista))
+                # Convertir strings a enum values
+                from app.database import TipoIncapacidad
+                tipos_enum = [TipoIncapacidad(t.strip()) for t in tipos_lista if t.strip()]
+                query = query.filter(modelo_caso.tipo.in_(tipos_enum))
             
             # Obtener total y preview
             total_registros = query.count()
@@ -156,13 +166,16 @@ class ReporteService:
             
             registros = []
             for caso in casos_preview:
+                empresa_nombre = caso.empresa.nombre if caso.empresa else "N/A"
+                empleado_nombre = caso.empleado.nombre if caso.empleado else caso.cedula or "N/A"
+                
                 registros.append({
                     "id": caso.id,
-                    "serial": caso.case_number or f"CASO-{caso.id}",
-                    "empresa": caso.company_name or "N/A",
-                    "empleado": caso.employee_name or "N/A",
-                    "tipo": caso.case_type or "general",
-                    "estado": caso.status,
+                    "serial": caso.serial or f"CASO-{caso.id}",
+                    "empresa": empresa_nombre,
+                    "empleado": empleado_nombre,
+                    "tipo": caso.tipo.value if caso.tipo else "general",
+                    "estado": caso.estado.value if caso.estado else "NUEVO",
                     "fecha_creacion": caso.created_at.strftime("%Y-%m-%d") if caso.created_at else "N/A"
                 })
             
@@ -194,7 +207,8 @@ class ReporteService:
             
             # Aplicar filtros (misma lógica que preview)
             if filtros.get("empresa") and filtros["empresa"] != "all":
-                query = query.filter(modelo_caso.company_name == filtros["empresa"])
+                from app.database import Company
+                query = query.join(Company, modelo_caso.company_id == Company.id).filter(Company.nombre == filtros["empresa"])
             
             if filtros.get("fecha_inicio"):
                 fecha_inicio = datetime.strptime(filtros["fecha_inicio"], "%Y-%m-%d")
@@ -206,11 +220,17 @@ class ReporteService:
             
             if filtros.get("estados"):
                 estados_lista = filtros["estados"].split(",")
-                query = query.filter(modelo_caso.status.in_(estados_lista))
+                # Convertir strings a enum values
+                from app.database import EstadoCaso
+                estados_enum = [EstadoCaso(e.strip()) for e in estados_lista if e.strip()]
+                query = query.filter(modelo_caso.estado.in_(estados_enum))
             
             if filtros.get("tipos"):
                 tipos_lista = filtros["tipos"].split(",")
-                query = query.filter(modelo_caso.case_type.in_(tipos_lista))
+                # Convertir strings a enum values
+                from app.database import TipoIncapacidad
+                tipos_enum = [TipoIncapacidad(t.strip()) for t in tipos_lista if t.strip()]
+                query = query.filter(modelo_caso.tipo.in_(tipos_enum))
             
             # Obtener todos los casos
             casos = query.all()
@@ -218,16 +238,19 @@ class ReporteService:
             # Convertir a DataFrame
             datos = []
             for caso in casos:
+                empresa_nombre = caso.empresa.nombre if caso.empresa else "N/A"
+                empleado_nombre = caso.empleado.nombre if caso.empleado else caso.cedula or "N/A"
+                
                 datos.append({
                     "ID": caso.id,
-                    "Serial": caso.case_number or f"CASO-{caso.id}",
-                    "Empresa": caso.company_name or "N/A",
-                    "Empleado": caso.employee_name or "N/A",
-                    "Tipo": caso.case_type or "general",
-                    "Estado": caso.status,
-                    "Días": caso.days if hasattr(caso, 'days') else None,
+                    "Serial": caso.serial or f"CASO-{caso.id}",
+                    "Empresa": empresa_nombre,
+                    "Empleado": empleado_nombre,
+                    "Tipo": caso.tipo.value if caso.tipo else "general",
+                    "Estado": caso.estado.value if caso.estado else "NUEVO",
+                    "Días": caso.dias_incapacidad or 0,
                     "Fecha Creación": caso.created_at.strftime("%Y-%m-%d %H:%M:%S") if caso.created_at else "N/A",
-                    "Fecha Actualización": caso.updated_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(caso, 'updated_at') and caso.updated_at else "N/A"
+                    "Fecha Actualización": caso.updated_at.strftime("%Y-%m-%d %H:%M:%S") if caso.updated_at else "N/A"
                 })
             
             df = pd.DataFrame(datos)
