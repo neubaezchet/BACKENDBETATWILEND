@@ -154,7 +154,7 @@ def sincronizar_excel_completo():
                             if empresa.email_copia != email_copia:
                                 empresa.email_copia = email_copia
                                 empresa.contacto_email = email_copia
-                                empresa.updated_at = datetime.utcnow()
+                                empresa.updated_at = datetime.now()
                                 db.commit()
                                 empresas_actualizadas += 1
                                 print(f"   🔄 {empresa_nombre} → {email_copia}")
@@ -245,7 +245,7 @@ def sincronizar_excel_completo():
                     empleado.jefe_cargo = jefe_cargo
                     empleado.area_trabajo = area_trabajo
                     empleado.activo = True
-                    empleado.updated_at = datetime.utcnow()
+                    empleado.updated_at = datetime.now()
                     db.commit()
                     actualizados += 1
                 else:
@@ -278,7 +278,7 @@ def sincronizar_excel_completo():
             for i in range(total_filas_excel, len(empleados_activos)):
                 empleado_sobra = empleados_activos[i]
                 empleado_sobra.activo = False
-                empleado_sobra.updated_at = datetime.utcnow()
+                empleado_sobra.updated_at = datetime.now()
                 db.commit()
                 eliminados += 1
         

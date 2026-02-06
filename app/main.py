@@ -128,7 +128,7 @@ async def drive_health_check():
                     expiry_str = token_data.get('expiry')
                     if expiry_str:
                         expiry = datetime.datetime.fromisoformat(expiry_str)
-                        now = datetime.datetime.utcnow()
+                        now = datetime.datetime.now()
                         remaining = (expiry - now).total_seconds()
                         token_info = {
                             'expires_in_minutes': round(remaining / 60, 1),
@@ -571,6 +571,21 @@ def verificar_bloqueo_empleado(
         if caso_bloqueante.metadata_form:
             total_reenvios = caso_bloqueante.metadata_form.get('total_reenvios', 0)
         
+        # ✅ NUEVO: Generar mensaje específico de documentos faltantes
+        motivo_detallado = caso_bloqueante.diagnostico
+        if not motivo_detallado and checks_faltantes:
+            docs_faltantes = []
+            for check in checks_faltantes:
+                if check.get('estado') in ['INCOMPLETO', 'ILEGIBLE', 'PENDIENTE']:
+                    docs_faltantes.append(check.get('nombre', 'Documento'))
+            
+            if docs_faltantes:
+                motivo_detallado = f"Documentos faltantes o ilegibles: {', '.join(docs_faltantes)}"
+            else:
+                motivo_detallado = "Documentos faltantes o ilegibles"
+        elif not motivo_detallado:
+            motivo_detallado = "Documentos faltantes o ilegibles"
+        
         return {
             "bloqueado": True,
             "mensaje": f"Tienes una incapacidad pendiente de completar",
@@ -579,12 +594,12 @@ def verificar_bloqueo_empleado(
                 "tipo": caso_bloqueante.tipo.value if caso_bloqueante.tipo else "General",
                 "estado": caso_bloqueante.estado.value,
                 "fecha_envio": caso_bloqueante.created_at.strftime("%d/%m/%Y"),
-                "fecha_inicio": caso_bloqueante.fecha_inicio.isoformat() if caso_bloqueante.fecha_inicio else None,  # ← NUEVO
-                "fecha_fin": caso_bloqueante.fecha_fin.isoformat() if caso_bloqueante.fecha_fin else None,  # ← NUEVO
-                "motivo": caso_bloqueante.diagnostico or "Documentos faltantes o ilegibles",
+                "fecha_inicio": caso_bloqueante.fecha_inicio.isoformat() if caso_bloqueante.fecha_inicio else None,
+                "fecha_fin": caso_bloqueante.fecha_fin.isoformat() if caso_bloqueante.fecha_fin else None,
+                "motivo": motivo_detallado,
                 "checks_faltantes": checks_faltantes,
                 "drive_link": caso_bloqueante.drive_link,
-                "total_reenvios": total_reenvios  # ← NUEVO
+                "total_reenvios": total_reenvios
             }
         }
     
@@ -664,7 +679,7 @@ async def reenviar_caso_incompleto(
         # 5. Cambiar estado a "NUEVO" para que validador lo vea
         estado_anterior = caso.estado.value
         caso.estado = EstadoCaso.NUEVO
-        caso.updated_at = datetime.utcnow()
+        caso.updated_at = datetime.now()
         
         # 6. Registrar evento
         evento = CaseEvent(
@@ -805,7 +820,7 @@ async def completar_caso_incompleto(
         caso.estado = EstadoCaso.NUEVO
         caso.bloquea_nueva = False  # ⚠️ IMPORTANTE: Desbloquear
         caso.drive_link = nuevo_link
-        caso.updated_at = datetime.utcnow()
+        caso.updated_at = datetime.now()
         
         # 5. Registrar evento
         from app.database import CaseEvent
@@ -1370,7 +1385,7 @@ async def check_drive_token_health():
                 
                 if expiry_str:
                     expiry = datetime.fromisoformat(expiry_str)
-                    now = datetime.utcnow()
+                    now = datetime.now()
                     remaining = (expiry - now).total_seconds()
                     
                     return {
@@ -1444,7 +1459,7 @@ async def cambiar_tipo_incapacidad(
     # 6. Cambiar estado a INCOMPLETA (requiere nuevos documentos)
     caso.estado = EstadoCaso.INCOMPLETA
     caso.bloquea_nueva = True
-    caso.updated_at = datetime.utcnow()
+    caso.updated_at = datetime.now()
     
     db.commit()
     

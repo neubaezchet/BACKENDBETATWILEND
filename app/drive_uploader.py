@@ -128,7 +128,7 @@ def _get_or_refresh_credentials():
                     
                     # ✅ VERIFICAR SI NECESITA RENOVACIÓN
                     if creds.expiry:
-                        now = datetime.datetime.utcnow()
+                        now = datetime.datetime.now()
                         time_until_expiry = (creds.expiry - now).total_seconds()
                         minutes_left = time_until_expiry / 60
                         

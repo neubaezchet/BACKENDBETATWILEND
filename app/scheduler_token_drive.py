@@ -68,7 +68,7 @@ def renovar_token_drive():
             
             # Calcular minutos restantes
             if creds.expiry:
-                minutos = (creds.expiry - datetime.utcnow()).total_seconds() / 60
+                minutos = (creds.expiry - datetime.now()).total_seconds() / 60
                 print(f"✅ Token renovado (válido {minutos:.1f} min)")
             else:
                 print(f"✅ Token renovado")

@@ -14,6 +14,11 @@ import enum
 # Base para modelos
 Base = declarative_base()
 
+# Helper para timestamps - compatible con Python 3.12+
+def get_utc_now():
+    """Retorna datetime actual en UTC - compatible con Python 3.12+"""
+    return datetime.now()
+
 # Enums para estados
 class EstadoCaso(str, enum.Enum):
     NUEVO = "NUEVO"
@@ -56,8 +61,8 @@ class Company(Base):
     contacto_telefono = Column(String(50))
     email_copia = Column(String(500))  # ✅ NUEVO: Email de copia
     activa = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     
     # Relaciones con CASCADE
     empleados = relationship("Employee", back_populates="empresa", cascade="all, delete-orphan")
@@ -82,8 +87,8 @@ class Employee(Base):
     jefe_cargo = Column(String(100))
     area_trabajo = Column(String(100))
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     
     # Relaciones
     empresa = relationship("Company", back_populates="empleados")
@@ -125,8 +130,8 @@ class Case(Base):
     fecha_recordatorio = Column(DateTime, nullable=True)
     
     # Auditoría
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_utc_now, index=True)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     
     # Relaciones
     empleado = relationship("Employee", back_populates="casos")
@@ -159,8 +164,8 @@ class CaseDocument(Base):
     observaciones = Column(Text)
     calidad_validada = Column(Boolean, default=False)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     
     # Relaciones
     caso = relationship("Case", back_populates="documentos")
@@ -179,7 +184,7 @@ class CaseEvent(Base):
     motivo = Column(Text)
     metadata_json = Column(JSON)
     
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=get_utc_now, index=True)
     
     # Relaciones
     caso = relationship("Case", back_populates="eventos")
@@ -195,7 +200,7 @@ class CaseNote(Base):
     contenido = Column(Text, nullable=False)
     es_importante = Column(Boolean, default=False)
     
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=get_utc_now, index=True)
     
     # Relaciones
     caso = relationship("Case", back_populates="notas")
@@ -211,7 +216,7 @@ class SearchHistory(Base):
     resultados_count = Column(Integer)
     archivo_nombre = Column(String(200))
     
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=get_utc_now, index=True)
 
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
 
