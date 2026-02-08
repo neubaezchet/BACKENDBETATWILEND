@@ -152,14 +152,8 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
             whatsapp = caso.telefono_form
             print(f"📱 WhatsApp: {whatsapp}")
     
-    # ✅ GENERAR MENSAJE DE WHATSAPP A PARTIR DEL SUBJECT Y SERIAL
-    whatsapp_message = f"""
-{subject}
-
-Serial: {caso.serial if caso else 'N/A'}
-
-Este es un mensaje automático de IncaNeurobaeza.
-    """.strip()
+    # ✅ El mensaje WhatsApp se genera automáticamente
+    whatsapp_message = None
     
     # Enviar a n8n
     resultado = enviar_a_n8n(
@@ -248,14 +242,8 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
             whatsapp = caso.telefono_form
             print(f"📱 WhatsApp: {whatsapp}")
     
-    # ✅ GENERAR MENSAJE DE WHATSAPP A PARTIR DEL SUBJECT Y SERIAL
-    whatsapp_message = f"""
-{subject}
-
-Serial: {caso.serial if caso else 'N/A'}
-
-Este es un mensaje automático de IncaNeurobaeza.
-    """.strip()
+    # ✅ El mensaje WhatsApp se genera automáticamente
+    whatsapp_message = None
     
     # Enviar a n8n
     resultado = enviar_a_n8n(
