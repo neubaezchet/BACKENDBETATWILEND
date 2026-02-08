@@ -5,7 +5,10 @@ Versión mejorada con timeouts y reintentos
 
 import requests
 import os
+import time
 from typing import Optional, List, Dict
+from collections import deque
+from datetime import datetime, timedelta
 
 def enviar_a_n8n(
     tipo_notificacion: str,
@@ -31,6 +34,21 @@ def enviar_a_n8n(
         "N8N_WEBHOOK_URL",
         "https://railway-n8n-production-5a3f.up.railway.app/webhook/incapacidades"
     )
+    
+    # ✅ GENERAR MENSAJE WHATSAPP AUTOMÁTICO SI NO EXISTE
+    if not whatsapp_message and whatsapp:
+        whatsapp_message = generar_mensaje_whatsapp(
+            tipo_notificacion, serial, subject, html_content
+        )
+        print(f"📱 Mensaje WhatsApp auto-generado (preview): {whatsapp_message[:100]}...")
+    
+    # ✅ VERIFICAR RATE LIMIT
+    if whatsapp and not verificar_rate_limit():
+        print(f"⏳ Rate limit alcanzado, esperando 3 segundos...")
+        time.sleep(3)
+        if not verificar_rate_limit():
+            print(f"❌ No se puede enviar WhatsApp ahora (rate limit)")
+            whatsapp = None  # Enviar solo email
     
     # ✅ Construir payload
     payload = {
@@ -159,3 +177,49 @@ def verificar_salud_n8n() -> bool:
         return response.status_code == 200
     except:
         return False
+
+
+# ✅ GENERADOR AUTOMÁTICO DE MENSAJES WHATSAPP
+def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, html_content: str) -> str:
+    """
+    Convierte el HTML a texto limpio para WhatsApp
+    """
+    import re
+    
+    # Extraer texto del HTML
+    texto = re.sub(r'<[^>]+>', '', html_content)
+    texto = re.sub(r'\s+', ' ', texto)
+    texto = texto.replace('&nbsp;', ' ').replace('&amp;', '&')
+    texto = texto.strip()
+    
+    # Limitar a 1000 caracteres
+    if len(texto) > 1000:
+        texto = texto[:997] + "..."
+    
+    # Emojis según tipo
+    emojis = {
+        'confirmacion': '✅', 'incompleta': '❌', 'ilegible': '⚠️',
+        'completa': '✅', 'eps': '📋', 'tthh': '🚨', 'extra': '📢'
+    }
+    emoji = emojis.get(tipo_notificacion, '📄')
+    
+    return f"{emoji} *IncaNeurobaeza*\n\n{texto}\n\n_Serial: {serial}_\n_Mensaje automático_"
+
+
+# ✅ RATE LIMITING PARA EVITAR BLOQUEO
+mensajes_recientes = deque(maxlen=100)
+LIMITE_POR_MINUTO = 20
+
+def verificar_rate_limit() -> bool:
+    ahora = datetime.now()
+    hace_un_minuto = ahora - timedelta(minutes=1)
+    
+    while mensajes_recientes and mensajes_recientes[0] < hace_un_minuto:
+        mensajes_recientes.popleft()
+    
+    if len(mensajes_recientes) >= LIMITE_POR_MINUTO:
+        print(f"⚠️ RATE LIMIT: {len(mensajes_recientes)}/{LIMITE_POR_MINUTO} mensajes/min")
+        return False
+    
+    mensajes_recientes.append(ahora)
+    return True
