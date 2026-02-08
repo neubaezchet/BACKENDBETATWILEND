@@ -47,14 +47,20 @@ def enviar_a_n8n(
     }
     
     try:
-        print(f"📤 Enviando a n8n: {n8n_webhook_url}")
-        print(f"   TO: {email}")
-        print(f"   CC_EMPRESA: {cc_email or 'N/A'}")
-        print(f"   CC_BD: {correo_bd or 'N/A'}")
-        print(f"   WhatsApp: {whatsapp or 'N/A'}")
-        print(f"   Serial: {serial}")
-        print(f"   Tipo notificación: {tipo_notificacion}")
-        print(f"   Adjuntos: {len(adjuntos_base64)}")
+        print(f"\n{'='*80}")
+        print(f"📤 ENVIANDO A N8N")
+        print(f"{'='*80}")
+        print(f"🔗 URL: {n8n_webhook_url}")
+        print(f"📧 TO: {email}")
+        print(f"📧 CC_EMPRESA: {cc_email or 'N/A'}")
+        print(f"📧 CC_BD: {correo_bd or 'N/A'}")
+        print(f"📱 WhatsApp: {whatsapp or 'N/A'}")
+        print(f"🎫 Serial: {serial}")
+        print(f"📋 Tipo: {tipo_notificacion}")
+        print(f"📄 Asunto: {subject}")
+        print(f"📎 Adjuntos: {len(adjuntos_base64)}")
+        print(f"💾 Payload keys: {list(payload.keys())}")
+        print(f"{'='*80}\n")
         
         # ✅ TIMEOUT AUMENTADO: 30 segundos para emails con adjuntos
         response = requests.post(
@@ -68,37 +74,28 @@ def enviar_a_n8n(
         )
         
         # ✅ VERIFICAR STATUS CODE
-        if response.status_code in [200, 201, 204]:
-            print(f"✅ n8n respondió OK (status {response.status_code})")
+        print(f"\n📥 RESPUESTA DE N8N")
+        print(f"{'='*80}")
+        print(f"Status: {response.status_code}")
+        print(f"{'='*80}\n")
+        
+        if response.status_code in [200, 201, 202, 204]:
+            print(f"✅ N8N ACEPTÓ LA SOLICITUD (status {response.status_code})")
             
-            # Intentar parsear respuesta (opcional)
             try:
                 data = response.json()
-                print(f"   Respuesta n8n: {data}")
+                print(f"Respuesta JSON: {data}")
                 
-                # ✅ VERIFICAR SI WHATSAPP SE ENVIÓ
                 if isinstance(data, dict) and 'channels' in data:
                     channels = data.get('channels', {})
-                    
                     if channels.get('email', {}).get('sent'):
-                        print(f"   ✅ EMAIL enviado: {channels['email'].get('to')}")
-                    else:
-                        print(f"   ⚠️ EMAIL NO enviado")
-                    
+                        print(f"   ✅ EMAIL ENVIADO")
                     if channels.get('whatsapp', {}).get('sent'):
-                        wa_info = channels['whatsapp']
-                        print(f"   ✅ WHATSAPP enviado:")
-                        print(f"      - Números: {wa_info.get('numbers', [])}")
-                        print(f"      - Exitosos: {wa_info.get('successful', 0)}/{wa_info.get('total_numbers', 0)}")
-                    elif channels.get('whatsapp'):
-                        wa_info = channels['whatsapp']
-                        print(f"   ⚠️ WHATSAPP NO enviado")
-                        print(f"      - Error: {wa_info.get('error', 'Desconocido')}")
-                        print(f"      - Números intentados: {wa_info.get('numbers', [])}")
+                        print(f"   ✅ WHATSAPP ENVIADO")
             except:
-                print("   (Sin JSON en respuesta, pero status OK)")
+                print("(Sin JSON, pero status OK)")
             
-            return True
+            return True  # ÉXITO
         
         elif response.status_code == 202:
             # Accepted - n8n recibió pero aún está procesando
