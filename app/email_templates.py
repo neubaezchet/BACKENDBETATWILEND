@@ -586,7 +586,7 @@ def enviar_email_cambio_tipo(email: str, nombre: str, serial: str, tipo_anterior
 
 def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, archivos_nombres=None):
     """
-    ✅ TEMPLATE RESPONSIVE - Compatible con Outlook, Gmail, iPhone
+    ✅ TEMPLATE ULTRA-COMPATIBLE - Outlook + Gmail + iPhone
     """
     
     # Lista de archivos recibidos
@@ -594,19 +594,17 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
     if archivos_nombres:
         archivos_html = """
         <table width="100%" cellpadding="0" cellspacing="0" style="margin: 15px 0;">
-            <tr>
-                <td>
+            <tr><td>
         """
         for archivo in archivos_nombres:
             archivos_html += f"""
                 <div style="background: #e0f2fe; padding: 12px; margin: 8px 0; border-radius: 8px; border-left: 4px solid #0369a1;">
-                    <span style="font-size: 18px;">📄</span>
+                    <span style="font-size: 18px;">&#128196;</span>
                     <span style="color: #0369a1; font-weight: 500; font-size: 14px; margin-left: 8px;">{archivo}</span>
                 </div>
             """
         archivos_html += """
-                </td>
-            </tr>
+            </td></tr>
         </table>
         """
     
@@ -618,15 +616,8 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
         <title>Confirmación - {serial}</title>
-        <!--[if mso]>
-        <style type="text/css">
-            table {{border-collapse: collapse; border-spacing: 0; margin: 0;}}
-            div, td {{padding: 0;}}
-            div {{margin: 0 !important;}}
-        </style>
-        <![endif]-->
     </head>
-    <body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background-color: #f4f4f4; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+    <body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background-color: #f4f4f4;">
         
         <!-- Wrapper Table -->
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 20px 0;">
@@ -634,7 +625,7 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                 <td align="center">
                     
                     <!-- Main Container -->
-                    <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                    <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 10px; overflow: hidden;">
                         
                         <!-- Header -->
                         <tr>
@@ -642,15 +633,14 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                                 <table width="100%" cellpadding="0" cellspacing="0">
                                     <tr>
                                         <td align="center">
-                                            <div style="background: white; width: 70px; height: 70px; border-radius: 50%; margin: 0 auto 15px; display: table-cell; vertical-align: middle; text-align: center;">
-                                                <span style="font-size: 35px; line-height: 70px;">✅</span>
+                                            <div style="background: white; width: 70px; height: 70px; border-radius: 50%; margin: 0 auto 15px; line-height: 70px; text-align: center;">
+                                                <span style="font-size: 35px;">&#9989;</span>
                                             </div>
                                         </td>
                                     </tr>
                                     <tr>
                                         <td align="center">
-                                            <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 700;">¡Recibido Confirmado!</h1>
-                                            <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0; font-size: 14px;">IncaNeurobaeza</p>
+                                            <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 700;">Incapacidades</h1>
                                         </td>
                                     </tr>
                                 </table>
@@ -666,16 +656,16 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                                     <tr>
                                         <td style="padding-bottom: 20px;">
                                             <p style="font-size: 16px; color: #1e293b; margin: 0; font-weight: 600;">
-                                                Hola <span style="color: #667eea;">{nombre}</span> 👋
+                                                Hola <span style="color: #667eea;">{nombre}</span>
                                             </p>
                                         </td>
                                     </tr>
                                     
                                     <!-- Mensaje Principal -->
                                     <tr>
-                                        <td style="background: linear-gradient(135deg, #dbeafe 0%, #e0f2fe 100%); border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
+                                        <td style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
                                             <p style="margin: 0; color: #1e40af; font-size: 14px; line-height: 1.5;">
-                                                <strong>✓ Confirmo recibido de la documentación</strong><br>
+                                                <strong>Confirmo recibido de la documentación</strong><br>
                                                 Se procederá a realizar la revisión para validar que cumpla con los requisitos establecidos para <strong>{tipo_incapacidad}</strong>.
                                             </p>
                                         </td>
@@ -687,7 +677,7 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                                             <table width="100%" cellpadding="8" cellspacing="0" style="background: #f8fafc; border-radius: 12px; padding: 10px;">
                                                 <tr>
                                                     <td colspan="2" style="padding-bottom: 10px;">
-                                                        <h3 style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">📋 Información del Registro</h3>
+                                                        <h3 style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Información del Registro</h3>
                                                     </td>
                                                 </tr>
                                                 <tr>
@@ -704,6 +694,14 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                                                     <td style="color: #64748b; font-size: 13px; padding: 5px 0;">Tipo:</td>
                                                     <td style="color: #0f172a; font-weight: 500; font-size: 13px; padding: 5px 0;">{tipo_incapacidad}</td>
                                                 </tr>
+                                                <tr>
+                                                    <td style="color: #64748b; font-size: 13px; padding: 5px 0;">Teléfono:</td>
+                                                    <td style="color: #0f172a; font-weight: 500; font-size: 13px; padding: 5px 0;">{telefono}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="color: #64748b; font-size: 13px; padding: 5px 0;">Email:</td>
+                                                    <td style="color: #0f172a; font-weight: 500; font-size: 13px; padding: 5px 0;">{email}</td>
+                                                </tr>
                                             </table>
                                         </td>
                                     </tr>
@@ -712,48 +710,64 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                                     {f'''
                                     <tr>
                                         <td style="padding-top: 20px;">
-                                            <h3 style="margin: 0 0 10px; color: #0f172a; font-size: 15px; font-weight: 600;">📎 Documentos Recibidos</h3>
+                                            <h3 style="margin: 0 0 10px; color: #0f172a; font-size: 15px; font-weight: 600;">Documentos Recibidos</h3>
                                             {archivos_html}
                                         </td>
                                     </tr>
                                     ''' if archivos_html else ''}
                                     
-                                    <!-- Botón CTA -->
+                                    <!-- Botón Ver Drive -->
                                     <tr>
                                         <td align="center" style="padding: 25px 0;">
-                                            <a href="{link_drive}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 15px;">
-                                                📄 Ver Documentos en Drive
+                                            <a href="{link_drive}" style="display: inline-block; background: #667eea; color: white; padding: 14px 35px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 15px;">
+                                                Ver Documentos en Drive
                                             </a>
                                         </td>
                                     </tr>
                                     
-                                    <!-- Botón Llamar -->
+                                    <!-- Botones de Contacto -->
                                     <tr>
                                         <td align="center" style="padding-bottom: 20px;">
-                                            <a href="tel:{telefono}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 12px 28px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px;">
-                                                📞 Llamar Ahora
-                                            </a>
+                                            <table cellpadding="5" cellspacing="5">
+                                                <tr>
+                                                    <!-- Botón Llamar -->
+                                                    <td>
+                                                        <a href="tel:3173391828" style="display: inline-block; background: #10b981; color: white; padding: 12px 20px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px;">
+                                                            &#128222; Llamar
+                                                        </a>
+                                                    </td>
+                                                    <!-- Botón WhatsApp -->
+                                                    <td>
+                                                        <a href="https://wa.me/573173391828?text=Hola%2C%20tengo%20una%20consulta%20sobre%20mi%20incapacidad%20{serial}" style="display: inline-block; background: #25D366; color: white; padding: 12px 20px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px;">
+                                                            &#128172; WhatsApp
+                                                        </a>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </td>
+                                    </tr>
+                                    
+                                    <!-- Info de contacto para dudas -->
+                                    <tr>
+                                        <td style="background: #f1f5f9; padding: 15px; border-radius: 10px; text-align: center;">
+                                            <p style="margin: 0; color: #475569; font-size: 13px; font-weight: 600;">
+                                                &#9432; Si tiene dudas, escríbanos al:
+                                            </p>
+                                            <p style="margin: 5px 0 0 0; color: #667eea; font-size: 16px; font-weight: 700;">
+                                                3173391828
+                                            </p>
                                         </td>
                                     </tr>
                                     
                                     <!-- Alerta -->
                                     <tr>
-                                        <td style="background: #fef3c7; border: 2px solid #fbbf24; padding: 15px; border-radius: 12px; text-align: center;">
-                                            <p style="margin: 0; color: #92400e; font-weight: 600; font-size: 14px;">⚠️ IMPORTANTE: Estar pendiente</p>
-                                            <p style="margin: 8px 0 0; color: #78350f; font-size: 13px; line-height: 1.4;">
-                                                <strong>📱 Primero vía WhatsApp</strong> y luego por <strong>📧 correo electrónico</strong> para seguir en el proceso de radicación o para notificación de correcciones necesarias.
-                                            </p>
-                                        </td>
-                                    </tr>
-                                    
-                                    <!-- Contacto -->
-                                    <tr>
                                         <td style="padding-top: 20px;">
-                                            <table width="100%" cellpadding="10" cellspacing="0" style="background: #f1f5f9; border-radius: 10px;">
+                                            <table width="100%" cellpadding="15" cellspacing="0" style="background: #fef3c7; border: 2px solid #fbbf24; border-radius: 12px;">
                                                 <tr>
                                                     <td align="center">
-                                                        <p style="margin: 0; color: #475569; font-size: 13px;">
-                                                            📞 <strong>{telefono}</strong> &nbsp;|&nbsp; 📧 <strong>{email}</strong>
+                                                        <p style="margin: 0; color: #92400e; font-weight: 600; font-size: 14px;">&#9888; IMPORTANTE: Estar pendiente</p>
+                                                        <p style="margin: 8px 0 0; color: #78350f; font-size: 13px; line-height: 1.4;">
+                                                            <strong>Primero vía WhatsApp</strong> y luego por <strong>correo electrónico</strong> para seguir en el proceso de radicación o para notificación de correcciones necesarias.
                                                         </p>
                                                     </td>
                                                 </tr>
@@ -767,21 +781,16 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                         
                         <!-- Footer -->
                         <tr>
-                            <td style="background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); padding: 25px 20px; text-align: center; border-top: 1px solid #cbd5e1;">
+                            <td style="background: #f1f5f9; padding: 25px 20px; text-align: center; border-top: 1px solid #cbd5e1;">
                                 <table width="100%" cellpadding="0" cellspacing="0">
                                     <tr>
                                         <td align="center">
-                                            <strong style="color: #667eea; font-size: 17px;">IncaNeurobaeza</strong>
+                                            <strong style="color: #667eea; font-size: 17px;">Incapacidades</strong>
                                         </td>
                                     </tr>
                                     <tr>
                                         <td align="center" style="padding-top: 8px;">
-                                            <p style="color: #64748b; font-style: italic; margin: 0; font-size: 13px;">"Trabajando para ayudarte"</p>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td align="center" style="padding-top: 10px;">
-                                            <p style="color: #94a3b8; margin: 0; font-size: 11px;">© 2024 IncaNeurobaeza. Sistema de gestión de incapacidades.</p>
+                                            <p style="color: #64748b; font-style: italic; margin: 0; font-size: 13px;">Trabajando para ayudarte</p>
                                         </td>
                                     </tr>
                                 </table>
@@ -797,18 +806,6 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
     </body>
     </html>
     """
-    """Wrapper para mantener compatibilidad con código existente"""
-    return get_email_template_universal(
-        tipo_email='confirmacion',
-        nombre=nombre,
-        serial=serial,
-        empresa=empresa,
-        tipo_incapacidad=tipo_incapacidad,
-        telefono=telefono,
-        email=email,
-        link_drive=link_drive,
-        archivos_nombres=archivos_nombres
-    )
 
 def get_alert_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
     """Wrapper para emails de alerta (incompleta/ilegible)"""
@@ -1120,188 +1117,3 @@ def get_email_template_universal(tipo_email, nombre, serial, empresa, tipo_incap
         telefono, email, link_drive, checks_seleccionados,
         archivos_nombres, quinzena, contenido_ia, empleado_nombre
     )
-
-def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, archivos_nombres=None):
-    """
-    ✅ TEMPLATE DE CONFIRMACIÓN MODERNO - ESTILO MICROSOFT 365
-    Vibrante, curvo, con gradientes y CTAs claros
-    """
-    
-    # Lista de archivos recibidos
-    archivos_html = ""
-    if archivos_nombres:
-        archivos_html = "<ul style='list-style: none; padding: 0; margin: 15px 0;'>"
-        for archivo in archivos_nombres:
-            archivos_html += f"""
-                <li style='background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); 
-                           padding: 12px 16px; margin: 8px 0; border-radius: 12px; 
-                           display: flex; align-items: center; gap: 10px;'>
-                    <span style='font-size: 20px;'>📄</span>
-                    <span style='color: #0369a1; font-weight: 500; font-size: 14px;'>{archivo}</span>
-                </li>
-            """
-        archivos_html += "</ul>"
-    
-    return f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Confirmación - {serial}</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh;">
-        
-        <!-- Container Principal -->
-        <div style="max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-            
-            <!-- Card Principal con sombra suave -->
-            <div style="background: white; border-radius: 24px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
-                
-                <!-- Header con gradiente vibrante -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center; position: relative;">
-                    <!-- Icono flotante -->
-                    <div style="background: white; width: 80px; height: 80px; border-radius: 50%; 
-                               margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;
-                               box-shadow: 0 10px 30px rgba(0,0,0,0.2);">
-                        <span style="font-size: 40px;">✅</span>
-                    </div>
-                    <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">
-                        ¡Recibido Confirmado!
-                    </h1>
-                    <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0; font-size: 16px;">
-                        IncaNeurobaeza
-                    </p>
-                </div>
-                
-                <!-- Contenido -->
-                <div style="padding: 40px 30px;">
-                    
-                    <!-- Saludo personalizado -->
-                    <p style="font-size: 18px; color: #1e293b; margin: 0 0 24px; font-weight: 600;">
-                        Hola <span style="color: #667eea;">{nombre}</span> 👋
-                    </p>
-                    
-                    <!-- Mensaje principal con icono -->
-                    <div style="background: linear-gradient(135deg, #dbeafe 0%, #e0f2fe 100%); 
-                               border-left: 4px solid #3b82f6; padding: 20px; border-radius: 12px; margin: 24px 0;">
-                        <p style="margin: 0; color: #1e40af; font-size: 15px; line-height: 1.6;">
-                            <strong>✓ Confirmo recibido de la documentación</strong><br>
-                            Se procederá a realizar la revisión para validar que cumpla con los requisitos establecidos 
-                            para <strong>{tipo_incapacidad}</strong>.
-                        </p>
-                    </div>
-                    
-                    <!-- Detalles del caso -->
-                    <div style="background: #f8fafc; border-radius: 16px; padding: 24px; margin: 24px 0;">
-                        <h3 style="margin: 0 0 16px; color: #0f172a; font-size: 16px; font-weight: 600;">
-                            📋 Información del Registro
-                        </h3>
-                        <table style="width: 100%; border-collapse: collapse;">
-                            <tr>
-                                <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Serial:</td>
-                                <td style="padding: 8px 0; color: #0f172a; font-weight: 600; font-size: 14px;">
-                                    <span style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); 
-                                                 padding: 4px 12px; border-radius: 8px; color: #92400e;">
-                                        {serial}
-                                    </span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Empresa:</td>
-                                <td style="padding: 8px 0; color: #0f172a; font-weight: 500; font-size: 14px;">{empresa}</td>
-                            </tr>
-                            <tr>
-                                <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Tipo:</td>
-                                <td style="padding: 8px 0; color: #0f172a; font-weight: 500; font-size: 14px;">{tipo_incapacidad}</td>
-                            </tr>
-                        </table>
-                    </div>
-                    
-                    <!-- Documentos recibidos -->
-                    {f'''
-                    <div style="margin: 24px 0;">
-                        <h3 style="margin: 0 0 12px; color: #0f172a; font-size: 16px; font-weight: 600;">
-                            📎 Documentos Recibidos
-                        </h3>
-                        {archivos_html}
-                    </div>
-                    ''' if archivos_html else ''}
-                    
-                    <!-- Botón CTA principal -->
-                    <div style="text-align: center; margin: 32px 0;">
-                        <a href="{link_drive}" 
-                           style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                                  color: white; padding: 16px 40px; text-decoration: none; border-radius: 50px; 
-                                  font-weight: 600; font-size: 16px; box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
-                                  transition: transform 0.2s;">
-                            📄 Ver Documentos en Drive
-                        </a>
-                    </div>
-                    
-                    <!-- Botón de llamada directa -->
-                    <div style="text-align: center; margin: 20px 0;">
-                        <a href="tel:{telefono}" 
-                           style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); 
-                                  color: white; padding: 14px 32px; text-decoration: none; border-radius: 50px; 
-                                  font-weight: 600; font-size: 15px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3);">
-                            📞 Llamar Ahora
-                        </a>
-                    </div>
-                    
-                    <!-- Alerta de seguimiento -->
-                    <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); 
-                               border-radius: 16px; padding: 20px; margin: 24px 0; border: 2px solid #fbbf24;">
-                        <div style="display: flex; align-items: start; gap: 12px;">
-                            <span style="font-size: 24px;">⚠️</span>
-                            <div>
-                                <p style="margin: 0; color: #92400e; font-weight: 600; font-size: 15px;">
-                                    IMPORTANTE: Estar pendiente
-                                </p>
-                                <p style="margin: 8px 0 0; color: #78350f; font-size: 14px; line-height: 1.5;">
-                                    <strong>📱 Primero vía WhatsApp</strong> y luego por <strong>📧 correo electrónico</strong>
-                                    para seguir en el proceso de radicación o para notificación de correcciones necesarias.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Información de contacto -->
-                    <div style="background: #f1f5f9; border-radius: 12px; padding: 20px; margin: 24px 0;">
-                        <div style="display: flex; flex-direction: column; gap: 12px;">
-                            <div style="display: flex; align-items: center; gap: 10px;">
-                                <span style="font-size: 20px;">📞</span>
-                                <span style="color: #475569; font-size: 14px; font-weight: 500;">{telefono}</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 10px;">
-                                <span style="font-size: 20px;">📧</span>
-                                <span style="color: #475569; font-size: 14px; font-weight: 500;">{email}</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                </div>
-                
-                <!-- Footer -->
-                <div style="background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); 
-                           padding: 30px; text-align: center; border-top: 1px solid #cbd5e1;">
-                    <div style="margin-bottom: 12px;">
-                        <strong style="color: #667eea; font-size: 18px; letter-spacing: -0.5px;">
-                            IncaNeurobaeza
-                        </strong>
-                    </div>
-                    <p style="color: #64748b; font-style: italic; margin: 0; font-size: 14px;">
-                        "Trabajando para ayudarte"
-                    </p>
-                    <p style="color: #94a3b8; margin: 16px 0 0; font-size: 12px;">
-                        © 2024 IncaNeurobaeza. Sistema de gestión de incapacidades.
-                    </p>
-                </div>
-                
-            </div>
-            
-        </div>
-        
-    </body>
-    </html>
-    """

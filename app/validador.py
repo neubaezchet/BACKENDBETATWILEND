@@ -267,11 +267,6 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
     return resultado
 
 
-def send_html_email(to_email, subject, html_body, caso=None):
-    """✅ Wrapper sin adjuntos"""
-    return enviar_email_con_adjuntos(to_email, subject, html_body, [], caso=caso)
-
-
 def obtener_email_tthh(empresa_nombre):
     """Retorna el email de TTHH según la empresa"""
     emails_tthh = {
