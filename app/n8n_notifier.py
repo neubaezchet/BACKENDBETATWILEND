@@ -1,6 +1,6 @@
 """
 Sistema de notificaciones vía n8n con manejo robusto de errores
-Versión mejorada con timeouts y reintentos
+Versión mejorada con timeouts, reintentos y rate limiting avanzado
 """
 
 import requests
@@ -9,6 +9,7 @@ import time
 from typing import Optional, List, Dict
 from collections import deque
 from datetime import datetime, timedelta
+from app.waha_rate_limiter import waha_limiter
 
 def enviar_a_n8n(
     tipo_notificacion: str,
@@ -42,13 +43,18 @@ def enviar_a_n8n(
         )
         print(f"📱 Mensaje WhatsApp auto-generado (preview): {whatsapp_message[:100]}...")
     
-    # ✅ VERIFICAR RATE LIMIT
-    if whatsapp and not verificar_rate_limit():
-        print(f"⏳ Rate limit alcanzado, esperando 3 segundos...")
-        time.sleep(3)
-        if not verificar_rate_limit():
-            print(f"❌ No se puede enviar WhatsApp ahora (rate limit)")
-            whatsapp = None  # Enviar solo email
+    # ✅ VERIFICAR RATE LIMIT AVANZADO
+    whatsapp_enviado = False
+    if whatsapp:
+        if waha_limiter.esperar_si_necesario():
+            # Rate limit OK - dejar pasar el WhatsApp
+            print(f"✅ Rate limit OK - Enviando WhatsApp")
+            whatsapp_enviado = True
+        else:
+            # Rate limit alcanzado - enviar solo email
+            print(f"⚠️ WhatsApp omitido por rate limit - Enviando solo email")
+            whatsapp = None
+            whatsapp_message = None
     
     # ✅ Construir payload
     payload = {
@@ -112,6 +118,10 @@ def enviar_a_n8n(
                         print(f"   ✅ WHATSAPP ENVIADO")
             except:
                 print("(Sin JSON, pero status OK)")
+            
+            # ✅ REGISTRAR ENVÍO DE WHATSAPP (solo si se envió)
+            if whatsapp_enviado:
+                waha_limiter.registrar_envio()
             
             return True  # ÉXITO
         
@@ -183,6 +193,7 @@ def verificar_salud_n8n() -> bool:
 def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, html_content: str) -> str:
     """
     Convierte el HTML a texto limpio para WhatsApp
+    Mantiene la información esencial en < 1000 caracteres
     """
     import re
     
@@ -192,34 +203,26 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
     texto = texto.replace('&nbsp;', ' ').replace('&amp;', '&')
     texto = texto.strip()
     
-    # Limitar a 1000 caracteres
+    # Limitar a 1000 caracteres (WhatsApp recomienda 1024 max)
     if len(texto) > 1000:
         texto = texto[:997] + "..."
     
-    # Emojis según tipo
+    # Emojis según tipo de notificación
     emojis = {
-        'confirmacion': '✅', 'incompleta': '❌', 'ilegible': '⚠️',
-        'completa': '✅', 'eps': '📋', 'tthh': '🚨', 'extra': '📢'
+        'confirmacion': '✅', 
+        'incompleta': '❌', 
+        'ilegible': '⚠️',
+        'completa': '✅', 
+        'eps': '📋', 
+        'tthh': '🚨', 
+        'extra': '📢'
     }
     emoji = emojis.get(tipo_notificacion, '📄')
     
     return f"{emoji} *IncaNeurobaeza*\n\n{texto}\n\n_Serial: {serial}_\n_Mensaje automático_"
 
 
-# ✅ RATE LIMITING PARA EVITAR BLOQUEO
-mensajes_recientes = deque(maxlen=100)
-LIMITE_POR_MINUTO = 20
-
-def verificar_rate_limit() -> bool:
-    ahora = datetime.now()
-    hace_un_minuto = ahora - timedelta(minutes=1)
-    
-    while mensajes_recientes and mensajes_recientes[0] < hace_un_minuto:
-        mensajes_recientes.popleft()
-    
-    if len(mensajes_recientes) >= LIMITE_POR_MINUTO:
-        print(f"⚠️ RATE LIMIT: {len(mensajes_recientes)}/{LIMITE_POR_MINUTO} mensajes/min")
-        return False
-    
-    mensajes_recientes.append(ahora)
-    return True
+# ✅ FUNCIÓN AUXILIAR: Obtener estadísticas del rate limiter
+def obtener_estadisticas_whatsapp() -> dict:
+    """Retorna estadísticas del limitador de WhatsApp"""
+    return waha_limiter.obtener_estadisticas()
