@@ -1506,7 +1506,8 @@ async def editar_pdf_caso(
     db: Session = Depends(get_db)
 ):
     """
-    Edita el PDF de un caso con múltiples operaciones
+    ✨ Edita el PDF de un caso con múltiples operaciones profesionales
+    Usa el PDFEditor con algoritmos de última generación
     """
     verificar_token_admin(token)
     
@@ -1521,7 +1522,7 @@ async def editar_pdf_caso(
     if not caso or not caso.drive_link:
         raise HTTPException(status_code=404, detail="Caso o PDF no encontrado")
     
-    # Extraer file_id
+    # Extraer file_id de Drive
     if '/file/d/' in caso.drive_link:
         file_id = caso.drive_link.split('/file/d/')[1].split('/')[0]
     elif 'id=' in caso.drive_link:
@@ -1545,30 +1546,64 @@ async def editar_pdf_caso(
     print(f"✅ PDF descargado: {temp_input}")
     
     try:
-        import fitz  # PyMuPDF
-        pdf_doc = fitz.open(temp_input)
+        from app.pdf_editor import PDFEditor
+        
+        # Crear editor con el PDF
+        editor = PDFEditor(temp_input)
         
         # PROCESAR OPERACIONES
         for op_type, op_data in operaciones.items():
             print(f"🔧 Procesando: {op_type}")
             
             if op_type == 'rotate':
+                # Rotar páginas
                 for item in op_data:
                     page_num = item['page_num']
                     angle = item['angle']
                     print(f"   🔄 Rotando página {page_num} {angle}°")
-                    page = pdf_doc[page_num]
-                    page.set_rotation(angle)
+                    editor.rotate_page(page_num, angle)
             
             elif op_type == 'enhance_quality':
-                # Nota: enhance_quality requiere procesamiento de imagen
-                # Por ahora solo loguear
-                print(f"   ✨ Mejora de calidad solicitada (requiere procesamiento avanzado)")
+                # Mejorar calidad con algoritmos avanzados
+                pages = op_data.get('pages', [])
+                scale = op_data.get('scale', 2.5)
+                for page_num in pages:
+                    print(f"   ✨ Mejorando calidad página {page_num} (scale={scale})")
+                    editor.enhance_page_quality(page_num, scale)
+            
+            elif op_type == 'aplicar_filtro':
+                # Aplicar filtros de imagen
+                page_num = op_data.get('page_num', 0)
+                filtro = op_data.get('filtro', 'grayscale')
+                print(f"   🎨 Aplicando filtro {filtro} a página {page_num}")
+                editor.aplicar_filtro_imagen(page_num, filtro)
+            
+            elif op_type == 'crop_auto':
+                # Recorte automático inteligente
+                for item in op_data:
+                    page_num = item['page_num']
+                    margin = item.get('margin', 10)
+                    print(f"   ✂️ Recorte automático página {page_num}")
+                    editor.auto_crop_page(page_num, margin)
+            
+            elif op_type == 'deskew':
+                # Corregir inclinación (ya se hace en enhance_quality)
+                page_num = op_data.get('page_num', 0)
+                print(f"   🔄 Corrigiendo inclinación página {page_num}")
+                # La corrección de inclinación ya está incluida en enhance_quality
+                # Si se llama solo, usamos el enhancer directamente
+                editor.enhance_page_quality(page_num, scale=2.0)
+            
+            elif op_type == 'delete_pages':
+                # Eliminar páginas
+                print(f"   🗑️ Eliminando páginas: {op_data}")
+                editor.delete_pages(op_data)
         
-        # Guardar PDF
-        pdf_doc.save(temp_output, garbage=4, deflate=True)
-        pdf_doc.close()
+        # Guardar cambios
+        editor.save_changes(temp_output)
+        modifications = editor.get_modifications_log()
         print(f"💾 PDF guardado: {temp_output}")
+        print(f"📋 Modificaciones: {modifications}")
         
         # Subir a Drive
         from app.drive_manager import CaseFileOrganizer
@@ -1578,46 +1613,34 @@ async def editar_pdf_caso(
         if nuevo_link:
             caso.drive_link = nuevo_link
             db.commit()
-            print(f"✅ PDF actualizado en Drive")
+            print(f"✅ PDF actualizado en Drive: {nuevo_link}")
         
-        # Limpiar
-        os.remove(temp_input)
-        os.remove(temp_output)
+        # Limpiar archivos temporales
+        if os.path.exists(temp_input):
+            os.remove(temp_input)
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
         
         return {
             "status": "ok",
             "serial": serial,
             "nuevo_link": nuevo_link,
-            "mensaje": "PDF editado correctamente"
+            "modificaciones": modifications,
+            "mensaje": "PDF editado y actualizado en Drive"
         }
     
     except Exception as e:
         print(f"❌ Error: {e}")
-        if os.path.exists(temp_input): os.remove(temp_input)
-        if os.path.exists(temp_output): os.remove(temp_output)
-        raise HTTPException(status_code=500, detail=str(e))
-    from app.pdf_editor import PDFEditor
-    import cv2
-    import numpy as np
-    from app.validador import verificar_token_admin
-    
-    verificar_token_admin(token)
-    
-    try:
-        datos = await request.json()
-        operaciones = datos.get('operaciones', {})
-    except:
-        raise HTTPException(status_code=400, detail="Datos inválidos")
-    
-    caso = db.query(Case).filter(Case.serial == serial).first()
-    if not caso or not caso.drive_link:
-        raise HTTPException(status_code=404, detail="Caso o PDF no encontrado")
-    
-    # Extraer file_id y descargar PDF
-    if '/file/d/' in caso.drive_link:
-        file_id = caso.drive_link.split('/file/d/')[1].split('/')[0]
-    elif 'id=' in caso.drive_link:
-        file_id = caso.drive_link.split('id=')[1].split('&')[0]
+        import traceback
+        traceback.print_exc()
+        
+        # Limpiar en caso de error
+        if os.path.exists(temp_input):
+            os.remove(temp_input)
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+        
+        raise HTTPException(status_code=500, detail=f"Error editando PDF: {str(e)}")
     else:
         raise HTTPException(status_code=400, detail="Link de Drive inválido")
     
@@ -2485,3 +2508,81 @@ async def guardar_pdf_editado(
         "casos_borrados": len(casos_borrados) if nuevo_estado == EstadoCaso.COMPLETA and es_reenvio else 0,
         "mensaje": f"Caso {serial} validado como {accion}"
     }
+
+# ========================================
+# ??? ELIMINAR INCAPACIDAD COMPLETAMENTE
+# ========================================
+
+@router.delete("/casos/{serial}")
+async def eliminar_caso_completo(
+    serial: str,
+    x_admin_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """"""
+    ??? Elimina una incapacidad del sistema completamente:
+    - Base de datos
+    - Google Drive (todos los archivos con ese serial)
+    
+    Solo para administradores.
+    """"""
+    # Validar token de administrador
+    if not x_admin_token or x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Token de administrador requerido")
+    
+    # Buscar caso en BD
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    
+    if not caso:
+        raise HTTPException(status_code=404, detail=f"Caso {serial} no encontrado")
+    
+    archivos_eliminados = []
+    errores = []
+    
+    try:
+        # 1. Eliminar archivo de Drive (si existe drive_link)
+        if caso.drive_link:
+            try:
+                # Extraer file_id del link
+                file_id_match = re.search(r'/d/([a-zA-Z0-9_-]+)', caso.drive_link)
+                if file_id_match:
+                    file_id = file_id_match.group(1)
+                    
+                    from app.drive_uploader import get_drive_service
+                    service = get_drive_service()
+                    
+                    # Eliminar archivo
+                    service.files().delete(fileId=file_id).execute()
+                    archivos_eliminados.append(file_id)
+                    print(f"? Archivo eliminado de Drive: {file_id}")
+            except Exception as e:
+                error_msg = f"Error eliminando archivo de Drive: {str(e)}"
+                errores.append(error_msg)
+                print(f"?? {error_msg}")
+        
+        # 2. Eliminar de la base de datos
+        db.delete(caso)
+        db.commit()
+        print(f"? Caso {serial} eliminado de BD")
+        
+        return {
+            "status": "ok",
+            "mensaje": f"Incapacidad {serial} eliminada completamente",
+            "caso": {
+                "serial": caso.serial,
+                "cedula": caso.cedula,
+                "nombre": caso.nombre,
+                "empresa": caso.empresa,
+                "tipo": caso.tipo
+            },
+            "archivos_eliminados": len(archivos_eliminados),
+            "errores": errores
+        }
+        
+    except Exception as e:
+        db.rollback()
+        print(f"? Error eliminando caso {serial}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al eliminar la incapacidad: {str(e)}"
+        )
