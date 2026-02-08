@@ -1031,6 +1031,7 @@ async def subir_incapacidad(
             tipo=tipo,
             serial=consecutivo,
             fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
             tiene_soat=tiene_soat,
             tiene_licencia=tiene_licencia,
             subtipo=subType
@@ -1166,6 +1167,11 @@ Gracias por usar IncaNeurobaeza.
         
         emails_enviados = []
         notificacion_exitosa = False
+        
+        print(f"\n{'='*80}")
+        print(f"📧 ENVIANDO CONFIRMACIÓN AL USUARIO")
+        print(f"{'='*80}\n")
+        
         if email:  # Email del formulario como TO principal
             
             resultado = enviar_a_n8n(
@@ -1176,15 +1182,18 @@ Gracias por usar IncaNeurobaeza.
                 html_content=html_empleado,
                 cc_email=cc_empresa,
                 correo_bd=correo_empleado,
-                whatsapp=phoneNumber,  # ✅ NUEVO: Enviar teléfono
+                whatsapp=telefono,  # ✅ NUEVO: Enviar teléfono (parámetro correcto)
                 whatsapp_message=mensaje_whatsapp,  # ✅ NUEVO: Enviar mensaje
                 adjuntos_base64=[]
             )
             if resultado:
                 emails_enviados.append(correo_empleado)
                 notificacion_exitosa = True
+                print(f"✅ Notificación enviada exitosamente")
             else:
-                print(f"⚠️ Error al enviar notificación vía n8n")
+                print(f"⚠️ Error al enviar notificación vía n8n (pero caso se guardó en BD)")
+                # NO bloqueamos - el caso ya está guardado en BD
+                notificacion_exitosa = False  # Pero marcamos como no enviado para en caso log
         
         
         
@@ -1210,6 +1219,10 @@ Cédula: {cedula}
 Documentación recibida en IncaNeurobaeza.
         """.strip()
         
+        print(f"\n{'='*80}")
+        print(f"📧 ENVIANDO COPIA DE SUPERVISIÓN")
+        print(f"{'='*80}\n")
+        
         enviar_a_n8n(
             tipo_notificacion='extra',
             email="xoblaxbaezaospino@gmail.com",
@@ -1218,12 +1231,16 @@ Documentación recibida en IncaNeurobaeza.
             html_content=html_supervision,
             cc_email=None,
             correo_bd=None,
-            whatsapp=phoneNumber,  # ✅ NUEVO: Enviar teléfono
-            whatsapp_message=mensaje_supervision_whatsapp,  # ✅ NUEVO: Enviar mensaje
+            whatsapp=telefono,
+            whatsapp_message=mensaje_supervision_whatsapp,
             adjuntos_base64=[]
         )
         
-        return {
+        print(f"\n{'='*80}")
+        print(f"✅ RESPUESTA FINAL AL FRONTEND")
+        print(f"{'='*80}\n")
+        
+        respuesta_final = {
             "status": "ok",
             "mensaje": "Registro exitoso",
             "consecutivo": consecutivo,
@@ -1234,9 +1251,17 @@ Documentación recibida en IncaNeurobaeza.
             "notificacion_enviada": notificacion_exitosa,
             "canales_notificados": {
                 "email": notificacion_exitosa,
-                "whatsapp": notificacion_exitosa and bool(phoneNumber)
-            }
+                "whatsapp": notificacion_exitosa and bool(telefono)
+            },
+            "fecha_inicio": fecha_inicio.isoformat() if fecha_inicio else None,
+            "fecha_fin": fecha_fin.isoformat() if fecha_fin else None,
+            "serial": consecutivo
         }
+        
+        print(f"Respondiendo con: {respuesta_final}")
+        print(f"{'='*80}\n")
+        
+        return respuesta_final
     
     else:
         html_alerta = get_alert_template(
@@ -1287,7 +1312,7 @@ Gracias por usar IncaNeurobaeza.
             html_content=html_confirmacion,
             cc_email=None,
             correo_bd=None,
-            whatsapp=phoneNumber,  # ✅ NUEVO: Enviar teléfono
+            whatsapp=telefono,  # ✅ NUEVO: Enviar teléfono
             whatsapp_message=mensaje_whatsapp_desconocido,  # ✅ NUEVO: Enviar mensaje
             adjuntos_base64=[]
         )
@@ -1313,7 +1338,7 @@ Gracias por usar IncaNeurobaeza.
             "notificacion_enviada": notificacion_exitosa,
             "canales_notificados": {
                 "email": notificacion_exitosa,
-                "whatsapp": notificacion_exitosa and bool(phoneNumber)
+                "whatsapp": notificacion_exitosa and bool(telefono)
             }
         }
 

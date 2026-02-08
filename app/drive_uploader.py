@@ -353,7 +353,9 @@ def upload_to_drive(
     consecutivo: str = None,
     tiene_soat: bool = None,
     tiene_licencia: bool = None,
-    subtipo: str = None
+    subtipo: str = None,
+    fecha_inicio = None,
+    fecha_fin = None
 ) -> str:
     """
     Sube archivo a Google Drive con estructura de carpetas
@@ -391,11 +393,17 @@ def upload_to_drive(
             subfolder_name = 'Con_Licencia' if tiene_licencia else 'Sin_Licencia'
             final_folder_id = create_folder_if_not_exists(service, subfolder_name.encode(), tipo_folder_id)
         
-        # Nombre del archivo
+        # Nombre del archivo - CON FECHAS DE INCAPACIDAD
         if consecutivo:
-            filename = f"{consecutivo}_{cedula}_{tipo_normalizado}_{fecha}.pdf"
+            if fecha_inicio and fecha_fin:
+                filename = f"{consecutivo}_{cedula}_{tipo_normalizado}_{fecha_inicio}_{fecha_fin}_{fecha}.pdf"
+            else:
+                filename = f"{consecutivo}_{cedula}_{tipo_normalizado}_{fecha}.pdf"
         else:
-            filename = f"{cedula}_{tipo_normalizado}_{fecha}.pdf"
+            if fecha_inicio and fecha_fin:
+                filename = f"{cedula}_{tipo_normalizado}_{fecha_inicio}_{fecha_fin}_{fecha}.pdf"
+            else:
+                filename = f"{cedula}_{tipo_normalizado}_{fecha}.pdf"
         
         print(f"📤 Subiendo archivo: {filename}")
         
@@ -595,6 +603,7 @@ def upload_inteligente(
     tipo: str,
     serial: str,
     fecha_inicio: date_type = None,
+    fecha_fin: date_type = None,
     **kwargs  # Para mantener compatibilidad
 ) -> str:
     """
@@ -608,7 +617,8 @@ def upload_inteligente(
         cedula: Cédula
         tipo: Tipo de documento
         serial: Serial único
-        fecha_inicio: Fecha inicio (requerida para certificados)
+        fecha_inicio: Fecha inicio (requerida para certificados y como parte del nombre)
+        fecha_fin: Fecha fin (para incluir en nombre del archivo)
         **kwargs: tiene_soat, tiene_licencia, subtipo (para incapacidades)
     
     Returns:
@@ -640,7 +650,9 @@ def upload_inteligente(
             serial,
             tiene_soat=kwargs.get('tiene_soat'),
             tiene_licencia=kwargs.get('tiene_licencia'),
-            subtipo=kwargs.get('subtipo')
+            subtipo=kwargs.get('subtipo'),
+            fecha_inicio=kwargs.get('fecha_inicio'),
+            fecha_fin=kwargs.get('fecha_fin')
         )
 
 
