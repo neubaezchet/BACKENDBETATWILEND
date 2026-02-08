@@ -1198,15 +1198,13 @@ Gracias por usar IncaNeurobaeza.
         
         # ✅ EMAIL DE SUPERVISIÓN (SIN CC, directo)
         html_supervision = get_alert_template(
-            tipo="copia",
-            cedula=cedula,
             nombre=nombre,
-            consecutivo=consecutivo,
+            serial=consecutivo,
             empresa=empresa_reg,
-            link_pdf=link_pdf,
-            archivos_nombres=original_filenames,
-            email_contacto=email,
-            telefono=telefono
+            tipo_incapacidad=tipo,
+            telefono=telefono,
+            email=email,
+            link_drive=link_pdf
         )
         
         # ✅ ENVIAR WHATSAPP DE SUPERVISIÓN
@@ -1264,12 +1262,13 @@ Documentación recibida en IncaNeurobaeza.
     
     else:
         html_alerta = get_alert_template(
-            tipo="alerta",
-            cedula=cedula,
-            consecutivo=consecutivo,
-            email_contacto=email,
+            nombre=f"Cédula {cedula}",
+            serial=consecutivo,
+            empresa="Empleado no registrado",
+            tipo_incapacidad=tipo,
             telefono=telefono,
-            quinzena=quinzena_actual
+            email=email,
+            link_drive=link_pdf
         )
         
         html_confirmacion = f"""
