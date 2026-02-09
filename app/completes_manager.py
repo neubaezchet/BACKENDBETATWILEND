@@ -22,12 +22,19 @@ class CompletesManager:
     """Gestor de la carpeta operativa Completes"""
     
     def __init__(self):
-        self.service = get_authenticated_service()
+        self.service = None
         self.completes_root_id = None
         self.respaldos_root_id = None
+
+    def _get_service(self):
+        """Obtiene servicio de Drive bajo demanda."""
+        if self.service is None:
+            self.service = get_authenticated_service()
+        return self.service
     
     def _init_completes_structure(self):
         """Inicializa estructura Completes y _Respaldos_24h"""
+        self._get_service()
         if not self.completes_root_id:
             self.completes_root_id = create_folder_if_not_exists(
                 self.service, b'Completes', 'root'
