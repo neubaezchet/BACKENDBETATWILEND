@@ -2586,3 +2586,81 @@ async def eliminar_caso_completo(
             status_code=500,
             detail=f"Error al eliminar la incapacidad: {str(e)}"
         )
+
+
+# ========================================
+# 🧹 LIMPIAR TODOS LOS CASOS (ADMIN)
+# ========================================
+
+@router.delete("/casos-limpiar-todos")
+async def limpiar_todos_los_casos(
+    contraseña: str = Query(...),
+    db: Session = Depends(get_db)
+):
+    """
+    🧹 Elimina TODOS los casos del sistema (base de datos y Google Drive)
+    
+    Requiere contraseña correcta.
+    Operación irreversible.
+    """
+    # Validar contraseña
+    CONTRASEÑA_MAESTRO = "1085043374"
+    
+    if contraseña != CONTRASEÑA_MAESTRO:
+        raise HTTPException(status_code=403, detail="Contraseña incorrecta")
+    
+    try:
+        # 1. Obtener todos los casos
+        todos_los_casos = db.query(Case).all()
+        total_casos = len(todos_los_casos)
+        
+        if total_casos == 0:
+            return {
+                "status": "ok",
+                "mensaje": "No hay casos para eliminar",
+                "casos_eliminados": 0,
+                "errores": []
+            }
+        
+        archivos_eliminados = 0
+        errores_lista = []
+        
+        # 2. Eliminar cada caso de Drive y BD
+        for caso in todos_los_casos:
+            try:
+                if caso.drive_link:
+                    try:
+                        file_id_match = re.search(r'/d/([a-zA-Z0-9_-]+)', caso.drive_link)
+                        if file_id_match:
+                            file_id = file_id_match.group(1)
+                            from app.drive_uploader import get_drive_service
+                            service = get_drive_service()
+                            service.files().delete(fileId=file_id).execute()
+                            archivos_eliminados += 1
+                    except Exception as e:
+                        errores_lista.append(f"Error Drive ({caso.serial}): {str(e)}")
+                
+                # Eliminar de BD
+                db.delete(caso)
+                
+            except Exception as e:
+                errores_lista.append(f"Error BD ({caso.serial}): {str(e)}")
+        
+        # 3. Commit
+        db.commit()
+        
+        return {
+            "status": "ok",
+            "mensaje": f"🧹 Sistema limpiado: {total_casos} casos eliminados",
+            "casos_eliminados": total_casos,
+            "archivos_eliminados": archivos_eliminados,
+            "errores": errores_lista
+        }
+        
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error limpiando sistema: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al limpiar el sistema: {str(e)}"
+        )
