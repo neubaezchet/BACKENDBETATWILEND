@@ -2519,13 +2519,13 @@ async def eliminar_caso_completo(
     x_admin_token: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
-    """"""
-    ??? Elimina una incapacidad del sistema completamente:
+    """
+    Elimina una incapacidad del sistema completamente:
     - Base de datos
     - Google Drive (todos los archivos con ese serial)
     
     Solo para administradores.
-    """"""
+    """
     # Validar token de administrador
     if not x_admin_token or x_admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="Token de administrador requerido")
@@ -2554,16 +2554,16 @@ async def eliminar_caso_completo(
                     # Eliminar archivo
                     service.files().delete(fileId=file_id).execute()
                     archivos_eliminados.append(file_id)
-                    print(f"? Archivo eliminado de Drive: {file_id}")
+                    print(f"Archivo eliminado de Drive: {file_id}")
             except Exception as e:
                 error_msg = f"Error eliminando archivo de Drive: {str(e)}"
                 errores.append(error_msg)
-                print(f"?? {error_msg}")
+                print(f"Error: {error_msg}")
         
         # 2. Eliminar de la base de datos
         db.delete(caso)
         db.commit()
-        print(f"? Caso {serial} eliminado de BD")
+        print(f"Caso {serial} eliminado de BD")
         
         return {
             "status": "ok",
@@ -2581,7 +2581,7 @@ async def eliminar_caso_completo(
         
     except Exception as e:
         db.rollback()
-        print(f"? Error eliminando caso {serial}: {str(e)}")
+        print(f"Error eliminando caso {serial}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error al eliminar la incapacidad: {str(e)}"
