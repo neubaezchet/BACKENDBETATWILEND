@@ -3,7 +3,7 @@ Router del Portal de Validadores - IncaNeurobaeza
 Endpoints para gestión, validación y búsqueda de casos
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form, Request, Query
 from fastapi.responses import StreamingResponse, FileResponse
 import requests
 import io
