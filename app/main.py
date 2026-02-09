@@ -1194,45 +1194,6 @@ Gracias por usar IncaNeurobaeza.
                 # NO bloqueamos - el caso ya está guardado en BD
                 notificacion_exitosa = False  # Pero marcamos como no enviado para en caso log
         
-        
-        
-        # ✅ EMAIL DE SUPERVISIÓN (SIN CC, directo)
-        html_supervision = get_alert_template(
-            nombre=nombre,
-            serial=consecutivo,
-            empresa=empresa_reg,
-            tipo_incapacidad=tipo,
-            telefono=telefono,
-            email=email,
-            link_drive=link_pdf
-        )
-        
-        # ✅ ENVIAR WHATSAPP DE SUPERVISIÓN
-        mensaje_supervision_whatsapp = f"""
-Copia de Registro - {consecutivo}
-Empresa: {empresa_reg}
-Cédula: {cedula}
-
-Documentación recibida en IncaNeurobaeza.
-        """.strip()
-        
-        print(f"\n{'='*80}")
-        print(f"📧 ENVIANDO COPIA DE SUPERVISIÓN")
-        print(f"{'='*80}\n")
-        
-        enviar_a_n8n(
-            tipo_notificacion='extra',
-            email="xoblaxbaezaospino@gmail.com",
-            serial=consecutivo,
-            subject=f"Copia Registro - {consecutivo} - {empresa_reg}",
-            html_content=html_supervision,
-            cc_email=None,
-            correo_bd=None,
-            whatsapp=telefono,
-            whatsapp_message=mensaje_supervision_whatsapp,
-            adjuntos_base64=[]
-        )
-        
         print(f"\n{'='*80}")
         print(f"✅ RESPUESTA FINAL AL FRONTEND")
         print(f"{'='*80}\n")
@@ -1312,17 +1273,6 @@ Gracias por usar IncaNeurobaeza.
             correo_bd=None,
             whatsapp=telefono,  # ✅ NUEVO: Enviar teléfono
             whatsapp_message=mensaje_whatsapp_desconocido,  # ✅ NUEVO: Enviar mensaje
-            adjuntos_base64=[]
-        )
-        
-        enviar_a_n8n(
-            tipo_notificacion='extra',
-            email="xoblaxbaezaospino@gmail.com",
-            serial=consecutivo,
-            subject=f"⚠️ ALERTA Cédula no encontrada - {consecutivo}",
-            html_content=html_alerta,
-            cc_email=None,
-            correo_bd=None,
             adjuntos_base64=[]
         )
         
