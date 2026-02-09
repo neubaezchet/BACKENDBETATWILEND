@@ -1446,7 +1446,7 @@ async def cambiar_tipo_incapacidad(
         raise HTTPException(status_code=400, detail="Datos inválidos")
     
     # 3. Validar tipo
-    tipos_validos = ['maternity', 'paternity', 'general', 'traffic', 'labor']
+    tipos_validos = ['maternity', 'paternity', 'general', 'traffic', 'labor', 'certificado_hospitalizacion', 'prelicencia']
     if nuevo_tipo not in tipos_validos:
         raise HTTPException(status_code=400, detail=f"Tipo inválido. Usa: {', '.join(tipos_validos)}")
     
@@ -1465,7 +1465,9 @@ async def cambiar_tipo_incapacidad(
         'paternity': TipoIncapacidad.PATERNIDAD,
         'general': TipoIncapacidad.ENFERMEDAD_GENERAL,
         'traffic': TipoIncapacidad.ACCIDENTE_TRANSITO,
-        'labor': TipoIncapacidad.ENFERMEDAD_LABORAL
+        'labor': TipoIncapacidad.ENFERMEDAD_LABORAL,
+        'certificado_hospitalizacion': TipoIncapacidad.CERTIFICADO,
+        'prelicencia': TipoIncapacidad.PRELICENCIA
     }
     
     caso.tipo = tipo_map[nuevo_tipo]

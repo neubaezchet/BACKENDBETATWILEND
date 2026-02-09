@@ -25,6 +25,7 @@ from app.checks_disponibles import CHECKS_DISPONIBLES, obtener_checks_por_tipo
 from app.email_templates import get_email_template_universal
 from app.drive_manager import CaseFileOrganizer
 from app.n8n_notifier import enviar_a_n8n  # ✅ NUEVO
+from app.completes_manager import completes_mgr  # ✅ NUEVO - Sincronización Completes
 
 router = APIRouter(prefix="/validador", tags=["Portal de Validadores"])
 
@@ -1154,6 +1155,19 @@ async def validar_caso_con_checks(
         # ✅ Cambiar estado y desbloquear
         caso.estado = EstadoCaso.COMPLETA
         caso.bloquea_nueva = False
+        
+        # ✅ NUEVO: Copiar a carpeta operativa Completes/
+        print(f"📋 Copiando caso {serial} a carpeta Completes...")
+        try:
+            link_completes = completes_mgr.copiar_caso_a_completes(caso)
+            if link_completes:
+                # Guardar referencia en metadata
+                if not caso.metadata_form:
+                    caso.metadata_form = {}
+                caso.metadata_form['link_completes'] = link_completes
+                print(f"✅ Caso {serial} disponible en Completes: {link_completes}")
+        except Exception as e:
+            print(f"⚠️ Error copiando a Completes: {e}")
 
     else:
         # ✅ Si es INCOMPLETA, ILEGIBLE, etc. → bloquea nuevas
@@ -1384,6 +1398,9 @@ async def validar_caso_con_checks(
             print(f"✅ Caso {serial} sincronizado con Google Sheets")
         except Exception as e:
             print(f"⚠️ Error sincronizando con Sheets: {e}")
+    
+    # ✅ GUARDAR TODOS LOS CAMBIOS EN BD
+    db.commit()
     
     return {
         "status": "ok",
