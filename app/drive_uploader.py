@@ -338,7 +338,10 @@ def normalize_tipo_incapacidad(tipo: str, subtipo: str = None) -> str:
         'accidente_transito': 'Accidente_Transito',
         'accidente de transito': 'Accidente_Transito',
         'traffic': 'Accidente_Transito',
-        'especial': 'Enfermedad_Especial'
+        'especial': 'Enfermedad_Especial',
+        'certificado_hospitalizacion': 'Certificado_Hospitalizacion',
+        'certificado': 'Certificado_Hospitalizacion',
+        'prelicencia': 'Prelicencia'
     }
     return tipo_map.get(tipo_a_usar.lower(), tipo_a_usar.replace(' ', '_').title())
 
