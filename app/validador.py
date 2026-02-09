@@ -1523,15 +1523,15 @@ async def editar_pdf_caso(
     db: Session = Depends(get_db)
 ):
     """
-    ✨ Edita el PDF de un caso con múltiples operaciones profesionales
-    Usa el PDFEditor con algoritmos de última generación
+    ✨ Edita el PDF de un caso con múltiples operaciones
+    VERSIÓN OPTIMIZADA - Operaciones rápidas primero
     """
     verificar_token_admin(token)
     
     try:
         datos = await request.json()
         operaciones = datos.get('operaciones', {})
-        print(f"📝 Operaciones recibidas: {operaciones}")
+        print(f"📝 Operaciones: {list(operaciones.keys())}")
     except:
         raise HTTPException(status_code=400, detail="Datos inválidos")
     
@@ -1548,9 +1548,12 @@ async def editar_pdf_caso(
         raise HTTPException(status_code=400, detail="Link de Drive inválido")
     
     download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    print(f"📥 Descargando PDF desde: {download_url}")
     
-    response = requests.get(download_url)
+    import time
+    start_time = time.time()
+    
+    # Descargar PDF
+    response = requests.get(download_url, timeout=15)
     if response.status_code != 200:
         raise HTTPException(status_code=500, detail="Error descargando PDF")
     
@@ -1560,90 +1563,109 @@ async def editar_pdf_caso(
     with open(temp_input, 'wb') as f:
         f.write(response.content)
     
-    print(f"✅ PDF descargado: {temp_input}")
+    download_time = time.time() - start_time
+    print(f"⬇️ Descarga: {download_time:.2f}s")
     
     try:
-        from app.pdf_editor import PDFEditor
+        # Usar PyMuPDF directo para operaciones simples (RÁPIDO)
+        import fitz
+        doc = fitz.open(temp_input)
+        modificaciones = []
         
-        # Crear editor con el PDF
-        editor = PDFEditor(temp_input)
+        process_start = time.time()
         
         # PROCESAR OPERACIONES
         for op_type, op_data in operaciones.items():
-            print(f"🔧 Procesando: {op_type}")
             
             if op_type == 'rotate':
-                # Rotar páginas
+                # Rotación simple (INSTANTÁNEA con PyMuPDF)
                 for item in op_data:
                     page_num = item['page_num']
                     angle = item['angle']
-                    print(f"   🔄 Rotando página {page_num} {angle}°")
-                    editor.rotate_page(page_num, angle)
-            
-            elif op_type == 'enhance_quality':
-                # Mejorar calidad con algoritmos avanzados
-                pages = op_data.get('pages', [])
-                scale = op_data.get('scale', 2.5)
-                for page_num in pages:
-                    print(f"   ✨ Mejorando calidad página {page_num} (scale={scale})")
-                    editor.enhance_page_quality(page_num, scale)
-            
-            elif op_type == 'aplicar_filtro':
-                # Aplicar filtros de imagen
-                page_num = op_data.get('page_num', 0)
-                filtro = op_data.get('filtro', 'grayscale')
-                print(f"   🎨 Aplicando filtro {filtro} a página {page_num}")
-                editor.aplicar_filtro_imagen(page_num, filtro)
-            
-            elif op_type == 'crop_auto':
-                # Recorte automático inteligente
-                for item in op_data:
-                    page_num = item['page_num']
-                    margin = item.get('margin', 10)
-                    print(f"   ✂️ Recorte automático página {page_num}")
-                    editor.auto_crop_page(page_num, margin)
-            
-            elif op_type == 'deskew':
-                # Corregir inclinación (ya se hace en enhance_quality)
-                page_num = op_data.get('page_num', 0)
-                print(f"   🔄 Corrigiendo inclinación página {page_num}")
-                # La corrección de inclinación ya está incluida en enhance_quality
-                # Si se llama solo, usamos el enhancer directamente
-                editor.enhance_page_quality(page_num, scale=2.0)
+                    page = doc[page_num]
+                    current = page.rotation
+                    page.set_rotation((current + angle) % 360)
+                    modificaciones.append(f"Rotated page {page_num} by {angle}°")
             
             elif op_type == 'delete_pages':
-                # Eliminar páginas
-                print(f"   🗑️ Eliminando páginas: {op_data}")
-                editor.delete_pages(op_data)
+                # Eliminar páginas (RÁPIDO)
+                for page_num in sorted(op_data, reverse=True):
+                    doc.delete_page(page_num)
+                    modificaciones.append(f"Deleted page {page_num}")
+            
+            elif op_type == 'enhance_quality' or op_type == 'aplicar_filtro' or op_type == 'crop_auto' or op_type == 'deskew':
+                # Operaciones PESADAS - usar PDFEditor completo
+                doc.close()
+                from app.pdf_editor import PDFEditor
+                editor = PDFEditor(temp_input)
+                
+                if op_type == 'enhance_quality':
+                    pages = op_data.get('pages', [])
+                    scale = op_data.get('scale', 2.5)
+                    for page_num in pages:
+                        editor.enhance_page_quality(page_num, scale)
+                
+                elif op_type == 'aplicar_filtro':
+                    page_num = op_data.get('page_num', 0)
+                    filtro = op_data.get('filtro', 'grayscale')
+                    editor.aplicar_filtro_imagen(page_num, filtro)
+                
+                elif op_type == 'crop_auto':
+                    for item in op_data:
+                        page_num = item['page_num']
+                        margin = item.get('margin', 10)
+                        editor.auto_crop_page(page_num, margin)
+                
+                elif op_type == 'deskew':
+                    page_num = op_data.get('page_num', 0)
+                    editor.enhance_page_quality(page_num, scale=2.0)
+                
+                editor.save_changes(temp_output)
+                modificaciones = editor.get_modifications_log()
+                break  # Salir del loop si usamos PDFEditor
         
-        # Guardar cambios
-        editor.save_changes(temp_output)
-        modifications = editor.get_modifications_log()
-        print(f"💾 PDF guardado: {temp_output}")
-        print(f"📋 Modificaciones: {modifications}")
+        # Si usamos PyMuPDF directo, guardar
+        if doc.is_closed == False:
+            doc.save(temp_output, garbage=4, deflate=True)
+            doc.close()
+        
+        process_time = time.time() - process_start
+        print(f"⚙️ Procesamiento: {process_time:.2f}s")
         
         # Subir a Drive
+        upload_start = time.time()
         from app.drive_manager import CaseFileOrganizer
         organizer = CaseFileOrganizer()
         nuevo_link = organizer.actualizar_pdf_editado(caso, temp_output)
         
+        upload_time = time.time() - upload_start
+        print(f"⬆️ Subida: {upload_time:.2f}s")
+        
         if nuevo_link:
             caso.drive_link = nuevo_link
             db.commit()
-            print(f"✅ PDF actualizado en Drive: {nuevo_link}")
         
-        # Limpiar archivos temporales
+        # Limpiar
         if os.path.exists(temp_input):
             os.remove(temp_input)
         if os.path.exists(temp_output):
             os.remove(temp_output)
         
+        total_time = time.time() - start_time
+        print(f"✅ Total: {total_time:.2f}s")
+        
         return {
             "status": "ok",
             "serial": serial,
             "nuevo_link": nuevo_link,
-            "modificaciones": modifications,
-            "mensaje": "PDF editado y actualizado en Drive"
+            "modificaciones": modificaciones,
+            "tiempos": {
+                "descarga": f"{download_time:.2f}s",
+                "procesamiento": f"{process_time:.2f}s",
+                "subida": f"{upload_time:.2f}s",
+                "total": f"{total_time:.2f}s"
+            },
+            "mensaje": "PDF editado correctamente"
         }
     
     except Exception as e:
@@ -1651,13 +1673,13 @@ async def editar_pdf_caso(
         import traceback
         traceback.print_exc()
         
-        # Limpiar en caso de error
+        # Limpiar
         if os.path.exists(temp_input):
             os.remove(temp_input)
         if os.path.exists(temp_output):
             os.remove(temp_output)
         
-        raise HTTPException(status_code=500, detail=f"Error editando PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
     else:
         raise HTTPException(status_code=400, detail="Link de Drive inválido")
     
