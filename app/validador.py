@@ -1077,6 +1077,149 @@ async def obtener_pdf_stream(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
+
+@router.get("/casos/{serial}/pdf/fast")
+async def obtener_pdf_fast(
+    serial: str,
+    if_none_match: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    ✅ ENDPOINT OPTIMIZADO 2026 - PDF con caché inteligente
+    
+    Mejoras vs /pdf/stream:
+    - Usa API autenticada de Drive (no URL pública que falla)
+    - Soporte ETag: si el cliente tiene caché válido, retorna 304 (0 bytes)
+    - Descarga completa en memoria → respuesta sin streaming (más rápido para PDFs < 20MB)
+    - Header X-PDF-Modified para invalidación de caché en frontend
+    
+    Tiempos esperados:
+    - Con caché válido (304): <50ms
+    - Sin caché (descarga): 1-3s
+    - PDF muy grande (>10MB): 3-8s
+    """
+    
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso or not caso.drive_link:
+        raise HTTPException(status_code=404, detail="Caso o PDF no encontrado")
+    
+    try:
+        # Extraer file_id
+        if '/file/d/' in caso.drive_link:
+            file_id = caso.drive_link.split('/file/d/')[1].split('/')[0]
+        elif 'id=' in caso.drive_link:
+            file_id = caso.drive_link.split('id=')[1].split('&')[0]
+        else:
+            raise HTTPException(status_code=400, detail="Link de Drive inválido")
+        
+        # Generar ETag basado en file_id + updated_at del caso
+        updated_str = caso.updated_at.isoformat() if caso.updated_at else ""
+        import hashlib
+        etag_value = hashlib.md5(f"{file_id}:{updated_str}".encode()).hexdigest()
+        etag_header = f'"{etag_value}"'
+        
+        # ✅ CACHÉ: Si cliente tiene la versión actual, retornar 304
+        if if_none_match and if_none_match.strip('"') == etag_value:
+            from fastapi.responses import Response
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag_header,
+                    "Cache-Control": "private, max-age=3600",
+                    "Access-Control-Allow-Origin": "*",
+                }
+            )
+        
+        # ✅ Descargar usando API autenticada (más rápida y confiable)
+        try:
+            from app.drive_uploader import get_authenticated_service
+            service = get_authenticated_service()
+            
+            # Descargar contenido del archivo
+            request_drive = service.files().get_media(fileId=file_id)
+            
+            pdf_content = io.BytesIO()
+            from googleapiclient.http import MediaIoBaseDownload
+            downloader = MediaIoBaseDownload(pdf_content, request_drive)
+            
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            
+            pdf_bytes = pdf_content.getvalue()
+            print(f"✅ [PDF Fast] {serial}: {len(pdf_bytes)} bytes via API autenticada")
+            
+        except Exception as drive_api_error:
+            # Fallback: URL pública si la API falla
+            print(f"⚠️ [PDF Fast] API falló, usando URL pública: {drive_api_error}")
+            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            response = requests.get(download_url, timeout=25)
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail=f"Error descargando PDF")
+            pdf_bytes = response.content
+        
+        # Retornar PDF completo con headers de caché
+        from fastapi.responses import Response
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename={serial}.pdf",
+                "Content-Length": str(len(pdf_bytes)),
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+                "Access-Control-Expose-Headers": "ETag, X-PDF-Modified, Content-Length",
+                "Cache-Control": "private, max-age=3600",
+                "ETag": etag_header,
+                "X-PDF-Modified": updated_str,
+                "X-Content-Type-Options": "nosniff",
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [PDF Fast] Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/casos/{serial}/pdf/meta")
+async def obtener_pdf_meta(
+    serial: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    ✅ Metadatos del PDF sin descargar (para validar caché)
+    Retorna ETag y fecha de modificación para que el frontend
+    decida si necesita descargar o usar caché local.
+    """
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso or not caso.drive_link:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+    
+    if '/file/d/' in caso.drive_link:
+        file_id = caso.drive_link.split('/file/d/')[1].split('/')[0]
+    elif 'id=' in caso.drive_link:
+        file_id = caso.drive_link.split('id=')[1].split('&')[0]
+    else:
+        file_id = "unknown"
+    
+    updated_str = caso.updated_at.isoformat() if caso.updated_at else ""
+    import hashlib
+    etag_value = hashlib.md5(f"{file_id}:{updated_str}".encode()).hexdigest()
+    
+    return {
+        "serial": serial,
+        "etag": etag_value,
+        "modified": updated_str,
+        "has_pdf": bool(caso.drive_link)
+    }
+
+
 @router.post("/casos/{serial}/validar")
 async def validar_caso_con_checks(
     serial: str,
