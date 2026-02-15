@@ -580,3 +580,279 @@ async def get_dashboard_completo(
     except Exception as e:
         logger.error(f"Error dashboard completo: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# 6️⃣ ENDPOINT: POWER BI — ANÁLISIS PERSONA (timeline + gaps)
+# ============================================================
+@router.get("/powerbi/persona/{cedula}")
+async def powerbi_analisis_persona(
+    cedula: str,
+    db: Session = Depends(get_db)
+):
+    """
+    📊 POWER BI — Análisis completo de una persona.
+    Devuelve todas las incapacidades con timeline, gaps, cadenas de prórroga,
+    y periodos descubiertos para visualización estilo Power BI.
+    """
+    try:
+        from datetime import date as date_type
+        
+        # Datos del empleado
+        empleado = db.query(Employee).filter(Employee.cedula == cedula).first()
+        if not empleado:
+            # Buscar en casos directamente
+            caso_sample = db.query(Case).filter(Case.cedula == cedula).first()
+            if not caso_sample:
+                raise HTTPException(status_code=404, detail=f"No se encontró empleado con cédula {cedula}")
+        
+        # Todas las incapacidades ordenadas por fecha
+        casos = db.query(Case).filter(
+            Case.cedula == cedula
+        ).order_by(Case.fecha_inicio.asc()).all()
+        
+        if not casos:
+            raise HTTPException(status_code=404, detail="Sin incapacidades registradas")
+        
+        # Análisis de prórrogas completo
+        analisis = analizar_historial_empleado(db, cedula)
+        
+        # Construir timeline de incapacidades
+        timeline = []
+        for c in casos:
+            cie_info = buscar_codigo(c.codigo_cie10) if c.codigo_cie10 else None
+            empresa_obj = db.query(Company).filter(Company.id == c.company_id).first() if c.company_id else None
+            
+            fi = c.fecha_inicio
+            ff = c.fecha_fin or c.fecha_inicio
+            
+            timeline.append({
+                "serial": c.serial,
+                "fecha_inicio": fi.strftime("%Y-%m-%d") if fi else None,
+                "fecha_fin": ff.strftime("%Y-%m-%d") if ff else None,
+                "dias": c.dias_incapacidad or 0,
+                "tipo": c.tipo.value if c.tipo else "",
+                "estado": c.estado.value if c.estado else "",
+                "diagnostico": c.diagnostico or "",
+                "codigo_cie10": c.codigo_cie10 or "",
+                "cie10_descripcion": cie_info["descripcion"] if cie_info and cie_info.get("encontrado") else "",
+                "cie10_grupo": cie_info["grupo"] if cie_info and cie_info.get("encontrado") else "",
+                "empresa": empresa_obj.nombre if empresa_obj else "",
+                "eps": c.eps or "",
+                "es_prorroga": c.es_prorroga or False,
+                "numero_incapacidad": c.numero_incapacidad or "",
+                "medico_tratante": c.medico_tratante or "",
+                "institucion_origen": c.institucion_origen or "",
+                "drive_link": c.drive_link or "",
+                "created_at": c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
+            })
+        
+        # Detectar TODOS los gaps (huecos) entre incapacidades consecutivas
+        gaps = []
+        for i in range(len(casos) - 1):
+            caso_a = casos[i]
+            caso_b = casos[i + 1]
+            
+            fin_a = caso_a.fecha_fin or caso_a.fecha_inicio
+            inicio_b = caso_b.fecha_inicio
+            
+            if fin_a and inicio_b:
+                brecha = (inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b) - \
+                         (fin_a.date() if hasattr(fin_a, 'date') else fin_a)
+                dias_gap = brecha.days
+                
+                if dias_gap > 1:  # Hay un hueco (más de 1 día entre fin e inicio)
+                    fecha_gap_inicio = fin_a.date() if hasattr(fin_a, 'date') else fin_a
+                    fecha_gap_fin = inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b
+                    
+                    # Determinar severidad del gap
+                    corta_prorroga = dias_gap > 30
+                    
+                    gaps.append({
+                        "fecha_inicio": str(fecha_gap_inicio + timedelta(days=1)),
+                        "fecha_fin": str(fecha_gap_fin - timedelta(days=1)),
+                        "dias": dias_gap - 1,
+                        "entre_serial_a": caso_a.serial,
+                        "entre_serial_b": caso_b.serial,
+                        "corta_prorroga": corta_prorroga,
+                        "severidad": "critica" if corta_prorroga else "advertencia",
+                        "mensaje": f"{'🔴 CORTA PRÓRROGA' if corta_prorroga else '🟡 Hueco'}: {dias_gap - 1} días sin cobertura" +
+                                   (f" (>{30}d, reinicia conteo)" if corta_prorroga else ""),
+                    })
+        
+        # Resumen KPIs por tipo
+        por_tipo = {}
+        for c in casos:
+            t = c.tipo.value if c.tipo else "sin_tipo"
+            if t not in por_tipo:
+                por_tipo[t] = {"cantidad": 0, "dias": 0}
+            por_tipo[t]["cantidad"] += 1
+            por_tipo[t]["dias"] += c.dias_incapacidad or 0
+        
+        # Resumen KPIs por año
+        por_anio = {}
+        for c in casos:
+            anio = c.fecha_inicio.year if c.fecha_inicio else 0
+            if anio not in por_anio:
+                por_anio[anio] = {"cantidad": 0, "dias": 0}
+            por_anio[anio]["cantidad"] += 1
+            por_anio[anio]["dias"] += c.dias_incapacidad or 0
+        
+        # Resumen mensual para gráfico de barras
+        por_mes = {}
+        for c in casos:
+            if c.fecha_inicio:
+                mes_key = c.fecha_inicio.strftime("%Y-%m")
+                if mes_key not in por_mes:
+                    por_mes[mes_key] = {"mes": mes_key, "cantidad": 0, "dias": 0}
+                por_mes[mes_key]["cantidad"] += 1
+                por_mes[mes_key]["dias"] += c.dias_incapacidad or 0
+        
+        # CIE-10 frecuencia
+        cie10_freq = {}
+        for c in casos:
+            if c.codigo_cie10:
+                cod = c.codigo_cie10.strip().upper()
+                if cod not in cie10_freq:
+                    info = buscar_codigo(cod)
+                    cie10_freq[cod] = {
+                        "codigo": cod,
+                        "descripcion": info["descripcion"] if info and info.get("encontrado") else c.diagnostico or cod,
+                        "cantidad": 0,
+                        "dias_total": 0,
+                    }
+                cie10_freq[cod]["cantidad"] += 1
+                cie10_freq[cod]["dias_total"] += c.dias_incapacidad or 0
+        
+        # Datos del empleado
+        emp_data = {}
+        if empleado:
+            emp_data = {
+                "nombre": empleado.nombre or "",
+                "cedula": empleado.cedula,
+                "empresa": "",
+                "area": empleado.area_trabajo or "",
+                "cargo": empleado.cargo or "",
+                "eps": empleado.eps or "",
+                "centro_costo": empleado.centro_costo or "",
+                "ciudad": empleado.ciudad or "",
+                "fecha_ingreso": empleado.fecha_ingreso.strftime("%Y-%m-%d") if empleado.fecha_ingreso else "",
+                "tipo_contrato": empleado.tipo_contrato or "",
+            }
+            if empleado.company_id:
+                comp = db.query(Company).filter(Company.id == empleado.company_id).first()
+                emp_data["empresa"] = comp.nombre if comp else ""
+        else:
+            # Reconstruir desde casos
+            emp_data = {
+                "nombre": "",
+                "cedula": cedula,
+                "empresa": timeline[0]["empresa"] if timeline else "",
+                "area": "", "cargo": "", "eps": timeline[0].get("eps", "") if timeline else "",
+                "centro_costo": "", "ciudad": "", "fecha_ingreso": "", "tipo_contrato": "",
+            }
+        
+        total_dias = sum(c.dias_incapacidad or 0 for c in casos)
+        total_gaps = sum(g["dias"] for g in gaps)
+        gaps_criticos = [g for g in gaps if g["corta_prorroga"]]
+        
+        return {
+            "ok": True,
+            "empleado": emp_data,
+            "kpis": {
+                "total_incapacidades": len(casos),
+                "total_dias_incapacidad": total_dias,
+                "total_gaps": len(gaps),
+                "total_dias_gap": total_gaps,
+                "gaps_criticos": len(gaps_criticos),
+                "cadenas_prorroga": len([c for c in analisis.get("cadenas_prorroga", []) if c.get("es_cadena_prorroga")]),
+                "dias_prorroga_max": analisis.get("dias_prorroga", 0),
+                "promedio_dias": round(total_dias / len(casos), 1) if casos else 0,
+            },
+            "timeline": timeline,
+            "gaps": gaps,
+            "cadenas": analisis.get("cadenas_prorroga", []),
+            "huecos_prorroga": analisis.get("huecos_detectados", []),
+            "alertas_180": analisis.get("alertas_180", []),
+            "por_tipo": por_tipo,
+            "por_anio": {str(k): v for k, v in sorted(por_anio.items())},
+            "por_mes": sorted(por_mes.values(), key=lambda x: x["mes"]),
+            "cie10_frecuencia": sorted(cie10_freq.values(), key=lambda x: -x["cantidad"]),
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error PowerBI persona {cedula}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# 7️⃣ ENDPOINT: POWER BI — BÚSQUEDA DE EMPLEADOS
+# ============================================================
+@router.get("/powerbi/buscar")
+async def powerbi_buscar_empleados(
+    q: str = Query("", description="Búsqueda por cédula o nombre"),
+    empresa: str = Query("all", description="Filtrar por empresa"),
+    db: Session = Depends(get_db)
+):
+    """
+    🔍 Busca empleados para el Power BI dashboard.
+    Retorna lista de empleados con resumen rápido.
+    """
+    try:
+        query = db.query(
+            Case.cedula,
+            func.count(Case.id).label("total"),
+            func.sum(Case.dias_incapacidad).label("dias"),
+            func.min(Case.fecha_inicio).label("primera"),
+            func.max(Case.fecha_inicio).label("ultima"),
+        ).group_by(Case.cedula)
+        
+        if q:
+            # Buscar por cédula o nombre
+            empleado_ids = db.query(Employee.cedula).filter(
+                (Employee.cedula.ilike(f"%{q}%")) | 
+                (Employee.nombre.ilike(f"%{q}%"))
+            ).all()
+            cedulas_match = [e[0] for e in empleado_ids]
+            
+            # También buscar directamente en casos por cédula
+            query = query.filter(
+                (Case.cedula.ilike(f"%{q}%")) |
+                (Case.cedula.in_(cedulas_match) if cedulas_match else False)
+            )
+        
+        if empresa != "all":
+            company = db.query(Company).filter(Company.nombre == empresa).first()
+            if company:
+                query = query.filter(Case.company_id == company.id)
+        
+        resultados = query.order_by(func.count(Case.id).desc()).limit(50).all()
+        
+        # Enriquecer con nombres
+        empleados = []
+        for r in resultados:
+            emp = db.query(Employee).filter(Employee.cedula == r.cedula).first()
+            comp = None
+            if emp and emp.company_id:
+                comp = db.query(Company).filter(Company.id == emp.company_id).first()
+            
+            empleados.append({
+                "cedula": r.cedula,
+                "nombre": emp.nombre if emp else r.cedula,
+                "empresa": comp.nombre if comp else "",
+                "area": emp.area_trabajo if emp else "",
+                "cargo": emp.cargo if emp else "",
+                "eps": emp.eps if emp else "",
+                "total_incapacidades": r.total,
+                "total_dias": r.dias or 0,
+                "primera_fecha": r.primera.strftime("%Y-%m-%d") if r.primera else "",
+                "ultima_fecha": r.ultima.strftime("%Y-%m-%d") if r.ultima else "",
+            })
+        
+        return {"ok": True, "resultados": empleados, "total": len(empleados)}
+    
+    except Exception as e:
+        logger.error(f"Error PowerBI buscar: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
