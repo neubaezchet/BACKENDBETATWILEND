@@ -7,7 +7,7 @@ import os
 import pandas as pd
 import requests
 from datetime import datetime
-from app.database import SessionLocal, Employee, Company
+from app.database import SessionLocal, Employee, Company, Case
 from io import BytesIO
 
 GOOGLE_DRIVE_FILE_ID = "1POt2ytSN61XbSpXUSUPyHdOVy2g7CRas"
@@ -85,6 +85,12 @@ def sincronizar_empleado_desde_excel(cedula: str):
             jefe_email=row.get("jefe_email", None),
             jefe_cargo=row.get("jefe_cargo", None),
             area_trabajo=row.get("area_trabajo", None),
+            cargo=row.get("cargo", None) if pd.notna(row.get("cargo", None)) else None,
+            centro_costo=row.get("centro_costo", None) if pd.notna(row.get("centro_costo", None)) else None,
+            fecha_ingreso=pd.to_datetime(row.get("fecha_ingreso")) if pd.notna(row.get("fecha_ingreso", None)) else None,
+            tipo_contrato=row.get("tipo_contrato", None) if pd.notna(row.get("tipo_contrato", None)) else None,
+            dias_kactus=int(row.get("dias_kactus")) if pd.notna(row.get("dias_kactus", None)) else None,
+            ciudad=row.get("ciudad", None) if pd.notna(row.get("ciudad", None)) else None,
             activo=True
         )
         db.add(nuevo_empleado)
@@ -217,6 +223,21 @@ def sincronizar_excel_completo():
                 jefe_cargo = row.get("jefe_cargo", None)
                 area_trabajo = row.get("area_trabajo", None)
                 
+                # ✅ COLUMNAS KACTUS
+                cargo = row.get("cargo", None) if pd.notna(row.get("cargo", None)) else None
+                centro_costo = row.get("centro_costo", None) if pd.notna(row.get("centro_costo", None)) else None
+                fecha_ingreso_raw = row.get("fecha_ingreso", None)
+                fecha_ingreso = None
+                if pd.notna(fecha_ingreso_raw):
+                    try:
+                        fecha_ingreso = pd.to_datetime(fecha_ingreso_raw)
+                    except Exception:
+                        fecha_ingreso = None
+                tipo_contrato = row.get("tipo_contrato", None) if pd.notna(row.get("tipo_contrato", None)) else None
+                dias_kactus_raw = row.get("dias_kactus", None)
+                dias_kactus_emp = int(dias_kactus_raw) if pd.notna(dias_kactus_raw) else None
+                ciudad = row.get("ciudad", None) if pd.notna(row.get("ciudad", None)) else None
+                
                 # Buscar o crear empresa
                 company = db.query(Company).filter(Company.nombre == empresa_nombre).first()
                 if not company:
@@ -244,6 +265,12 @@ def sincronizar_excel_completo():
                     empleado.jefe_email = jefe_email
                     empleado.jefe_cargo = jefe_cargo
                     empleado.area_trabajo = area_trabajo
+                    empleado.cargo = cargo
+                    empleado.centro_costo = centro_costo
+                    empleado.fecha_ingreso = fecha_ingreso
+                    empleado.tipo_contrato = tipo_contrato
+                    empleado.dias_kactus = dias_kactus_emp
+                    empleado.ciudad = ciudad
                     empleado.activo = True
                     empleado.updated_at = datetime.now()
                     db.commit()
@@ -261,6 +288,12 @@ def sincronizar_excel_completo():
                         jefe_email=jefe_email,
                         jefe_cargo=jefe_cargo,
                         area_trabajo=area_trabajo,
+                        cargo=cargo,
+                        centro_costo=centro_costo,
+                        fecha_ingreso=fecha_ingreso,
+                        tipo_contrato=tipo_contrato,
+                        dias_kactus=dias_kactus_emp,
+                        ciudad=ciudad,
                         activo=True
                     )
                     db.add(nuevo_empleado)
@@ -291,6 +324,63 @@ def sincronizar_excel_completo():
         print(f"   • Empleados eliminados: {eliminados}")
         print(f"   • Total activos en BD: {total_filas_excel}")
         print(f"{'='*60}\n")
+        
+        # ========== PASO 3: SYNC CASES_KACTUS (Hoja 3) ==========
+        try:
+            df_cases = pd.read_excel(excel_path, sheet_name=2)  # Hoja 3 = Cases_Kactus
+            if len(df_cases) > 0:
+                print(f"📊 PASO 3: Sincronizando Cases_Kactus ({len(df_cases)} filas)...")
+                cases_actualizados = 0
+                
+                for _, row in df_cases.iterrows():
+                    try:
+                        cedula_raw = row.get("cedula")
+                        fecha_inicio_raw = row.get("fecha_inicio")
+                        
+                        if pd.isna(cedula_raw) or pd.isna(fecha_inicio_raw):
+                            continue
+                        
+                        cedula_case = str(int(cedula_raw))
+                        fecha_inicio_case = pd.to_datetime(fecha_inicio_raw)
+                        
+                        # Buscar caso por cedula + fecha_inicio (±1 día de tolerancia)
+                        from sqlalchemy import and_, func
+                        caso = db.query(Case).filter(
+                            Case.cedula == cedula_case,
+                            func.date(Case.fecha_inicio) == fecha_inicio_case.date()
+                        ).first()
+                        
+                        if caso:
+                            # Actualizar campos Kactus
+                            if pd.notna(row.get("numero_incapacidad")):
+                                caso.numero_incapacidad = str(row["numero_incapacidad"])
+                            if pd.notna(row.get("dias_kactus")):
+                                caso.dias_kactus = int(row["dias_kactus"])
+                            if pd.notna(row.get("codigo_cie10")):
+                                caso.codigo_cie10 = str(row["codigo_cie10"])
+                            if pd.notna(row.get("es_prorroga")):
+                                val = str(row["es_prorroga"]).strip().upper()
+                                caso.es_prorroga = val in ("SI", "SÍ", "YES", "TRUE", "1")
+                            if pd.notna(row.get("medico_tratante")):
+                                caso.medico_tratante = str(row["medico_tratante"])
+                            if pd.notna(row.get("institucion_origen")):
+                                caso.institucion_origen = str(row["institucion_origen"])
+                            
+                            caso.updated_at = datetime.now()
+                            db.commit()
+                            cases_actualizados += 1
+                    except Exception as e:
+                        print(f"   ❌ Error en case row: {e}")
+                        db.rollback()
+                
+                print(f"   ✅ {cases_actualizados} casos actualizados con datos Kactus")
+            else:
+                print(f"   ℹ️ Hoja Cases_Kactus vacía o sin datos")
+        except Exception as e:
+            if "Worksheet index" in str(e) or "No sheet" in str(e):
+                print(f"   ℹ️ Hoja 3 (Cases_Kactus) no existe aún, omitiendo...")
+            else:
+                print(f"   ⚠️ Error leyendo Cases_Kactus: {e}")
         
     except Exception as e:
         print(f"\n❌ ERROR GENERAL EN SYNC: {e}")

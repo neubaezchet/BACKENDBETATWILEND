@@ -324,10 +324,19 @@ async def get_dashboard_completo(
         # ═══ 2. TABLA PRINCIPAL ═══
         tabla_principal = []
         for c in casos:
-            emp_nombre = c.empleado.nombre if c.empleado else c.cedula or "N/A"
-            emp_area = c.empleado.area_trabajo if c.empleado else None
-            emp_eps = c.empleado.eps if c.empleado else c.eps
+            emp = c.empleado
+            emp_nombre = emp.nombre if emp else c.cedula or "N/A"
+            emp_area = emp.area_trabajo if emp else None
+            emp_eps = emp.eps if emp else c.eps
             empresa_nombre = c.empresa.nombre if c.empresa else "N/A"
+            
+            # Campos Kactus del empleado
+            emp_cargo = emp.cargo if emp else None
+            emp_centro_costo = emp.centro_costo if emp else None
+            emp_fecha_ingreso = emp.fecha_ingreso.isoformat() if emp and emp.fecha_ingreso else None
+            emp_tipo_contrato = emp.tipo_contrato if emp else None
+            emp_dias_kactus = emp.dias_kactus if emp else None
+            emp_ciudad = emp.ciudad if emp else None
             
             # Calcular días en portal (desde creación hasta ahora o hasta estado final)
             dias_en_portal = (ahora - c.created_at).days if c.created_at else 0
@@ -357,12 +366,24 @@ async def get_dashboard_completo(
                 "nombre": emp_nombre,
                 "empresa": empresa_nombre,
                 "area": emp_area,
+                "cargo": emp_cargo,
+                "centro_costo": emp_centro_costo,
+                "ciudad": emp_ciudad,
+                "tipo_contrato": emp_tipo_contrato,
+                "fecha_ingreso": emp_fecha_ingreso,
                 "eps": emp_eps or c.eps,
                 "tipo": c.tipo.value if c.tipo else "N/A",
                 "subtipo": c.subtipo,
                 "estado": c.estado.value if c.estado else "NUEVO",
                 "diagnostico": c.diagnostico,
+                "codigo_cie10": c.codigo_cie10,
                 "dias_incapacidad": c.dias_incapacidad,
+                "dias_kactus": c.dias_kactus,
+                "dias_kactus_empleado": emp_dias_kactus,
+                "es_prorroga": c.es_prorroga,
+                "numero_incapacidad": c.numero_incapacidad,
+                "medico_tratante": c.medico_tratante,
+                "institucion_origen": c.institucion_origen,
                 "fecha_inicio": c.fecha_inicio.isoformat() if c.fecha_inicio else None,
                 "fecha_fin": c.fecha_fin.isoformat() if c.fecha_fin else None,
                 "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
@@ -382,6 +403,8 @@ async def get_dashboard_completo(
                     "cedula": row["cedula"],
                     "nombre": row["nombre"],
                     "empresa": row["empresa"],
+                    "area": row.get("area"),
+                    "cargo": row.get("cargo"),
                     "tipo": row["tipo"],
                     "estado": row["estado"],
                     "observacion": row["observacion"],
@@ -389,6 +412,8 @@ async def get_dashboard_completo(
                     "docs_ilegibles": row["docs_ilegibles"],
                     "dias_en_portal": row["dias_en_portal"],
                     "fecha_radicacion": row["fecha_radicacion"],
+                    "diagnostico": row.get("diagnostico"),
+                    "codigo_cie10": row.get("codigo_cie10"),
                 })
         
         # ═══ 4. FRECUENCIA POR EMPLEADO (reincidencia) ═══
@@ -411,11 +436,15 @@ async def get_dashboard_completo(
             if len(casos_persona) == 0:
                 continue
             primer_caso = casos_persona[0]
-            nombre = primer_caso.empleado.nombre if primer_caso.empleado else cedula
+            emp = primer_caso.empleado
+            nombre = emp.nombre if emp else cedula
             empresa_n = primer_caso.empresa.nombre if primer_caso.empresa else "N/A"
             
             total_dias_persona = sum(c.dias_incapacidad or 0 for c in casos_persona)
+            total_dias_kactus = sum(c.dias_kactus or 0 for c in casos_persona)
             diagnosticos = list(set(c.diagnostico for c in casos_persona if c.diagnostico))
+            codigos_cie10 = list(set(c.codigo_cie10 for c in casos_persona if c.codigo_cie10))
+            prorrogas = sum(1 for c in casos_persona if c.es_prorroga)
             
             # Desglose por mes
             por_mes = defaultdict(int)
@@ -428,9 +457,15 @@ async def get_dashboard_completo(
                 "cedula": cedula,
                 "nombre": nombre,
                 "empresa": empresa_n,
+                "area": emp.area_trabajo if emp else None,
+                "cargo": emp.cargo if emp else None,
+                "ciudad": emp.ciudad if emp else None,
                 "total_incapacidades": len(casos_persona),
                 "total_dias_portal": total_dias_persona,
+                "total_dias_kactus": total_dias_kactus,
+                "prorrogas": prorrogas,
                 "diagnosticos": diagnosticos,
+                "codigos_cie10": codigos_cie10,
                 "desglose_mensual": dict(por_mes),
                 "es_reincidente": len(casos_persona) >= 3,
                 "primera_fecha": min(c.created_at for c in casos_persona if c.created_at).isoformat() if any(c.created_at for c in casos_persona) else None,
