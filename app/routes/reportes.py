@@ -5,13 +5,15 @@ Endpoints principales para tabla viva y exportaciones
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, case as sql_case, distinct
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
+from collections import defaultdict
 
-from app.database import get_db, Case
+from app.database import get_db, Case, Company, Employee, CaseDocument, CaseEvent, CaseNote
 from app.schemas.reporte import (
     FiltrosExportacion, 
     TablaVivaResponse,
@@ -232,3 +234,243 @@ async def health_check(db: Session = Depends(get_db)):
             "database": "disconnected",
             "error": str(e)
         }
+
+
+# ============================================================
+# 5️⃣ ENDPOINT: DASHBOARD COMPLETO 2026
+# ============================================================
+def _calcular_fechas_periodo(periodo: str):
+    """Calcula fechas inicio/fin según período"""
+    import calendar
+    hoy = datetime.now()
+    if periodo == "mes_actual":
+        return datetime(hoy.year, hoy.month, 1), hoy
+    elif periodo == "mes_anterior":
+        primer_dia = datetime(hoy.year, hoy.month, 1)
+        fin = primer_dia - timedelta(days=1)
+        return datetime(fin.year, fin.month, 1), fin
+    elif periodo == "quincena_1":
+        return datetime(hoy.year, hoy.month, 1), datetime(hoy.year, hoy.month, 15, 23, 59, 59)
+    elif periodo == "quincena_2":
+        ultimo = calendar.monthrange(hoy.year, hoy.month)[1]
+        return datetime(hoy.year, hoy.month, 16), datetime(hoy.year, hoy.month, ultimo, 23, 59, 59)
+    elif periodo == "año_actual":
+        return datetime(hoy.year, 1, 1), hoy
+    elif periodo == "ultimos_90":
+        return hoy - timedelta(days=90), hoy
+    else:
+        return datetime(hoy.year, hoy.month, 1), hoy
+
+
+@router.get("/dashboard-completo")
+async def get_dashboard_completo(
+    empresa: str = Query("all"),
+    periodo: str = Query("mes_actual"),
+    db: Session = Depends(get_db)
+):
+    """
+    📊 DASHBOARD COMPLETO 2026
+    Retorna TODOS los datos necesarios para el panel de reportes:
+    - KPIs generales
+    - Tabla principal con TODOS los campos
+    - Documentos incompletos con motivos
+    - Frecuencia por empleado (reincidencia)
+    - Indicadores por estado
+    - Días en portal de validación
+    """
+    try:
+        fecha_inicio, fecha_fin = _calcular_fechas_periodo(periodo)
+        
+        # Query base con joins
+        query = db.query(Case).options(
+            joinedload(Case.empresa),
+            joinedload(Case.empleado),
+            joinedload(Case.documentos),
+            joinedload(Case.eventos),
+        ).filter(
+            Case.created_at >= fecha_inicio,
+            Case.created_at <= fecha_fin
+        )
+        
+        if empresa != "all":
+            query = query.join(Company, Case.company_id == Company.id).filter(Company.nombre == empresa)
+        
+        casos = query.order_by(Case.created_at.desc()).all()
+        ahora = datetime.now()
+        
+        # ═══ 1. KPIs ═══
+        total = len(casos)
+        por_estado = defaultdict(int)
+        total_dias_incapacidad = 0
+        
+        for c in casos:
+            est = c.estado.value if c.estado else "NUEVO"
+            por_estado[est] += 1
+            if c.dias_incapacidad:
+                total_dias_incapacidad += c.dias_incapacidad
+        
+        kpis = {
+            "total_casos": total,
+            "total_dias_incapacidad": total_dias_incapacidad,
+            "promedio_dias": round(total_dias_incapacidad / total, 1) if total > 0 else 0,
+            "por_estado": dict(por_estado),
+            "completas": por_estado.get("COMPLETA", 0),
+            "incompletas": por_estado.get("INCOMPLETA", 0) + por_estado.get("ILEGIBLE", 0) + por_estado.get("INCOMPLETA_ILEGIBLE", 0),
+            "en_proceso": por_estado.get("NUEVO", 0) + por_estado.get("EN_REVISION", 0),
+            "eps_transcripcion": por_estado.get("EPS_TRANSCRIPCION", 0),
+            "derivado_tthh": por_estado.get("DERIVADO_TTHH", 0),
+        }
+        
+        # ═══ 2. TABLA PRINCIPAL ═══
+        tabla_principal = []
+        for c in casos:
+            emp_nombre = c.empleado.nombre if c.empleado else c.cedula or "N/A"
+            emp_area = c.empleado.area_trabajo if c.empleado else None
+            emp_eps = c.empleado.eps if c.empleado else c.eps
+            empresa_nombre = c.empresa.nombre if c.empresa else "N/A"
+            
+            # Calcular días en portal (desde creación hasta ahora o hasta estado final)
+            dias_en_portal = (ahora - c.created_at).days if c.created_at else 0
+            
+            # Obtener último motivo/observación de eventos
+            ultimo_motivo = None
+            if c.eventos:
+                evt_con_motivo = [e for e in c.eventos if e.motivo]
+                if evt_con_motivo:
+                    ultimo_evt = sorted(evt_con_motivo, key=lambda e: e.created_at or datetime.min, reverse=True)[0]
+                    ultimo_motivo = ultimo_evt.motivo
+            
+            # Documentos faltantes
+            docs_faltantes = []
+            docs_ilegibles = []
+            if c.documentos:
+                for d in c.documentos:
+                    est_doc = d.estado_doc.value if d.estado_doc else "PENDIENTE"
+                    if est_doc in ("PENDIENTE", "INCOMPLETO"):
+                        docs_faltantes.append(d.doc_tipo)
+                    elif est_doc == "ILEGIBLE":
+                        docs_ilegibles.append(d.doc_tipo)
+            
+            tabla_principal.append({
+                "serial": c.serial,
+                "cedula": c.cedula,
+                "nombre": emp_nombre,
+                "empresa": empresa_nombre,
+                "area": emp_area,
+                "eps": emp_eps or c.eps,
+                "tipo": c.tipo.value if c.tipo else "N/A",
+                "subtipo": c.subtipo,
+                "estado": c.estado.value if c.estado else "NUEVO",
+                "diagnostico": c.diagnostico,
+                "dias_incapacidad": c.dias_incapacidad,
+                "fecha_inicio": c.fecha_inicio.isoformat() if c.fecha_inicio else None,
+                "fecha_fin": c.fecha_fin.isoformat() if c.fecha_fin else None,
+                "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
+                "dias_en_portal": dias_en_portal,
+                "observacion": ultimo_motivo,
+                "docs_faltantes": docs_faltantes,
+                "docs_ilegibles": docs_ilegibles,
+                "drive_link": c.drive_link,
+            })
+        
+        # ═══ 3. INCOMPLETAS / OBSERVACIÓN ═══
+        incompletas = []
+        for row in tabla_principal:
+            if row["estado"] in ("INCOMPLETA", "ILEGIBLE", "INCOMPLETA_ILEGIBLE"):
+                incompletas.append({
+                    "serial": row["serial"],
+                    "cedula": row["cedula"],
+                    "nombre": row["nombre"],
+                    "empresa": row["empresa"],
+                    "tipo": row["tipo"],
+                    "estado": row["estado"],
+                    "observacion": row["observacion"],
+                    "docs_faltantes": row["docs_faltantes"],
+                    "docs_ilegibles": row["docs_ilegibles"],
+                    "dias_en_portal": row["dias_en_portal"],
+                    "fecha_radicacion": row["fecha_radicacion"],
+                })
+        
+        # ═══ 4. FRECUENCIA POR EMPLEADO (reincidencia) ═══
+        # Agrupar por cédula para detectar personas con múltiples incapacidades
+        freq_query = db.query(Case).filter(
+            Case.created_at >= datetime(ahora.year, 1, 1)  # Año actual completo
+        )
+        if empresa != "all":
+            freq_query = freq_query.join(Company, Case.company_id == Company.id).filter(Company.nombre == empresa)
+        
+        todos_casos_año = freq_query.options(joinedload(Case.empleado), joinedload(Case.empresa)).all()
+        
+        por_cedula = defaultdict(list)
+        for c in todos_casos_año:
+            if c.cedula:
+                por_cedula[c.cedula].append(c)
+        
+        frecuencia = []
+        for cedula, casos_persona in por_cedula.items():
+            if len(casos_persona) == 0:
+                continue
+            primer_caso = casos_persona[0]
+            nombre = primer_caso.empleado.nombre if primer_caso.empleado else cedula
+            empresa_n = primer_caso.empresa.nombre if primer_caso.empresa else "N/A"
+            
+            total_dias_persona = sum(c.dias_incapacidad or 0 for c in casos_persona)
+            diagnosticos = list(set(c.diagnostico for c in casos_persona if c.diagnostico))
+            
+            # Desglose por mes
+            por_mes = defaultdict(int)
+            for c in casos_persona:
+                if c.created_at:
+                    mes_key = c.created_at.strftime("%Y-%m")
+                    por_mes[mes_key] += 1
+            
+            frecuencia.append({
+                "cedula": cedula,
+                "nombre": nombre,
+                "empresa": empresa_n,
+                "total_incapacidades": len(casos_persona),
+                "total_dias_portal": total_dias_persona,
+                "diagnosticos": diagnosticos,
+                "desglose_mensual": dict(por_mes),
+                "es_reincidente": len(casos_persona) >= 3,
+                "primera_fecha": min(c.created_at for c in casos_persona if c.created_at).isoformat() if any(c.created_at for c in casos_persona) else None,
+                "ultima_fecha": max(c.created_at for c in casos_persona if c.created_at).isoformat() if any(c.created_at for c in casos_persona) else None,
+            })
+        
+        # Ordenar por más incapacidades primero
+        frecuencia.sort(key=lambda x: x["total_incapacidades"], reverse=True)
+        
+        # ═══ 5. INDICADORES POR ESTADO ═══
+        indicadores = []
+        for estado, cantidad in sorted(por_estado.items(), key=lambda x: x[1], reverse=True):
+            casos_estado = [r for r in tabla_principal if r["estado"] == estado]
+            dias_promedio = 0
+            if casos_estado:
+                dias_vals = [r["dias_incapacidad"] or 0 for r in casos_estado]
+                dias_promedio = round(sum(dias_vals) / len(dias_vals), 1) if dias_vals else 0
+            
+            indicadores.append({
+                "estado": estado,
+                "cantidad": cantidad,
+                "porcentaje": round(cantidad / total * 100, 1) if total > 0 else 0,
+                "dias_promedio_incapacidad": dias_promedio,
+                "dias_promedio_portal": round(sum(r["dias_en_portal"] for r in casos_estado) / len(casos_estado), 1) if casos_estado else 0,
+            })
+        
+        return {
+            "ok": True,
+            "periodo": periodo,
+            "empresa": empresa,
+            "fecha_inicio": fecha_inicio.isoformat(),
+            "fecha_fin": fecha_fin.isoformat(),
+            "fecha_consulta": ahora.isoformat(),
+            "kpis": kpis,
+            "tabla_principal": tabla_principal,
+            "incompletas": incompletas,
+            "frecuencia": frecuencia,
+            "indicadores": indicadores,
+        }
+    
+    except Exception as e:
+        logger.error(f"Error dashboard completo: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
