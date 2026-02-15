@@ -254,6 +254,8 @@ def _generar_subject(tipo: str, nombre: str, dias: int) -> str:
         return f"⛔ URGENTE: {nombre} SUPERÓ 180 días de incapacidad ({dias}d) — Acción inmediata requerida"
     elif tipo == "ALERTA_CRITICA":
         return f"🔴 ALERTA CRÍTICA: {nombre} cerca del límite 180 días ({dias}d) — {180 - dias}d restantes"
+    elif tipo == "PRORROGA_CORTADA":
+        return f"⚠️ PRÓRROGA CORTADA: {nombre} lleva 30+ días sin incapacidad — Verificar cadena de prórroga"
     else:
         return f"🟡 AVISO: {nombre} se acerca a 150 días de incapacidad ({dias}d) — Monitorear"
 
@@ -268,6 +270,8 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
     codigos = alerta.get("codigos_involucrados", [])
     dias_restantes = alerta.get("dias_restantes")
     dias_excedidos = alerta.get("dias_excedidos")
+    dias_hueco = alerta.get("dias_hueco")
+    fecha_corte = alerta.get("fecha_corte")
     
     # Colores según severidad
     colors = {
@@ -276,6 +280,10 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
         "media": {"bg": "#CA8A04", "light": "#FEF9C3", "text": "#854D0E", "icon": "🟡"},
     }
     c = colors.get(severidad, colors["media"])
+    
+    # Override color para PRORROGA_CORTADA
+    if tipo == "PRORROGA_CORTADA":
+        c = {"bg": "#7C3AED", "light": "#EDE9FE", "text": "#5B21B6", "icon": "⚠️"}
     
     codigos_html = ""
     if codigos:
@@ -299,6 +307,19 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
         <tr>
             <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Días EXCEDIDOS del límite:</td>
             <td style="padding:8px 12px;font-weight:bold;color:#DC2626;font-size:16px;">+{dias_excedidos} días</td>
+        </tr>"""
+    
+    # Fila especial para PRORROGA_CORTADA
+    hueco_html = ""
+    if tipo == "PRORROGA_CORTADA" and dias_hueco:
+        hueco_html = f"""
+        <tr style="background:#EDE9FE;">
+            <td style="padding:8px 12px;color:#5B21B6;font-size:13px;font-weight:bold;">⚠️ Días sin incapacidad (hueco):</td>
+            <td style="padding:8px 12px;font-weight:bold;color:#7C3AED;font-size:18px;">{dias_hueco} días</td>
+        </tr>
+        <tr>
+            <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Fecha de corte de cadena:</td>
+            <td style="padding:8px 12px;font-family:monospace;color:#5B21B6;">{fecha_corte or 'N/A'}</td>
         </tr>"""
     
     return f"""
@@ -342,7 +363,8 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
                     <td style="padding:8px 12px;font-weight:bold;color:{c['text']};font-size:18px;">{dias} días</td>
                 </tr>
                 {restantes_html}
-                <tr{'  style="background:#F9FAFB;"' if dias_restantes is None and dias_excedidos is None else ''}>
+                {hueco_html}
+                <tr{'  style="background:#F9FAFB;"' if dias_restantes is None and dias_excedidos is None and not hueco_html else ''}>
                     <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Códigos CIE-10:</td>
                     <td style="padding:8px 12px;">{codigos_html or '<span style="color:#9CA3AF;">Sin códigos</span>'}</td>
                 </tr>
@@ -362,6 +384,8 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
                 <ul style="margin:0;padding-left:18px;color:#4B5563;font-size:12px;line-height:1.8;">
                     {'<li><strong>Iniciar trámite ante Fondo de Pensiones</strong> para continuidad de pago al 50%</li>' if tipo == 'LIMITE_180_SUPERADO' else ''}
                     {'<li><strong>Preparar documentación</strong> para eventual traslado a Fondo de Pensiones</li>' if tipo == 'ALERTA_CRITICA' else ''}
+                    {'<li><strong>Solicitar al empleado los certificados de incapacidad faltantes</strong> que puedan llenar el hueco de ' + str(dias_hueco) + ' días</li>' if tipo == 'PRORROGA_CORTADA' else ''}
+                    {'<li><strong>Investigar por qué se interrumpió la cadena de prórroga</strong> — ¿El empleado fue dado de alta? ¿Cambió de EPS? ¿Certificado sin radicar?</li>' if tipo == 'PRORROGA_CORTADA' else ''}
                     <li>Revisar el historial completo del empleado en el dashboard de IncaNeurobaeza</li>
                     <li>Verificar que las prórrogas estén debidamente soportadas con CIE-10</li>
                     <li>Coordinar con el médico tratante la evolución del caso</li>
