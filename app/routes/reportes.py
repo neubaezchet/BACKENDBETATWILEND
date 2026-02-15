@@ -856,3 +856,165 @@ async def powerbi_buscar_empleados(
     except Exception as e:
         logger.error(f"Error PowerBI buscar: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# 8️⃣ ENDPOINT: POWER BI — VISTA GLOBAL (todas las personas)
+# ============================================================
+@router.get("/powerbi/global")
+async def powerbi_global(
+    empresa: str = Query("all", description="Filtrar por empresa"),
+    cedulas: str = Query("", description="Cédulas separadas por coma"),
+    db: Session = Depends(get_db)
+):
+    """
+    📊 POWER BI GLOBAL — Vista de TODAS las personas con su estado de prórroga,
+    180 días, gaps, etc. Para visualización masiva.
+    """
+    try:
+        from datetime import date as date_type
+
+        # Base query: agrupar por cédula
+        base_q = db.query(Case.cedula).distinct()
+
+        if cedulas and cedulas.strip():
+            lista_ced = [c.strip() for c in cedulas.split(",") if c.strip()]
+            if lista_ced:
+                base_q = base_q.filter(Case.cedula.in_(lista_ced))
+
+        if empresa != "all":
+            company = db.query(Company).filter(Company.nombre == empresa).first()
+            if company:
+                base_q = base_q.filter(Case.company_id == company.id)
+
+        cedulas_unicas = [r[0] for r in base_q.limit(200).all()]
+
+        # Analizar cada persona
+        personas = []
+        categorias = {
+            "superan_180": [],
+            "cerca_180": [],
+            "con_gaps_criticos": [],
+            "prorrogas_activas": [],
+            "sin_prorroga": [],
+        }
+        
+        resumen_global = {
+            "total_personas": len(cedulas_unicas),
+            "total_incapacidades": 0,
+            "total_dias": 0,
+            "total_prorrogas": 0,
+            "total_gaps_criticos": 0,
+        }
+
+        for ced in cedulas_unicas:
+            casos = db.query(Case).filter(Case.cedula == ced).order_by(Case.fecha_inicio.asc()).all()
+            if not casos:
+                continue
+
+            emp = db.query(Employee).filter(Employee.cedula == ced).first()
+            comp = None
+            if emp and emp.company_id:
+                comp = db.query(Company).filter(Company.id == emp.company_id).first()
+
+            analisis = analizar_historial_empleado(db, ced)
+            
+            total_dias = sum(c.dias_incapacidad or 0 for c in casos)
+            cadenas_activas = [c for c in analisis.get("cadenas_prorroga", []) if c.get("es_cadena_prorroga")]
+            max_cadena = max((c["dias_acumulados"] for c in cadenas_activas), default=0)
+            
+            # Detectar gaps
+            gaps_criticos = 0
+            total_gaps = 0
+            for i in range(len(casos) - 1):
+                fin_a = casos[i].fecha_fin or casos[i].fecha_inicio
+                inicio_b = casos[i + 1].fecha_inicio
+                if fin_a and inicio_b:
+                    brecha = ((inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b) -
+                              (fin_a.date() if hasattr(fin_a, 'date') else fin_a)).days
+                    if brecha > 1:
+                        total_gaps += 1
+                        if brecha > 30:
+                            gaps_criticos += 1
+
+            persona = {
+                "cedula": ced,
+                "nombre": emp.nombre if emp else ced,
+                "empresa": comp.nombre if comp else "",
+                "area": emp.area_trabajo if emp else "",
+                "cargo": emp.cargo if emp else "",
+                "eps": emp.eps if emp else "",
+                "total_incapacidades": len(casos),
+                "total_dias": total_dias,
+                "cadenas_prorroga": len(cadenas_activas),
+                "max_cadena_dias": max_cadena,
+                "gaps_criticos": gaps_criticos,
+                "total_gaps": total_gaps,
+                "tiene_prorroga": len(cadenas_activas) > 0,
+                "supera_180": max_cadena >= 180,
+                "cerca_180": 150 <= max_cadena < 180,
+                "alertas_count": len(analisis.get("alertas_180", [])),
+                "huecos_count": len(analisis.get("huecos_detectados", [])),
+                "primera_fecha": casos[0].fecha_inicio.strftime("%Y-%m-%d") if casos[0].fecha_inicio else "",
+                "ultima_fecha": casos[-1].fecha_inicio.strftime("%Y-%m-%d") if casos[-1].fecha_inicio else "",
+                "pct_180": round(min(max_cadena / 180 * 100, 100), 1) if max_cadena > 0 else 0,
+            }
+            personas.append(persona)
+
+            # Categorizar
+            resumen_global["total_incapacidades"] += len(casos)
+            resumen_global["total_dias"] += total_dias
+            resumen_global["total_prorrogas"] += len(cadenas_activas)
+            resumen_global["total_gaps_criticos"] += gaps_criticos
+
+            if max_cadena >= 180:
+                categorias["superan_180"].append(persona)
+            elif max_cadena >= 150:
+                categorias["cerca_180"].append(persona)
+            elif gaps_criticos > 0:
+                categorias["con_gaps_criticos"].append(persona)
+            elif len(cadenas_activas) > 0:
+                categorias["prorrogas_activas"].append(persona)
+            else:
+                categorias["sin_prorroga"].append(persona)
+
+        # Ordenar cada categoría por días desc
+        for cat in categorias.values():
+            cat.sort(key=lambda x: -x["max_cadena_dias"])
+
+        # Top 10 por días acumulados
+        top_dias = sorted(personas, key=lambda x: -x["total_dias"])[:10]
+        # Top 10 por más incapacidades
+        top_frecuencia = sorted(personas, key=lambda x: -x["total_incapacidades"])[:10]
+
+        # Distribución por empresa
+        por_empresa = {}
+        for p in personas:
+            emp_key = p["empresa"] or "Sin empresa"
+            if emp_key not in por_empresa:
+                por_empresa[emp_key] = {"empresa": emp_key, "personas": 0, "incapacidades": 0, "dias": 0, "prorrogas": 0, "gaps_criticos": 0}
+            por_empresa[emp_key]["personas"] += 1
+            por_empresa[emp_key]["incapacidades"] += p["total_incapacidades"]
+            por_empresa[emp_key]["dias"] += p["total_dias"]
+            por_empresa[emp_key]["prorrogas"] += p["cadenas_prorroga"]
+            por_empresa[emp_key]["gaps_criticos"] += p["gaps_criticos"]
+
+        return {
+            "ok": True,
+            "resumen": resumen_global,
+            "categorias": {
+                "superan_180": {"label": "Superan 180 días", "color": "#ef4444", "personas": categorias["superan_180"]},
+                "cerca_180": {"label": "Cerca de 180 días (150-179)", "color": "#f97316", "personas": categorias["cerca_180"]},
+                "con_gaps_criticos": {"label": "Con gaps que cortan prórroga", "color": "#eab308", "personas": categorias["con_gaps_criticos"]},
+                "prorrogas_activas": {"label": "Prórrogas activas (<150d)", "color": "#3b82f6", "personas": categorias["prorrogas_activas"]},
+                "sin_prorroga": {"label": "Sin cadena de prórroga", "color": "#10b981", "personas": categorias["sin_prorroga"]},
+            },
+            "top_dias": top_dias,
+            "top_frecuencia": top_frecuencia,
+            "por_empresa": sorted(por_empresa.values(), key=lambda x: -x["dias"]),
+            "personas": personas,
+        }
+
+    except Exception as e:
+        logger.error(f"Error PowerBI global: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
