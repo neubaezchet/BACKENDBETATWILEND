@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 
 from app.database import (
-    AlertaEmail, Alerta180Log, Case, Employee, Company, get_utc_now
+    AlertaEmail, Alerta180Log, Case, Employee, Company, CorreoNotificacion, get_utc_now
 )
 from app.services.prorroga_detector import analizar_historial_empleado
 
@@ -135,9 +135,10 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     Obtiene los correos a los que enviar la alerta para un empleado.
     
     Prioridad:
-    1. Emails configurados en alerta_emails para la empresa del empleado
-    2. Emails globales (company_id IS NULL)
-    3. contacto_email de la empresa como fallback
+    1. Correos de correos_notificacion (Hoja 4 Excel) — áreas: talento_humano, seguridad_salud
+    2. Emails configurados en alerta_emails para la empresa del empleado
+    3. Emails globales (company_id IS NULL)
+    4. contacto_email de la empresa como fallback
     """
     # Obtener empresa del empleado
     empleado = db.query(Employee).filter(Employee.cedula == cedula).first()
@@ -145,7 +146,19 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     
     emails = set()
     
-    # 1. Emails específicos de la empresa
+    # 1. Correos de notificación por área (Hoja 4 del Excel)
+    areas_alerta = ['talento_humano', 'seguridad_salud']
+    for area in areas_alerta:
+        correos_area = db.query(CorreoNotificacion).filter(
+            CorreoNotificacion.area == area,
+            CorreoNotificacion.activo == True,
+        ).all()
+        for c in correos_area:
+            # Si el correo es global (sin empresa) o de la misma empresa
+            if c.company_id is None or c.company_id == company_id:
+                emails.add(c.email)
+    
+    # 2. Emails específicos de la empresa (tabla alerta_emails)
     if company_id:
         empresa_emails = db.query(AlertaEmail).filter(
             AlertaEmail.company_id == company_id,
@@ -154,7 +167,7 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
         for e in empresa_emails:
             emails.add(e.email)
     
-    # 2. Emails globales
+    # 3. Emails globales (tabla alerta_emails)
     globales = db.query(AlertaEmail).filter(
         AlertaEmail.company_id.is_(None),
         AlertaEmail.activo == True,
@@ -162,7 +175,7 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     for e in globales:
         emails.add(e.email)
     
-    # 3. Fallback: contacto_email de la empresa
+    # 4. Fallback: contacto_email de la empresa
     if not emails and company_id:
         company = db.query(Company).filter(Company.id == company_id).first()
         if company and company.contacto_email:

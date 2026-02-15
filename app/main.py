@@ -18,7 +18,7 @@ from app.pdf_merger import merge_pdfs_from_uploads
 from app.email_templates import get_confirmation_template, get_alert_template
 from app.database import (
     get_db, init_db, engine, Case, CaseDocument, Employee, Company,
-    EstadoCaso, EstadoDocumento, TipoIncapacidad
+    EstadoCaso, EstadoDocumento, TipoIncapacidad, CorreoNotificacion
 )
 from app.validador import router as validador_router
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
@@ -241,6 +241,24 @@ def startup_event():
                 conn.execute(text(sql))
             conn.commit()
         print("✅ Auto-migración completada (12 columnas verificadas)")
+        
+        # ⭐ AUTO-MIGRACIÓN: Tabla correos_notificacion
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS correos_notificacion (
+                    id SERIAL PRIMARY KEY,
+                    area VARCHAR(50) NOT NULL,
+                    nombre_contacto VARCHAR(200),
+                    email VARCHAR(300) NOT NULL,
+                    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+                    activo BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_correos_notif_area ON correos_notificacion(area);"))
+            conn.commit()
+        print("✅ Tabla correos_notificacion verificada")
         
         # ⭐ AUTO-MIGRACIÓN: Tablas CIE-10 / Alertas 180 días
         with engine.connect() as conn:
