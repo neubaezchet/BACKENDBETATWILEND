@@ -325,55 +325,178 @@ def sincronizar_excel_completo():
         print(f"   • Total activos en BD: {total_filas_excel}")
         print(f"{'='*60}\n")
         
-        # ========== PASO 3: SYNC CASES_KACTUS (Hoja 3) ==========
+        # ========== PASO 3: SYNC CASES_KACTUS + TRASLAPOS (Hoja 3) ==========
         try:
             df_cases = pd.read_excel(excel_path, sheet_name=2)  # Hoja 3 = Cases_Kactus
             if len(df_cases) > 0:
-                print(f"📊 PASO 3: Sincronizando Cases_Kactus ({len(df_cases)} filas)...")
+                print(f"📊 PASO 3: Sincronizando Cases_Kactus ({len(df_cases)} filas) con matching inteligente...")
                 cases_actualizados = 0
+                cases_no_encontrados = 0
+                
+                from sqlalchemy import and_, func, or_
+                from datetime import timedelta
                 
                 for _, row in df_cases.iterrows():
                     try:
                         cedula_raw = row.get("cedula")
-                        fecha_inicio_raw = row.get("fecha_inicio")
-                        
-                        if pd.isna(cedula_raw) or pd.isna(fecha_inicio_raw):
+                        if pd.isna(cedula_raw):
                             continue
                         
                         cedula_case = str(int(cedula_raw))
-                        fecha_inicio_case = pd.to_datetime(fecha_inicio_raw)
                         
-                        # Buscar caso por cedula + fecha_inicio (±1 día de tolerancia)
-                        from sqlalchemy import and_, func
-                        caso = db.query(Case).filter(
-                            Case.cedula == cedula_case,
-                            func.date(Case.fecha_inicio) == fecha_inicio_case.date()
-                        ).first()
+                        # Fechas del Excel Kactus (pueden ser ajustadas por traslapo)
+                        fecha_inicio_raw = row.get("fecha_inicio")
+                        fecha_fin_raw = row.get("fecha_fin")
+                        fecha_inicio_kactus_raw = row.get("fecha_inicio_kactus")
+                        fecha_fin_kactus_raw = row.get("fecha_fin_kactus")
                         
-                        if caso:
-                            # Actualizar campos Kactus
-                            if pd.notna(row.get("numero_incapacidad")):
-                                caso.numero_incapacidad = str(row["numero_incapacidad"])
-                            if pd.notna(row.get("dias_kactus")):
-                                caso.dias_kactus = int(row["dias_kactus"])
-                            if pd.notna(row.get("codigo_cie10")):
-                                caso.codigo_cie10 = str(row["codigo_cie10"])
-                            if pd.notna(row.get("es_prorroga")):
-                                val = str(row["es_prorroga"]).strip().upper()
-                                caso.es_prorroga = val in ("SI", "SÍ", "YES", "TRUE", "1")
-                            if pd.notna(row.get("medico_tratante")):
-                                caso.medico_tratante = str(row["medico_tratante"])
-                            if pd.notna(row.get("institucion_origen")):
-                                caso.institucion_origen = str(row["institucion_origen"])
-                            
-                            caso.updated_at = datetime.now()
-                            db.commit()
-                            cases_actualizados += 1
+                        fecha_inicio_case = pd.to_datetime(fecha_inicio_raw) if pd.notna(fecha_inicio_raw) else None
+                        fecha_fin_case = pd.to_datetime(fecha_fin_raw) if pd.notna(fecha_fin_raw) else None
+                        fecha_inicio_kactus = pd.to_datetime(fecha_inicio_kactus_raw) if pd.notna(fecha_inicio_kactus_raw) else None
+                        fecha_fin_kactus = pd.to_datetime(fecha_fin_kactus_raw) if pd.notna(fecha_fin_kactus_raw) else None
+                        
+                        num_incap = str(row["numero_incapacidad"]).strip() if pd.notna(row.get("numero_incapacidad")) else None
+                        
+                        # ═══ MATCHING INTELIGENTE: 4 estrategias ═══
+                        caso = None
+                        match_method = ""
+                        
+                        # 1) Por numero_incapacidad exacto (más preciso)
+                        if num_incap and caso is None:
+                            caso = db.query(Case).filter(
+                                Case.cedula == cedula_case,
+                                Case.numero_incapacidad == num_incap
+                            ).first()
+                            if caso:
+                                match_method = "numero_incapacidad"
+                        
+                        # 2) Por cedula + fecha_inicio exacta
+                        if caso is None and fecha_inicio_case:
+                            caso = db.query(Case).filter(
+                                Case.cedula == cedula_case,
+                                func.date(Case.fecha_inicio) == fecha_inicio_case.date()
+                            ).first()
+                            if caso:
+                                match_method = "fecha_inicio_exacta"
+                        
+                        # 3) Por cedula + fecha_fin exacta
+                        if caso is None and fecha_fin_case:
+                            caso = db.query(Case).filter(
+                                Case.cedula == cedula_case,
+                                func.date(Case.fecha_fin) == fecha_fin_case.date()
+                            ).first()
+                            if caso:
+                                match_method = "fecha_fin_exacta"
+                        
+                        # 4) Por rango de fechas con superposición (±3 días tolerancia por traslapos)
+                        if caso is None and fecha_inicio_case:
+                            tolerancia = timedelta(days=3)
+                            candidatos = db.query(Case).filter(
+                                Case.cedula == cedula_case,
+                                Case.fecha_inicio != None,
+                                Case.fecha_fin != None,
+                                or_(
+                                    # fecha_inicio_case cae dentro del rango del caso
+                                    and_(
+                                        Case.fecha_inicio <= fecha_inicio_case + tolerancia,
+                                        Case.fecha_fin >= fecha_inicio_case - tolerancia
+                                    ),
+                                    # fecha_fin_case cae dentro del rango del caso
+                                    and_(
+                                        fecha_fin_case is not None,
+                                        Case.fecha_inicio <= (fecha_fin_case or fecha_inicio_case) + tolerancia,
+                                        Case.fecha_fin >= fecha_inicio_case - tolerancia
+                                    )
+                                ),
+                                Case.kactus_sync_at == None  # Solo los que no se han sincronizado aún
+                            ).order_by(
+                                func.abs(func.extract('epoch', Case.fecha_inicio - fecha_inicio_case))
+                            ).first()
+                            if candidatos:
+                                caso = candidatos
+                                match_method = "rango_superpuesto"
+                        
+                        if not caso:
+                            cases_no_encontrados += 1
+                            print(f"   ⚠️ Sin match para CC {cedula_case} fecha {fecha_inicio_raw} — verificar en BD")
+                            continue
+                        
+                        # ═══ ACTUALIZAR CAMPOS KACTUS ═══
+                        if num_incap:
+                            caso.numero_incapacidad = num_incap
+                        if pd.notna(row.get("dias_kactus")):
+                            caso.dias_kactus = int(row["dias_kactus"])
+                        if pd.notna(row.get("codigo_cie10")):
+                            caso.codigo_cie10 = str(row["codigo_cie10"]).strip()
+                        if pd.notna(row.get("diagnostico")):
+                            caso.diagnostico_kactus = str(row["diagnostico"]).strip()
+                            # Si no tiene diagnóstico propio, copiar el de Kactus
+                            if not caso.diagnostico:
+                                caso.diagnostico = caso.diagnostico_kactus
+                        if pd.notna(row.get("es_prorroga")):
+                            val = str(row["es_prorroga"]).strip().upper()
+                            caso.es_prorroga = val in ("SI", "SÍ", "YES", "TRUE", "1")
+                        if pd.notna(row.get("medico_tratante")):
+                            caso.medico_tratante = str(row["medico_tratante"]).strip()
+                        if pd.notna(row.get("institucion_origen")):
+                            caso.institucion_origen = str(row["institucion_origen"]).strip()
+                        
+                        # ═══ FECHAS KACTUS (ajustadas por traslapo) ═══
+                        if fecha_inicio_kactus:
+                            caso.fecha_inicio_kactus = fecha_inicio_kactus
+                        if fecha_fin_kactus:
+                            caso.fecha_fin_kactus = fecha_fin_kactus
+                        
+                        # ═══ DETECCIÓN DE TRASLAPO AUTOMÁTICA ═══
+                        if fecha_inicio_kactus and caso.fecha_inicio:
+                            diff_inicio = (fecha_inicio_kactus.date() - caso.fecha_inicio.date()).days
+                            if diff_inicio > 0:
+                                # Kactus empezó después → los días de diferencia son traslapo
+                                caso.dias_traslapo = diff_inicio
+                                # Buscar con qué caso se traslapa (el anterior del mismo empleado)
+                                caso_anterior = db.query(Case).filter(
+                                    Case.cedula == cedula_case,
+                                    Case.fecha_fin != None,
+                                    Case.id != caso.id,
+                                    func.date(Case.fecha_fin) >= caso.fecha_inicio.date(),
+                                    func.date(Case.fecha_fin) <= fecha_inicio_kactus.date()
+                                ).order_by(Case.fecha_fin.desc()).first()
+                                if caso_anterior:
+                                    caso.traslapo_con_serial = caso_anterior.serial
+                        elif fecha_fin_kactus and caso.fecha_fin:
+                            diff_fin = (caso.fecha_fin.date() - fecha_fin_kactus.date()).days
+                            if diff_fin > 0:
+                                caso.dias_traslapo = diff_fin
+                                caso_siguiente = db.query(Case).filter(
+                                    Case.cedula == cedula_case,
+                                    Case.fecha_inicio != None,
+                                    Case.id != caso.id,
+                                    func.date(Case.fecha_inicio) >= fecha_fin_kactus.date(),
+                                    func.date(Case.fecha_inicio) <= caso.fecha_fin.date()
+                                ).order_by(Case.fecha_inicio.asc()).first()
+                                if caso_siguiente:
+                                    caso.traslapo_con_serial = caso_siguiente.serial
+                        
+                        caso.kactus_sync_at = datetime.now()
+                        caso.updated_at = datetime.now()
+                        db.commit()
+                        cases_actualizados += 1
+                        
+                        if match_method != "fecha_inicio_exacta":
+                            print(f"      🔗 CC {cedula_case} → {caso.serial} (match: {match_method})" + 
+                                  (f" — {caso.dias_traslapo}d traslapo" if caso.dias_traslapo else ""))
+                        
                     except Exception as e:
                         print(f"   ❌ Error en case row: {e}")
                         db.rollback()
                 
                 print(f"   ✅ {cases_actualizados} casos actualizados con datos Kactus")
+                if cases_no_encontrados > 0:
+                    print(f"   ⚠️ {cases_no_encontrados} filas sin match (verificar cédulas/fechas)")
+                
+                # ═══ DETECCIÓN AUTOMÁTICA DE TRASLAPOS GLOBALES ═══
+                _detectar_traslapos_globales(db)
+                
             else:
                 print(f"   ℹ️ Hoja Cases_Kactus vacía o sin datos")
         except Exception as e:
@@ -476,5 +599,269 @@ def sincronizar_excel_completo():
         import traceback
         traceback.print_exc()
         db.rollback()
+    finally:
+        db.close()
+
+
+# ══════════════════════════════════════════════════════════════════
+# DETECCIÓN AUTOMÁTICA DE TRASLAPOS ENTRE INCAPACIDADES
+# ══════════════════════════════════════════════════════════════════
+
+def _detectar_traslapos_globales(db):
+    """
+    Detecta traslapos (solapamiento de fechas) entre incapacidades del mismo empleado.
+    Ejemplo: Incap A del 31/01 al 02/02 e Incap B del 02/02 al 04/02 → 1 día traslapado.
+    En Kactus se subiría como 03/02 al 04/02 (2 días en vez de 3).
+    """
+    from sqlalchemy import func, and_
+    
+    try:
+        # Obtener todas las cédulas con más de 1 caso activo
+        cedulas = db.query(Case.cedula).filter(
+            Case.fecha_inicio != None,
+            Case.fecha_fin != None
+        ).group_by(Case.cedula).having(func.count(Case.id) > 1).all()
+        
+        traslapos_detectados = 0
+        
+        for (cedula,) in cedulas:
+            casos = db.query(Case).filter(
+                Case.cedula == cedula,
+                Case.fecha_inicio != None,
+                Case.fecha_fin != None
+            ).order_by(Case.fecha_inicio.asc()).all()
+            
+            for i in range(len(casos) - 1):
+                caso_actual = casos[i]
+                caso_siguiente = casos[i + 1]
+                
+                if not caso_actual.fecha_fin or not caso_siguiente.fecha_inicio:
+                    continue
+                
+                # ¿Se traslapa? fecha_fin del actual >= fecha_inicio del siguiente
+                if caso_actual.fecha_fin.date() >= caso_siguiente.fecha_inicio.date():
+                    dias_overlap = (caso_actual.fecha_fin.date() - caso_siguiente.fecha_inicio.date()).days + 1
+                    
+                    # Solo marcar si no tiene ya Kactus override (que es la fecha real ajustada)
+                    if not caso_siguiente.fecha_inicio_kactus and caso_siguiente.dias_traslapo == 0:
+                        caso_siguiente.dias_traslapo = dias_overlap
+                        caso_siguiente.traslapo_con_serial = caso_actual.serial
+                        
+                        # Calcular fecha Kactus sugerida (inicio original + días traslapo)
+                        from datetime import timedelta
+                        nueva_fecha_inicio = caso_siguiente.fecha_inicio + timedelta(days=dias_overlap)
+                        caso_siguiente.fecha_inicio_kactus = nueva_fecha_inicio
+                        
+                        # Recalcular días Kactus si no los tiene
+                        if not caso_siguiente.dias_kactus and caso_siguiente.fecha_fin:
+                            dias_kactus_calc = (caso_siguiente.fecha_fin.date() - nueva_fecha_inicio.date()).days + 1
+                            if dias_kactus_calc > 0:
+                                caso_siguiente.dias_kactus = dias_kactus_calc
+                        
+                        caso_siguiente.updated_at = datetime.now()
+                        db.commit()
+                        traslapos_detectados += 1
+        
+        if traslapos_detectados > 0:
+            print(f"   🔀 {traslapos_detectados} traslapos detectados automáticamente")
+    
+    except Exception as e:
+        print(f"   ⚠️ Error detectando traslapos: {e}")
+        db.rollback()
+
+
+# ══════════════════════════════════════════════════════════════════
+# VACIADO QUINCENAL DE HOJA KACTUS (datos ya están en BD)
+# ══════════════════════════════════════════════════════════════════
+
+def vaciar_hoja_kactus_quincenal():
+    """
+    Cada quincena (1 y 16 del mes), vacía la Hoja 3 (Cases_Kactus) del Excel.
+    Los datos ya están sincronizados en la BD con kactus_sync_at.
+    Solo borra filas con datos, mantiene las cabeceras.
+    """
+    try:
+        from datetime import datetime
+        hoy = datetime.now()
+        dia = hoy.day
+        
+        # Solo ejecutar el 1 y el 16 de cada mes
+        if dia not in (1, 16):
+            return
+        
+        print(f"\n🗑️ VACIADO QUINCENAL — Hoja 3 (Cases_Kactus) — {hoy.strftime('%d/%m/%Y')}")
+        
+        # Verificar que todos los datos pendientes estén ya sincronizados
+        db = SessionLocal()
+        try:
+            excel_path = descargar_excel_desde_drive()
+            if not excel_path:
+                print("   ❌ No se pudo descargar el Excel para verificar")
+                return
+            
+            try:
+                df_cases = pd.read_excel(excel_path, sheet_name=2)
+            except Exception:
+                print("   ℹ️ Hoja 3 no existe, nada que vaciar")
+                return
+            
+            if len(df_cases) == 0:
+                print("   ℹ️ Hoja 3 ya está vacía")
+                return
+            
+            # Contar cuántas filas están sincronizadas en BD
+            pendientes = 0
+            for _, row in df_cases.iterrows():
+                cedula_raw = row.get("cedula")
+                if pd.isna(cedula_raw):
+                    continue
+                cedula_str = str(int(cedula_raw))
+                
+                from sqlalchemy import func
+                caso_sync = db.query(Case).filter(
+                    Case.cedula == cedula_str,
+                    Case.kactus_sync_at != None
+                ).first()
+                
+                if not caso_sync:
+                    pendientes += 1
+            
+            if pendientes > 0:
+                print(f"   ⚠️ {pendientes} filas aún sin sincronizar en BD — NO se vacía")
+                return
+            
+            print(f"   ✅ Todas las {len(df_cases)} filas ya sincronizadas en BD")
+            
+            # Vaciar la hoja via Google Sheets API
+            try:
+                import gspread
+                from google.oauth2.service_account import Credentials
+                
+                creds_path = os.environ.get("GOOGLE_CREDENTIALS_PATH", "/tmp/google_creds.json")
+                if not os.path.exists(creds_path):
+                    # Intentar con credenciales de Drive existentes
+                    from app.drive_uploader import get_authenticated_service
+                    print("   ℹ️ Usando credenciales de Drive para gspread")
+                    # Vaciar descargando y re-subiendo solo cabeceras
+                    _vaciar_hoja_por_descarga(excel_path, df_cases.columns.tolist())
+                else:
+                    scopes = ['https://www.googleapis.com/auth/spreadsheets']
+                    credentials = Credentials.from_service_account_file(creds_path, scopes=scopes)
+                    gc = gspread.authorize(credentials)
+                    spreadsheet = gc.open_by_key(GOOGLE_DRIVE_FILE_ID)
+                    worksheet = spreadsheet.get_worksheet(2)  # Hoja 3 = index 2
+                    
+                    # Borrar todo excepto cabecera
+                    if worksheet.row_count > 1:
+                        worksheet.delete_rows(2, worksheet.row_count)
+                    
+                    print(f"   🗑️ Hoja 3 vaciada — {len(df_cases)} filas eliminadas del Excel")
+                
+            except ImportError:
+                print("   ℹ️ gspread no disponible — vaciado manual requerido")
+                _vaciar_hoja_por_descarga(excel_path, df_cases.columns.tolist())
+            except Exception as e:
+                print(f"   ⚠️ Error al vaciar hoja via API: {e}")
+                print("   ℹ️ Los datos ya están seguros en la BD")
+        
+        finally:
+            db.close()
+        
+        print(f"   ✅ Vaciado quincenal completado — datos seguros en PostgreSQL\n")
+        
+    except Exception as e:
+        print(f"   ❌ Error en vaciado quincenal: {e}")
+
+
+def _vaciar_hoja_por_descarga(excel_path, columnas):
+    """Fallback: reescribe el Excel con solo las cabeceras en Hoja 3"""
+    try:
+        # Leer todas las hojas
+        all_sheets = pd.read_excel(excel_path, sheet_name=None)
+        sheet_names = list(all_sheets.keys())
+        
+        if len(sheet_names) >= 3:
+            # Reemplazar hoja 3 con DataFrame vacío (solo cabeceras)
+            nombre_hoja3 = sheet_names[2]
+            all_sheets[nombre_hoja3] = pd.DataFrame(columns=columnas)
+            
+            # Guardar localmente
+            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+                for nombre, df in all_sheets.items():
+                    df.to_excel(writer, sheet_name=nombre, index=False)
+            
+            print(f"   🗑️ Hoja '{nombre_hoja3}' vaciada localmente (subir manualmente a Drive)")
+    except Exception as e:
+        print(f"   ⚠️ Error en vaciado por descarga: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════
+# ESTADO DE SINCRONIZACIÓN
+# ══════════════════════════════════════════════════════════════════
+
+def obtener_estado_sync():
+    """Retorna el estado actual de la sincronización BD ↔ Excel"""
+    db = SessionLocal()
+    try:
+        from sqlalchemy import func
+        
+        total_empleados = db.query(Employee).filter(Employee.activo == True).count()
+        total_casos = db.query(Case).count()
+        casos_con_kactus = db.query(Case).filter(Case.kactus_sync_at != None).count()
+        casos_sin_kactus = total_casos - casos_con_kactus
+        casos_con_diagnostico = db.query(Case).filter(
+            Case.diagnostico != None,
+            Case.diagnostico != ''
+        ).count()
+        casos_con_cie10 = db.query(Case).filter(
+            Case.codigo_cie10 != None,
+            Case.codigo_cie10 != ''
+        ).count()
+        casos_con_traslapo = db.query(Case).filter(
+            Case.dias_traslapo > 0
+        ).count()
+        
+        ultima_sync_kactus = db.query(func.max(Case.kactus_sync_at)).scalar()
+        ultimo_caso_creado = db.query(func.max(Case.created_at)).scalar()
+        
+        # Traslapos por empleado
+        traslapos_detalle = []
+        if casos_con_traslapo > 0:
+            traslapos = db.query(Case).filter(Case.dias_traslapo > 0).order_by(Case.updated_at.desc()).limit(20).all()
+            for t in traslapos:
+                emp = db.query(Employee).filter(Employee.cedula == t.cedula).first()
+                traslapos_detalle.append({
+                    "serial": t.serial,
+                    "cedula": t.cedula,
+                    "nombre": emp.nombre if emp else "?",
+                    "fecha_inicio": str(t.fecha_inicio.date()) if t.fecha_inicio else None,
+                    "fecha_fin": str(t.fecha_fin.date()) if t.fecha_fin else None,
+                    "fecha_inicio_kactus": str(t.fecha_inicio_kactus.date()) if t.fecha_inicio_kactus else None,
+                    "fecha_fin_kactus": str(t.fecha_fin_kactus.date()) if t.fecha_fin_kactus else None,
+                    "dias_traslapo": t.dias_traslapo,
+                    "traslapo_con": t.traslapo_con_serial,
+                    "dias_kactus": t.dias_kactus,
+                })
+        
+        return {
+            "ok": True,
+            "timestamp": datetime.now().isoformat(),
+            "resumen": {
+                "total_empleados_activos": total_empleados,
+                "total_casos": total_casos,
+                "casos_con_kactus": casos_con_kactus,
+                "casos_sin_kactus": casos_sin_kactus,
+                "casos_con_diagnostico": casos_con_diagnostico,
+                "casos_con_cie10": casos_con_cie10,
+                "casos_con_traslapo": casos_con_traslapo,
+                "pct_kactus": round((casos_con_kactus / total_casos * 100) if total_casos > 0 else 0, 1),
+                "pct_diagnostico": round((casos_con_diagnostico / total_casos * 100) if total_casos > 0 else 0, 1),
+            },
+            "ultima_sync_kactus": str(ultima_sync_kactus) if ultima_sync_kactus else None,
+            "ultimo_caso_creado": str(ultimo_caso_creado) if ultimo_caso_creado else None,
+            "traslapos_recientes": traslapos_detalle,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
     finally:
         db.close()

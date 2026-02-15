@@ -144,6 +144,14 @@ class Case(Base):
     numero_incapacidad = Column(String(50))
     medico_tratante = Column(String(200))
     institucion_origen = Column(String(200))
+    diagnostico_kactus = Column(Text, nullable=True)
+    
+    # ✅ COLUMNAS TRASLAPO - Fechas ajustadas Kactus y detección de solapamiento
+    fecha_inicio_kactus = Column(DateTime, nullable=True)
+    fecha_fin_kactus = Column(DateTime, nullable=True)
+    dias_traslapo = Column(Integer, default=0)
+    traslapo_con_serial = Column(String(50), nullable=True)
+    kactus_sync_at = Column(DateTime, nullable=True)  # Cuándo se sincronizó este caso con Kactus
     
     # Auditoría
     created_at = Column(DateTime, default=get_utc_now, index=True)
