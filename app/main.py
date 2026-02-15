@@ -17,7 +17,7 @@ from app.drive_uploader import upload_to_drive, upload_inteligente
 from app.pdf_merger import merge_pdfs_from_uploads
 from app.email_templates import get_confirmation_template, get_alert_template
 from app.database import (
-    get_db, init_db, Case, CaseDocument, Employee, Company,
+    get_db, init_db, engine, Case, CaseDocument, Employee, Company,
     EstadoCaso, EstadoDocumento, TipoIncapacidad
 )
 from app.validador import router as validador_router
