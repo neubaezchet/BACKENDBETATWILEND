@@ -147,7 +147,7 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     emails = set()
     
     # 1. Correos de notificación por área (Hoja 4 del Excel)
-    areas_alerta = ['talento_humano', 'seguridad_salud']
+    areas_alerta = ['talento_humano', 'seguridad_salud', 'nomina']
     for area in areas_alerta:
         correos_area = db.query(CorreoNotificacion).filter(
             CorreoNotificacion.area == area,
