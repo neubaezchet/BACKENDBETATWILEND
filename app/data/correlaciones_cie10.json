@@ -1,0 +1,235 @@
+{
+  "version": "2026.1",
+  "fuente": "Correlaciones diagnosticas basadas en CIE-10 para deteccion de prorrogas",
+  "ultima_actualizacion": "2026-02-14",
+  "nota": "Dos diagnosticos se consideran correlacionados si pertenecen al mismo grupo o si estan en grupos vinculados. Para actualizar: solo edite este JSON.",
+
+  "grupos_correlacion": {
+
+    "GASTROINTESTINAL_INFECCIOSO": {
+      "titulo": "Enfermedades gastrointestinales infecciosas y sus complicaciones",
+      "codigos": ["A00","A01","A02","A03","A04","A05","A06","A07","A08","A09",
+                  "K21","K25","K26","K27","K29","K30","K50","K51","K52","K56","K57","K58","K59",
+                  "R10","R11",
+                  "B15","B16","B17","B18","B19",
+                  "K70","K73","K74","K80","K81","K85","K92"],
+      "logica": "Infecciones intestinales pueden evolucionar a trastornos digestivos cronicos o hepaticos. Hepatitis viral se correlaciona con enfermedad hepatica cronica.",
+      "confianza": "alta"
+    },
+
+    "RESPIRATORIO_SUPERIOR": {
+      "titulo": "Infecciones respiratorias agudas y cronicas de vias superiores",
+      "codigos": ["J00","J01","J02","J03","J04","J06",
+                  "J30","J31","J32","J34","J35",
+                  "R05","R06","R07"],
+      "logica": "Resfriado, faringitis, sinusitis, laringitis son parte del mismo proceso infeccioso de vias superiores. Un resfriado puede evolucionar a sinusitis.",
+      "confianza": "alta"
+    },
+
+    "RESPIRATORIO_INFERIOR": {
+      "titulo": "Infecciones y enfermedades respiratorias de vias inferiores",
+      "codigos": ["J09","J10","J11","J12","J15","J18",
+                  "J20","J21","J22",
+                  "J40","J41","J42","J44","J45",
+                  "R05","R06"],
+      "logica": "Influenza puede evolucionar a neumonia o bronquitis. Bronquitis aguda puede cronificarse. EPOC y asma se exacerban con infecciones.",
+      "confianza": "alta"
+    },
+
+    "RESPIRATORIO_CRUZADO": {
+      "titulo": "Puente entre vias respiratorias superiores e inferiores",
+      "codigos": ["J00","J01","J02","J03","J04","J06",
+                  "J09","J10","J11","J12","J15","J18",
+                  "J20","J21","J22",
+                  "J30","J31","J32","J34","J35",
+                  "J40","J41","J42","J44","J45",
+                  "R05","R06","R07"],
+      "logica": "Infeccion de vias superiores puede descender a bronquitis/neumonia. EPOC se exacerba con infecciones superiores.",
+      "confianza": "media"
+    },
+
+    "OSTEOMUSCULAR_COLUMNA": {
+      "titulo": "Trastornos de la columna vertebral y dorsopatias",
+      "codigos": ["M40","M41","M42","M43","M47","M48","M50","M51","M54",
+                  "M60","M62","M79",
+                  "G56",
+                  "S13","S30","S32","S33"],
+      "logica": "Dolor de espalda, hernia discal, espondilosis y musculopatias son parte del mismo complejo osteomuscular. El sindrome de tunel carpiano (G56) puede correlacionarse cuando hay compromiso cervical.",
+      "confianza": "alta"
+    },
+
+    "OSTEOMUSCULAR_MIEMBRO_SUPERIOR": {
+      "titulo": "Trastornos del hombro, codo, muneca y mano",
+      "codigos": ["M65","M67","M70","M71","M72","M75","M77","M79",
+                  "G56",
+                  "S40","S42","S43","S46","S50","S52","S53","S60","S61","S62","S63"],
+      "logica": "Lesiones del hombro, tendinitis, epicondilitis, tunel carpiano son trastornos que se correlacionan dentro del miembro superior.",
+      "confianza": "alta"
+    },
+
+    "OSTEOMUSCULAR_MIEMBRO_INFERIOR": {
+      "titulo": "Trastornos de cadera, rodilla, pierna, tobillo y pie",
+      "codigos": ["M16","M17","M19","M23","M25","M76","M79","M80",
+                  "S70","S72","S73","S76","S80","S82","S83","S86","S90","S92","S93"],
+      "logica": "Fractura, esguince, artrosis, menisco y entesopatias del miembro inferior se correlacionan.",
+      "confianza": "alta"
+    },
+
+    "OSTEOMUSCULAR_GENERAL": {
+      "titulo": "Artritis, artrosis y trastornos articulares generales",
+      "codigos": ["M05","M06","M10","M15","M16","M17","M19","M20","M23","M25",
+                  "M40","M41","M42","M43","M47","M48","M50","M51","M54",
+                  "M60","M62","M65","M67","M70","M71","M72","M75","M76","M77","M79",
+                  "M80","M81"],
+      "logica": "Trastornos osteomusculares generales pueden migrar entre articulaciones y cronicificarse.",
+      "confianza": "media"
+    },
+
+    "TRAUMATICO_CABEZA_CUELLO": {
+      "titulo": "Traumatismos de cabeza y cuello",
+      "codigos": ["S00","S01","S06","S09","S12","S13",
+                  "G43","G44","R42","R51"],
+      "logica": "Traumatismo craneoencefalico puede generar cefaleas, vertigo, migrana como secuelas.",
+      "confianza": "alta"
+    },
+
+    "TRAUMATICO_TORAX_ABDOMEN": {
+      "titulo": "Traumatismos de torax y abdomen",
+      "codigos": ["S20","S22","S30","S32","S33",
+                  "T00","T14",
+                  "R07","R10"],
+      "logica": "Fracturas costales pueden generar dolor toracico persistente. Trauma abdominal genera dolor abdominal.",
+      "confianza": "alta"
+    },
+
+    "SALUD_MENTAL": {
+      "titulo": "Trastornos mentales y del comportamiento",
+      "codigos": ["F10","F20","F31","F32","F33","F40","F41","F43","F45","F48","F51",
+                  "G47",
+                  "R42","R51"],
+      "logica": "Depresion puede evolucionar a ansiedad y viceversa. Estres grave puede generar insomnio, cefaleas, somatizacion. Diagnosticos de salud mental se correlacionan entre si.",
+      "confianza": "alta"
+    },
+
+    "CARDIOVASCULAR": {
+      "titulo": "Enfermedades del sistema circulatorio",
+      "codigos": ["I10","I11","I20","I21","I25","I50","I63","I64","I70","I80","I83",
+                  "E10","E11","E13","E14","E66","E78",
+                  "R00"],
+      "logica": "Hipertension, diabetes, obesidad y dislipidemia son comorbilidades que se exacerban mutuamente. Infarto puede generar insuficiencia cardiaca. ACV asociado a hipertension.",
+      "confianza": "alta"
+    },
+
+    "METABOLICO_ENDOCRINO": {
+      "titulo": "Trastornos endocrinos y metabolicos",
+      "codigos": ["E00","E03","E04","E05","E10","E11","E13","E14","E66","E78",
+                  "D50","D64"],
+      "logica": "Diabetes se correlaciona con trastornos tiroideos y metabolicos. Anemia puede ser complicacion de diabetes o hipotiroidismo.",
+      "confianza": "media"
+    },
+
+    "HEPATICO": {
+      "titulo": "Enfermedades del higado (infecciosas y no infecciosas)",
+      "codigos": ["B15","B16","B17","B18","B19",
+                  "K70","K73","K74","K80","K81","K85"],
+      "logica": "Hepatitis viral puede evolucionar a hepatitis cronica y cirrosis. Colelitiasis se asocia con pancreatitis.",
+      "confianza": "alta"
+    },
+
+    "URINARIO": {
+      "titulo": "Enfermedades del sistema urinario",
+      "codigos": ["N10","N17","N18","N20","N23","N30","N39",
+                  "N40"],
+      "logica": "Infecciones urinarias recurrentes pueden evolucionar a pielonefritis o insuficiencia renal. Litiasis genera colico renal e IVU.",
+      "confianza": "alta"
+    },
+
+    "GINECOLOGICO": {
+      "titulo": "Trastornos ginecologicos",
+      "codigos": ["N70","N73","N76","N80","N83","N92",
+                  "C53"],
+      "logica": "Infecciones pelvicas se correlacionan con endometriosis y trastornos ovaricos.",
+      "confianza": "media"
+    },
+
+    "EMBARAZO_PARTO": {
+      "titulo": "Embarazo, parto y puerperio",
+      "codigos": ["O00","O03","O20","O21","O23","O26","O47","O60","O80","O82",
+                  "Z34","Z35"],
+      "logica": "Todas las complicaciones del embarazo se correlacionan entre si. Hiperemesis, hemorragia, infecciones urinarias durante embarazo son parte del mismo proceso.",
+      "confianza": "alta"
+    },
+
+    "ONCOLOGICO": {
+      "titulo": "Neoplasias y procesos tumorales",
+      "codigos": ["C34","C50","C53","C61","C73",
+                  "D50","D64"],
+      "logica": "Tratamientos oncologicos generan anemia y complicaciones que se correlacionan.",
+      "confianza": "alta"
+    },
+
+    "TUBERCULOSIS": {
+      "titulo": "Tuberculosis en todas sus formas",
+      "codigos": ["A15","A16","A17","A18","A19",
+                  "J15","J18","J44"],
+      "logica": "TB puede afectar multiples organos y correlacionarse con neumonia y EPOC.",
+      "confianza": "alta"
+    },
+
+    "VIH": {
+      "titulo": "Enfermedad por VIH y complicaciones",
+      "codigos": ["B20","B24","B37",
+                  "A15","A16","A17","A18","A19",
+                  "J15","J18"],
+      "logica": "VIH se asocia con infecciones oportunistas: tuberculosis, candidiasis, neumonias.",
+      "confianza": "alta"
+    },
+
+    "DERMATOLOGICO": {
+      "titulo": "Enfermedades de la piel",
+      "codigos": ["L01","L02","L03","L20","L23","L30","L40","L50","L60",
+                  "B00","B01","B02","B07","B37"],
+      "logica": "Infecciones virales de piel (herpes, varicela, zoster) se correlacionan con dermatitis y otras afecciones cutaneas.",
+      "confianza": "media"
+    },
+
+    "OFTALMOLOGICO": {
+      "titulo": "Enfermedades del ojo",
+      "codigos": ["H10","H25","H40",
+                  "E10","E11"],
+      "logica": "Diabetes puede generar complicaciones oculares (retinopatia, glaucoma).",
+      "confianza": "media"
+    },
+
+    "OTOLOGICO": {
+      "titulo": "Enfermedades del oido",
+      "codigos": ["H65","H66","H81",
+                  "J00","J01","J02","J03",
+                  "R42"],
+      "logica": "Infecciones de vias superiores pueden generar otitis. Vertigo se asocia con trastornos vestibulares y otitis.",
+      "confianza": "media"
+    },
+
+    "BUCAL": {
+      "titulo": "Enfermedades de la cavidad bucal",
+      "codigos": ["K00","K01","K02","K04","K05","K08"],
+      "logica": "Problemas dentales estan correlacionados entre si (caries, endodoncia, periodoncia).",
+      "confianza": "alta"
+    },
+
+    "DENGUE": {
+      "titulo": "Dengue y complicaciones",
+      "codigos": ["A90","A91",
+                  "D50","D64",
+                  "R50"],
+      "logica": "Dengue clasico puede evolucionar a dengue hemorragico. Causa fiebre y anemia.",
+      "confianza": "alta"
+    }
+  },
+
+  "reglas_temporales": {
+    "ventana_prorroga_dias": 30,
+    "ventana_prorroga_maxima_dias": 90,
+    "nota": "Si la nueva incapacidad inicia dentro de 30 dias del fin de la anterior con diagnosticos correlacionados, se considera prorroga con alta confianza. Entre 31-90 dias se considera posible prorroga."
+  }
+}

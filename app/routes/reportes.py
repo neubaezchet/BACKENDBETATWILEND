@@ -22,6 +22,8 @@ from app.schemas.reporte import (
 )
 from app.services.reporte_service import ReporteService
 from app.utils.excel_formatter import ExcelFormatter
+from app.services.prorroga_detector import auto_detectar_prorroga_caso, analizar_historial_empleado
+from app.services.cie10_service import buscar_codigo, validar_dias
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +362,21 @@ async def get_dashboard_completo(
                     elif est_doc == "ILEGIBLE":
                         docs_ilegibles.append(d.doc_tipo)
             
+            # ⭐ Auto-detectar prórroga por CIE-10
+            prorroga_auto = {"es_prorroga": False}
+            try:
+                prorroga_auto = auto_detectar_prorroga_caso(db, c)
+            except Exception:
+                pass
+            
+            # ⭐ Validar CIE-10 y días
+            cie10_info = None
+            dias_validacion = None
+            if c.codigo_cie10:
+                cie10_info = buscar_codigo(c.codigo_cie10)
+                if c.dias_incapacidad:
+                    dias_validacion = validar_dias(c.codigo_cie10, c.dias_incapacidad)
+            
             tabla_principal.append({
                 "serial": c.serial,
                 "cedula": c.cedula,
@@ -377,10 +394,17 @@ async def get_dashboard_completo(
                 "estado": c.estado.value if c.estado else "NUEVO",
                 "diagnostico": c.diagnostico,
                 "codigo_cie10": c.codigo_cie10,
+                "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else None,
+                "cie10_grupo": cie10_info.get("grupo") if cie10_info else None,
                 "dias_incapacidad": c.dias_incapacidad,
                 "dias_kactus": c.dias_kactus,
                 "dias_kactus_empleado": emp_dias_kactus,
-                "es_prorroga": c.es_prorroga,
+                "dias_validacion": dias_validacion,
+                "es_prorroga": prorroga_auto.get("es_prorroga", c.es_prorroga),
+                "es_prorroga_db": c.es_prorroga,
+                "prorroga_confianza": prorroga_auto.get("confianza"),
+                "prorroga_explicacion": prorroga_auto.get("explicacion"),
+                "prorroga_caso_original": prorroga_auto.get("caso_original_serial"),
                 "numero_incapacidad": c.numero_incapacidad,
                 "medico_tratante": c.medico_tratante,
                 "institucion_origen": c.institucion_origen,
@@ -446,6 +470,22 @@ async def get_dashboard_completo(
             codigos_cie10 = list(set(c.codigo_cie10 for c in casos_persona if c.codigo_cie10))
             prorrogas = sum(1 for c in casos_persona if c.es_prorroga)
             
+            # ⭐ Análisis CIE-10 de historial completo
+            analisis_cie10 = None
+            alertas_180 = []
+            try:
+                analisis_cie10 = analizar_historial_empleado(db, cedula)
+                alertas_180 = analisis_cie10.get("alertas_180", [])
+                # Usar prórrogas detectadas por CIE-10 si son más que las de BD
+                prorrogas_auto = sum(
+                    len(c.get("prorrogas", []))
+                    for c in analisis_cie10.get("cadenas_prorroga", [])
+                )
+                if prorrogas_auto > prorrogas:
+                    prorrogas = prorrogas_auto
+            except Exception:
+                pass
+            
             # Desglose por mes
             por_mes = defaultdict(int)
             for c in casos_persona:
@@ -470,6 +510,13 @@ async def get_dashboard_completo(
                 "es_reincidente": len(casos_persona) >= 3,
                 "primera_fecha": min(c.created_at for c in casos_persona if c.created_at).isoformat() if any(c.created_at for c in casos_persona) else None,
                 "ultima_fecha": max(c.created_at for c in casos_persona if c.created_at).isoformat() if any(c.created_at for c in casos_persona) else None,
+                # ⭐ Campos nuevos CIE-10
+                "alertas_180": alertas_180,
+                "tiene_alerta_180": len(alertas_180) > 0,
+                "max_cadena_dias": analisis_cie10["resumen"]["cadena_mas_larga_dias"] if analisis_cie10 else 0,
+                "cadenas_prorroga": analisis_cie10["resumen"]["cadenas_con_prorroga"] if analisis_cie10 else 0,
+                "cerca_limite_180": analisis_cie10["resumen"].get("cerca_limite_180", False) if analisis_cie10 else False,
+                "supero_180": analisis_cie10["resumen"].get("supero_180", False) if analisis_cie10 else False,
             })
         
         # Ordenar por más incapacidades primero
@@ -492,6 +539,13 @@ async def get_dashboard_completo(
                 "dias_promedio_portal": round(sum(r["dias_en_portal"] for r in casos_estado) / len(casos_estado), 1) if casos_estado else 0,
             })
         
+        # ═══ 6. ALERTAS 180 DÍAS GLOBALES ═══
+        alertas_180_global = []
+        for f in frecuencia:
+            if f.get("alertas_180"):
+                alertas_180_global.extend(f["alertas_180"])
+        alertas_180_global.sort(key=lambda x: {"critica": 0, "alta": 1, "media": 2}.get(x.get("severidad", ""), 3))
+        
         return {
             "ok": True,
             "periodo": periodo,
@@ -504,6 +558,7 @@ async def get_dashboard_completo(
             "incompletas": incompletas,
             "frecuencia": frecuencia,
             "indicadores": indicadores,
+            "alertas_180": alertas_180_global,
         }
     
     except Exception as e:
