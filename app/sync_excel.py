@@ -7,7 +7,7 @@ import os
 import pandas as pd
 import requests
 from datetime import datetime
-from app.database import SessionLocal, Employee, Company, Case
+from app.database import SessionLocal, Employee, Company, Case, CorreoNotificacion
 from io import BytesIO
 
 GOOGLE_DRIVE_FILE_ID = "1POt2ytSN61XbSpXUSUPyHdOVy2g7CRas"
@@ -381,6 +381,95 @@ def sincronizar_excel_completo():
                 print(f"   ℹ️ Hoja 3 (Cases_Kactus) no existe aún, omitiendo...")
             else:
                 print(f"   ⚠️ Error leyendo Cases_Kactus: {e}")
+        
+        # ========== PASO 4: SYNC CORREOS NOTIFICACIÓN (Hoja 4) ==========
+        try:
+            df_correos = None
+            nombres_posibles_h4 = ['Correos', 'Hoja 4', 'Notificaciones', 'Correos_Notificacion', 'Sheet4', 'Hoja4']
+            
+            for nombre_hoja in nombres_posibles_h4:
+                try:
+                    df_correos = pd.read_excel(excel_path, sheet_name=nombre_hoja)
+                    print(f"\n📧 PASO 4: Sincronizando Correos Notificación ('{nombre_hoja}', {len(df_correos)} filas)...")
+                    break
+                except:
+                    continue
+            
+            # También intentar por índice (Hoja 4 = index 3)
+            if df_correos is None:
+                try:
+                    df_correos = pd.read_excel(excel_path, sheet_name=3)
+                    print(f"\n📧 PASO 4: Sincronizando Correos Notificación (Hoja 4, {len(df_correos)} filas)...")
+                except:
+                    pass
+            
+            if df_correos is not None and len(df_correos) > 0:
+                # Validar columnas mínimas
+                if 'area' not in df_correos.columns or 'email' not in df_correos.columns:
+                    print(f"   ⚠️ Hoja 4 no tiene columnas 'area' y 'email'. Omitiendo...")
+                else:
+                    # SYNC EXACTO: Borrar todos y recrear desde el Excel
+                    eliminados_correos = db.query(CorreoNotificacion).delete()
+                    db.commit()
+                    if eliminados_correos > 0:
+                        print(f"   🗑️ {eliminados_correos} correos anteriores eliminados")
+                    
+                    correos_nuevos = 0
+                    for _, row in df_correos.iterrows():
+                        try:
+                            area_raw = row.get('area')
+                            email_raw = row.get('email')
+                            
+                            if pd.isna(area_raw) or pd.isna(email_raw):
+                                continue
+                            
+                            area = str(area_raw).strip().lower().replace(' ', '_')
+                            email = str(email_raw).strip()
+                            nombre_contacto = str(row.get('nombre_contacto', '')).strip() if pd.notna(row.get('nombre_contacto')) else None
+                            empresa_nombre = str(row.get('empresa', '')).strip() if pd.notna(row.get('empresa')) else None
+                            activo_raw = row.get('activo', True)
+                            activo = True
+                            if pd.notna(activo_raw):
+                                val = str(activo_raw).strip().upper()
+                                activo = val not in ('NO', 'FALSE', '0', 'INACTIVO')
+                            
+                            # Buscar empresa si se especificó
+                            company_id = None
+                            if empresa_nombre:
+                                company = db.query(Company).filter(Company.nombre == empresa_nombre).first()
+                                if company:
+                                    company_id = company.id
+                            
+                            nuevo_correo = CorreoNotificacion(
+                                area=area,
+                                nombre_contacto=nombre_contacto,
+                                email=email,
+                                company_id=company_id,
+                                activo=activo
+                            )
+                            db.add(nuevo_correo)
+                            db.commit()
+                            correos_nuevos += 1
+                        except Exception as e:
+                            print(f"   ❌ Error en correo row: {e}")
+                            db.rollback()
+                    
+                    print(f"   ✅ {correos_nuevos} correos de notificación sincronizados")
+                    
+                    # Resumen por área
+                    areas_count = {}
+                    for _, row in df_correos.iterrows():
+                        if pd.notna(row.get('area')):
+                            a = str(row['area']).strip().lower().replace(' ', '_')
+                            areas_count[a] = areas_count.get(a, 0) + 1
+                    for a, c in areas_count.items():
+                        print(f"      • {a}: {c} correos")
+            else:
+                print(f"   ℹ️ Hoja 4 (Correos) no existe aún, omitiendo...")
+        
+        except Exception as e:
+            print(f"   ⚠️ Error leyendo Hoja 4 (Correos): {e}")
+        
         
     except Exception as e:
         print(f"\n❌ ERROR GENERAL EN SYNC: {e}")

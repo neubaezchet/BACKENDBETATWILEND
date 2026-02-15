@@ -13,7 +13,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import logging
 
-from app.database import get_db, AlertaEmail, Alerta180Log, Company, Employee
+from app.database import get_db, AlertaEmail, Alerta180Log, Company, Employee, CorreoNotificacion
 
 logger = logging.getLogger(__name__)
 
@@ -258,4 +258,66 @@ async def listar_empresas(db: Session = Depends(get_db)):
             })
         return {"ok": True, "empresas": resultado}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════
+# CORREOS DE NOTIFICACIÓN (Hoja 4 Excel - solo lectura)
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/correos-notificacion")
+async def listar_correos_notificacion(
+    area: str = Query("all"),
+    empresa: str = Query("all"),
+    db: Session = Depends(get_db)
+):
+    """📧 Lista correos de notificación sincronizados desde Hoja 4 del Excel"""
+    try:
+        query = db.query(CorreoNotificacion)
+        
+        if area != "all":
+            query = query.filter(CorreoNotificacion.area == area)
+        
+        if empresa != "all":
+            company = db.query(Company).filter(Company.nombre == empresa).first()
+            if company:
+                query = query.filter(
+                    (CorreoNotificacion.company_id == company.id) |
+                    (CorreoNotificacion.company_id.is_(None))
+                )
+        
+        correos = query.order_by(CorreoNotificacion.area, CorreoNotificacion.nombre_contacto).all()
+        
+        resultado = []
+        for c in correos:
+            resultado.append({
+                "id": c.id,
+                "area": c.area,
+                "nombre_contacto": c.nombre_contacto,
+                "email": c.email,
+                "empresa": c.empresa.nombre if c.empresa else "Todas (Global)",
+                "company_id": c.company_id,
+                "activo": c.activo,
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            })
+        
+        # Resumen por área
+        areas_resumen = {}
+        for c in resultado:
+            a = c["area"]
+            if a not in areas_resumen:
+                areas_resumen[a] = {"total": 0, "activos": 0}
+            areas_resumen[a]["total"] += 1
+            if c["activo"]:
+                areas_resumen[a]["activos"] += 1
+        
+        return {
+            "ok": True,
+            "total": len(resultado),
+            "por_area": areas_resumen,
+            "correos": resultado,
+            "nota": "Estos correos se sincronizan automáticamente desde la Hoja 4 del Excel"
+        }
+    except Exception as e:
+        logger.error(f"Error listar correos notificación: {e}")
         raise HTTPException(status_code=500, detail=str(e))

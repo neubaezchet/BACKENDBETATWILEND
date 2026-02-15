@@ -235,6 +235,35 @@ class SearchHistory(Base):
     created_at = Column(DateTime, default=get_utc_now, index=True)
 
 
+# ==================== CORREOS DE NOTIFICACIÓN POR ÁREA ====================
+
+class CorreoNotificacion(Base):
+    """
+    Correos de notificación por área/departamento.
+    Se sincroniza automáticamente desde la Hoja 4 del Excel.
+    
+    Áreas soportadas:
+    - talento_humano: Correos de Talento Humano
+    - seguridad_salud: Correos de Seguridad y Salud en el Trabajo (SST)
+    - nomina: Correos de Nómina
+    - incapacidades: Correos del área de Incapacidades
+    """
+    __tablename__ = 'correos_notificacion'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    area = Column(String(50), nullable=False, index=True)  # talento_humano | seguridad_salud | nomina | incapacidades
+    nombre_contacto = Column(String(200))
+    email = Column(String(300), nullable=False)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=True)
+    activo = Column(Boolean, default=True)
+    
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    
+    # Relación opcional con empresa (NULL = aplica a todas las empresas)
+    empresa = relationship("Company", backref="correos_notificacion")
+
+
 # ==================== MODELOS CIE-10 / ALERTAS 180 ====================
 
 class AlertaEmail(Base):
