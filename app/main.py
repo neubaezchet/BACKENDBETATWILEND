@@ -30,6 +30,7 @@ from app.database import CaseEvent
 
 # ⭐ AGREGAR ESTO - Reportes y Scheduler
 from app.routes.reportes import router as reportes_router
+from app.routes.cie10 import router as cie10_router
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ==================== FUNCIÓN: DOCUMENTOS REQUERIDOS ====================
@@ -90,6 +91,9 @@ app.add_middleware(
 
 # ⭐ AGREGAR ESTO - Router de reportes
 app.include_router(reportes_router)
+
+# ⭐ CIE-10 - Motor de diagnósticos y detección de prórrogas
+app.include_router(cie10_router)
 
 app.include_router(validador_router)
 
