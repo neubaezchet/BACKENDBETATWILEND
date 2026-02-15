@@ -514,9 +514,14 @@ async def get_dashboard_completo(
                 "alertas_180": alertas_180,
                 "tiene_alerta_180": len(alertas_180) > 0,
                 "max_cadena_dias": analisis_cie10["resumen"]["cadena_mas_larga_dias"] if analisis_cie10 else 0,
+                "dias_prorroga": analisis_cie10.get("dias_prorroga", analisis_cie10["resumen"].get("dias_prorroga", 0)) if analisis_cie10 else 0,
                 "cadenas_prorroga": analisis_cie10["resumen"]["cadenas_con_prorroga"] if analisis_cie10 else 0,
                 "cerca_limite_180": analisis_cie10["resumen"].get("cerca_limite_180", False) if analisis_cie10 else False,
                 "supero_180": analisis_cie10["resumen"].get("supero_180", False) if analisis_cie10 else False,
+                # ⭐ Huecos (prórrogas cortadas)
+                "huecos_detectados": len(analisis_cie10.get("huecos_detectados", [])) if analisis_cie10 else 0,
+                "tiene_huecos": len(analisis_cie10.get("huecos_detectados", [])) > 0 if analisis_cie10 else False,
+                "huecos_info": analisis_cie10["resumen"].get("huecos_info", []) if analisis_cie10 else [],
             })
         
         # Ordenar por más incapacidades primero

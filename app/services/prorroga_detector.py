@@ -1,9 +1,16 @@
 """
-DETECTOR DE PRÓRROGAS - Motor inteligente de análisis
-=====================================================
+DETECTOR DE PRÓRROGAS v2 — Motor con detección de huecos
+=========================================================
 Analiza el historial de incapacidades de un empleado,
 detecta prórrogas automáticamente por correlación CIE-10,
-cuenta días acumulados y alerta al acercarse a 180 días.
+cuenta días acumulados, detecta huecos en cadenas de prórroga,
+y alerta al acercarse a 180 días.
+
+REGLA DE CORTE 30 DÍAS:
+- Si pasan 30+ días sin nueva incapacidad → la cadena de prórroga se CORTA
+- El sistema registra el hueco y alerta a Talento Humano
+- Si el empleado envía después un certificado que llena el hueco → llenado retroactivo
+- Se calcula "días en incapacidad" (total) vs "días en prórroga" (cadena activa)
 
 Normativa colombiana aplicable:
 - Ley 776/2002 Art. 3: Incapacidad temporal hasta 180 días calendario
@@ -37,10 +44,8 @@ LIMITE_DIAS_PENSION = 540       # Límite máximo con concepto favorable
 ALERTA_TEMPRANA_DIAS = 150      # Alertar a los 150 días
 ALERTA_CRITICA_DIAS = 170      # Alerta crítica a los 170 días
 
-# Ventanas temporales para considerar prórroga
-VENTANA_PRORROGA_ALTA = 30     # ≤30 días entre incapacidades → alta probabilidad de prórroga
-VENTANA_PRORROGA_MEDIA = 90    # 31-90 días → posible prórroga
-VENTANA_PRORROGA_BAJA = 180    # 91-180 días → baja probabilidad pero posible en crónicos
+# Ventana de corte: >30 días sin incapacidad CORTA la cadena de prórroga
+VENTANA_CORTE_PRORROGA = 30    # Máximo días de brecha para mantener cadena activa
 
 
 # ═══════════════════════════════════════════════════════════
@@ -84,11 +89,20 @@ def analizar_historial_empleado(db: Session, cedula: str) -> dict:
     # Detectar cadenas de prórroga
     cadenas = _detectar_cadenas_prorroga(casos)
     
-    # Generar alertas
-    alertas = _generar_alertas_180(cadenas, cedula, nombre)
+    # Detectar huecos entre cadenas (prórrogas cortadas por >30d sin incapacidad)
+    huecos = _detectar_huecos_entre_cadenas(cadenas, casos)
+    
+    # Generar alertas (incluye huecos/prórrogas cortadas)
+    alertas = _generar_alertas_180(cadenas, cedula, nombre, huecos)
     
     # Calcular totales
     dias_total = sum(c.dias_incapacidad or 0 for c in casos)
+    
+    # Días en prórroga = cadena activa más larga (solo cadenas con prórrogas)
+    dias_prorroga = max(
+        (c["dias_acumulados"] for c in cadenas if c["es_cadena_prorroga"]),
+        default=0
+    )
     
     return {
         "cedula": cedula,
@@ -96,8 +110,10 @@ def analizar_historial_empleado(db: Session, cedula: str) -> dict:
         "total_incapacidades": len(casos),
         "cadenas_prorroga": cadenas,
         "dias_acumulados_total": dias_total,
+        "dias_prorroga": dias_prorroga,
+        "huecos_detectados": huecos,
         "alertas_180": alertas,
-        "resumen": _generar_resumen(cadenas, alertas, dias_total)
+        "resumen": _generar_resumen(cadenas, alertas, dias_total, huecos)
     }
 
 
@@ -215,19 +231,17 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
         resultado_base["explicacion"] = f"Incapacidades traslapadas ({brecha} días)"
         return resultado_base
     
-    if brecha > VENTANA_PRORROGA_BAJA:
-        resultado_base["explicacion"] = f"Brecha de {brecha} días excede la ventana de prórroga ({VENTANA_PRORROGA_BAJA}d)"
+    if brecha > VENTANA_CORTE_PRORROGA:
+        resultado_base["explicacion"] = f"Brecha de {brecha} días — CADENA CORTADA (regla >30d sin incapacidad)"
         return resultado_base
     
-    # Determinar confianza temporal
+    # Determinar confianza temporal (dentro de los 30 días máx)
     if brecha <= 1:
         confianza_temporal = "alta"  # Continuidad directa (consecutivo o al día siguiente)
-    elif brecha <= VENTANA_PRORROGA_ALTA:
+    elif brecha <= 15:
         confianza_temporal = "alta"
-    elif brecha <= VENTANA_PRORROGA_MEDIA:
-        confianza_temporal = "media"
     else:
-        confianza_temporal = "baja"
+        confianza_temporal = "media"  # 16-30 días
     
     # Verificar correlación de diagnósticos
     codigo_anterior = caso_anterior.codigo_cie10 or ""
@@ -236,7 +250,7 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
     # Si no hay códigos CIE-10, usar diagnóstico textual como fallback
     if not codigo_anterior and not codigo_nuevo:
         # Sin códigos, solo la temporalidad con baja confianza
-        if confianza_temporal in ("alta", "media") and brecha <= VENTANA_PRORROGA_ALTA:
+        if confianza_temporal in ("alta", "media") and brecha <= VENTANA_CORTE_PRORROGA:
             return {
                 "es_prorroga": True,
                 "tipo": "temporal_sin_cie10",
@@ -300,8 +314,104 @@ def _combinar_confianzas(temporal: str, diagnostica: str) -> str:
     return "ninguna"
 
 
-def _generar_alertas_180(cadenas: List[dict], cedula: str, nombre: str) -> List[dict]:
-    """Genera alertas cuando las cadenas se acercan a 180 días"""
+def _detectar_huecos_entre_cadenas(cadenas: List[dict], casos: List[Case]) -> List[dict]:
+    """
+    Detecta huecos entre cadenas de prórroga con diagnósticos correlacionados.
+    
+    Un hueco ocurre cuando:
+    - Dos cadenas tienen diagnósticos correlacionados (CIE-10)
+    - Pero la brecha entre ellas es > 30 días
+    - Esto indica que la prórroga se cortó y TH debe investigar
+    
+    LLENADO RETROACTIVO: Si un empleado envía después un certificado
+    que cubre el hueco, al re-analizar las cadenas se reconectan
+    automáticamente (el hueco desaparece).
+    """
+    if len(cadenas) < 2:
+        return []
+    
+    huecos = []
+    
+    # Ordenar cadenas por fecha de inicio
+    cadenas_ordenadas = sorted(
+        [c for c in cadenas if c.get("fecha_inicio_cadena")],
+        key=lambda c: c["fecha_inicio_cadena"]
+    )
+    
+    for i in range(len(cadenas_ordenadas) - 1):
+        cadena_a = cadenas_ordenadas[i]
+        cadena_b = cadenas_ordenadas[i + 1]
+        
+        # Parsear fechas
+        try:
+            fin_a_str = cadena_a.get("fecha_fin_cadena")
+            inicio_b_str = cadena_b.get("fecha_inicio_cadena")
+            if not fin_a_str or not inicio_b_str:
+                continue
+            fin_a = datetime.fromisoformat(fin_a_str).date() if isinstance(fin_a_str, str) else fin_a_str
+            inicio_b = datetime.fromisoformat(inicio_b_str).date() if isinstance(inicio_b_str, str) else inicio_b_str
+        except (ValueError, TypeError):
+            continue
+        
+        brecha = (inicio_b - fin_a).days
+        
+        # Solo nos interesa si la brecha es > 30 días
+        if brecha <= VENTANA_CORTE_PRORROGA:
+            continue
+        
+        # Verificar si los diagnósticos están correlacionados
+        codigos_a = set(cadena_a.get("codigos_cie10", []))
+        codigos_b = set(cadena_b.get("codigos_cie10", []))
+        
+        hay_correlacion = False
+        explicacion_correlacion = ""
+        
+        # Mismo código = correlación directa
+        if codigos_a & codigos_b:
+            hay_correlacion = True
+            codigos_comunes = codigos_a & codigos_b
+            explicacion_correlacion = f"Mismo código CIE-10: {', '.join(codigos_comunes)}"
+        else:
+            # Verificar correlación cruzada
+            for cod_a in codigos_a:
+                for cod_b in codigos_b:
+                    if cod_a and cod_b:
+                        resultado = son_correlacionados(cod_a, cod_b)
+                        if resultado["correlacionados"]:
+                            hay_correlacion = True
+                            explicacion_correlacion = resultado["explicacion"]
+                            break
+                if hay_correlacion:
+                    break
+        
+        if hay_correlacion:
+            # Calcular días acumulados si se juntaran ambas cadenas
+            dias_potenciales = cadena_a["dias_acumulados"] + cadena_b["dias_acumulados"]
+            
+            huecos.append({
+                "cadena_antes_id": cadena_a["id_cadena"],
+                "cadena_despues_id": cadena_b["id_cadena"],
+                "fecha_fin_cadena_antes": str(fin_a),
+                "fecha_inicio_cadena_despues": str(inicio_b),
+                "dias_hueco": brecha,
+                "codigos_antes": sorted(codigos_a),
+                "codigos_despues": sorted(codigos_b),
+                "correlacion": explicacion_correlacion,
+                "dias_cadena_antes": cadena_a["dias_acumulados"],
+                "dias_cadena_despues": cadena_b["dias_acumulados"],
+                "dias_potenciales_sin_corte": dias_potenciales,
+                "mensaje": (
+                    f"⚠️ Prórroga CORTADA: {brecha} días sin incapacidad entre cadenas "
+                    f"correlacionadas ({', '.join(codigos_a)} → {', '.join(codigos_b)}). "
+                    f"Si se juntaran serían {dias_potenciales}d. Verificar por qué se interrumpió."
+                ),
+            })
+    
+    return huecos
+
+
+def _generar_alertas_180(cadenas: List[dict], cedula: str, nombre: str, huecos: List[dict] = None) -> List[dict]:
+    """Genera alertas cuando las cadenas se acercan a 180 días o se detectan huecos"""
     alertas = []
     
     for cadena in cadenas:
@@ -342,19 +452,40 @@ def _generar_alertas_180(cadenas: List[dict], cedula: str, nombre: str) -> List[
                 "codigos_involucrados": cadena["codigos_cie10"],
             })
     
+    # ⭐ Alertas de prórroga cortada por huecos (>30 días sin incapacidad)
+    if huecos:
+        for hueco in huecos:
+            alertas.append({
+                "tipo": "PRORROGA_CORTADA",
+                "severidad": "alta",
+                "dias_acumulados": hueco["dias_potenciales_sin_corte"],
+                "dias_hueco": hueco["dias_hueco"],
+                "fecha_corte": hueco["fecha_fin_cadena_antes"],
+                "mensaje": (
+                    f"⚠️ {nombre} ({cedula}): Prórroga CORTADA — {hueco['dias_hueco']} días sin incapacidad. "
+                    f"Cadena anterior: {hueco['dias_cadena_antes']}d, cadena nueva: {hueco['dias_cadena_despues']}d. "
+                    f"Si se juntaran serían {hueco['dias_potenciales_sin_corte']}d. "
+                    f"TH debe verificar por qué se interrumpió la cadena."
+                ),
+                "normativa": "Prórroga se interrumpe tras 30+ días sin incapacidad — Verificar si el empleado tiene certificados pendientes por radicar",
+                "codigos_involucrados": hueco["codigos_antes"] + hueco["codigos_despues"],
+            })
+    
     return alertas
 
 
-def _generar_resumen(cadenas: List[dict], alertas: List[dict], dias_total: int) -> dict:
-    """Genera resumen del análisis"""
+def _generar_resumen(cadenas: List[dict], alertas: List[dict], dias_total: int, huecos: List[dict] = None) -> dict:
+    """Genera resumen del análisis incluyendo huecos detectados"""
     cadenas_con_prorroga = [c for c in cadenas if c["es_cadena_prorroga"]]
     max_cadena = max((c["dias_acumulados"] for c in cadenas), default=0)
+    huecos = huecos or []
     
     return {
         "total_cadenas": len(cadenas),
         "cadenas_con_prorroga": len(cadenas_con_prorroga),
         "incapacidades_aisladas": len([c for c in cadenas if not c["es_cadena_prorroga"]]),
         "dias_totales": dias_total,
+        "dias_prorroga": max_cadena,
         "cadena_mas_larga_dias": max_cadena,
         "tiene_alertas": len(alertas) > 0,
         "alertas_criticas": len([a for a in alertas if a["severidad"] == "critica"]),
@@ -362,6 +493,17 @@ def _generar_resumen(cadenas: List[dict], alertas: List[dict], dias_total: int) 
         "alertas_medias": len([a for a in alertas if a["severidad"] == "media"]),
         "cerca_limite_180": max_cadena >= ALERTA_TEMPRANA_DIAS,
         "supero_180": max_cadena >= LIMITE_DIAS_EPS,
+        # Huecos (prórrogas cortadas)
+        "total_huecos": len(huecos),
+        "tiene_huecos": len(huecos) > 0,
+        "huecos_info": [
+            {
+                "dias_hueco": h["dias_hueco"],
+                "dias_potenciales": h["dias_potenciales_sin_corte"],
+                "fecha_corte": h["fecha_fin_cadena_antes"],
+            }
+            for h in huecos
+        ],
     }
 
 
@@ -424,9 +566,12 @@ def analisis_masivo_prorrogas(db: Session, empresa: str = "all") -> dict:
                 "nombre": analisis.get("nombre", cedula),
                 "total_incapacidades": analisis["total_incapacidades"],
                 "dias_acumulados": analisis["dias_acumulados_total"],
+                "dias_prorroga": analisis.get("dias_prorroga", 0),
                 "cadenas_prorroga": len([c for c in analisis["cadenas_prorroga"] if c["es_cadena_prorroga"]]),
                 "max_cadena_dias": max((c["dias_acumulados"] for c in analisis["cadenas_prorroga"]), default=0),
                 "tiene_alertas": len(analisis["alertas_180"]) > 0,
+                "huecos_detectados": len(analisis.get("huecos_detectados", [])),
+                "tiene_huecos": len(analisis.get("huecos_detectados", [])) > 0,
                 "resumen": analisis["resumen"],
             })
         
