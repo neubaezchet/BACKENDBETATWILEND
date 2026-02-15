@@ -87,6 +87,14 @@ class Employee(Base):
     jefe_cargo = Column(String(100))
     area_trabajo = Column(String(100))
     
+    # ✅ COLUMNAS KACTUS - Datos adicionales del empleado
+    cargo = Column(String(150))
+    centro_costo = Column(String(100))
+    fecha_ingreso = Column(DateTime, nullable=True)
+    tipo_contrato = Column(String(50))
+    dias_kactus = Column(Integer, nullable=True)
+    ciudad = Column(String(100))
+    
     created_at = Column(DateTime, default=get_utc_now)
     updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     
@@ -128,6 +136,14 @@ class Case(Base):
     # ✅ NUEVAS COLUMNAS - Sistema de recordatorios
     recordatorio_enviado = Column(Boolean, default=False)
     fecha_recordatorio = Column(DateTime, nullable=True)
+    
+    # ✅ COLUMNAS KACTUS - Datos de Kactus / validación
+    codigo_cie10 = Column(String(20))
+    dias_kactus = Column(Integer, nullable=True)
+    es_prorroga = Column(Boolean, default=False)
+    numero_incapacidad = Column(String(50))
+    medico_tratante = Column(String(200))
+    institucion_origen = Column(String(200))
     
     # Auditoría
     created_at = Column(DateTime, default=get_utc_now, index=True)

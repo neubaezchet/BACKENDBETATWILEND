@@ -209,6 +209,33 @@ def startup_event():
     init_db()
     print("🚀 API iniciada")
     
+    # ⭐ AUTO-MIGRACIÓN: Agregar columnas nuevas si no existen
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            migraciones = [
+                # Employees - Kactus
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS cargo VARCHAR(150);",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS centro_costo VARCHAR(100);",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS fecha_ingreso TIMESTAMP;",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS tipo_contrato VARCHAR(50);",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS dias_kactus INTEGER;",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS ciudad VARCHAR(100);",
+                # Cases - Kactus
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS codigo_cie10 VARCHAR(20);",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS dias_kactus INTEGER;",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS es_prorroga BOOLEAN DEFAULT FALSE;",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS numero_incapacidad VARCHAR(50);",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS medico_tratante VARCHAR(200);",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS institucion_origen VARCHAR(200);"
+            ]
+            for sql in migraciones:
+                conn.execute(text(sql))
+            conn.commit()
+        print("✅ Auto-migración completada (12 columnas verificadas)")
+    except Exception as e:
+        print(f"⚠️ Auto-migración: {e}")
+    
     # ⭐ AGREGAR - Scheduler de tabla viva
     try:
         iniciar_scheduler()
