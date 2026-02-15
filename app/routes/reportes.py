@@ -241,11 +241,18 @@ async def health_check(db: Session = Depends(get_db)):
 # ============================================================
 # 5️⃣ ENDPOINT: DASHBOARD COMPLETO 2026
 # ============================================================
-def _calcular_fechas_periodo(periodo: str):
+def _calcular_fechas_periodo(periodo: str, fecha_desde: str = None, fecha_hasta: str = None):
     """Calcula fechas inicio/fin según período"""
     import calendar
     hoy = datetime.now()
-    if periodo == "mes_actual":
+    if periodo == "personalizado" and fecha_desde and fecha_hasta:
+        try:
+            inicio = datetime.strptime(fecha_desde, "%Y-%m-%d")
+            fin = datetime.strptime(fecha_hasta, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            return inicio, fin
+        except ValueError:
+            return datetime(hoy.year, hoy.month, 1), hoy
+    elif periodo == "mes_actual":
         return datetime(hoy.year, hoy.month, 1), hoy
     elif periodo == "mes_anterior":
         primer_dia = datetime(hoy.year, hoy.month, 1)
@@ -260,6 +267,8 @@ def _calcular_fechas_periodo(periodo: str):
         return datetime(hoy.year, 1, 1), hoy
     elif periodo == "ultimos_90":
         return hoy - timedelta(days=90), hoy
+    elif periodo == "todo":
+        return datetime(2020, 1, 1), hoy
     else:
         return datetime(hoy.year, hoy.month, 1), hoy
 
@@ -268,6 +277,8 @@ def _calcular_fechas_periodo(periodo: str):
 async def get_dashboard_completo(
     empresa: str = Query("all"),
     periodo: str = Query("mes_actual"),
+    fecha_desde: str = Query(None, description="Fecha inicio YYYY-MM-DD (solo si periodo=personalizado)"),
+    fecha_hasta: str = Query(None, description="Fecha fin YYYY-MM-DD (solo si periodo=personalizado)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -281,7 +292,7 @@ async def get_dashboard_completo(
     - Días en portal de validación
     """
     try:
-        fecha_inicio, fecha_fin = _calcular_fechas_periodo(periodo)
+        fecha_inicio, fecha_fin = _calcular_fechas_periodo(periodo, fecha_desde, fecha_hasta)
         
         # Query base con joins
         query = db.query(Case).options(
