@@ -31,6 +31,7 @@ from app.database import CaseEvent
 # ⭐ AGREGAR ESTO - Reportes y Scheduler
 from app.routes.reportes import router as reportes_router
 from app.routes.cie10 import router as cie10_router
+from app.routes.alertas import router as alertas_router
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ==================== FUNCIÓN: DOCUMENTOS REQUERIDOS ====================
@@ -94,6 +95,9 @@ app.include_router(reportes_router)
 
 # ⭐ CIE-10 - Motor de diagnósticos y detección de prórrogas
 app.include_router(cie10_router)
+
+# ⭐ Alertas 180 días - Emails a Talento Humano
+app.include_router(alertas_router)
 
 app.include_router(validador_router)
 
@@ -237,6 +241,41 @@ def startup_event():
                 conn.execute(text(sql))
             conn.commit()
         print("✅ Auto-migración completada (12 columnas verificadas)")
+        
+        # ⭐ AUTO-MIGRACIÓN: Tablas CIE-10 / Alertas 180 días
+        with engine.connect() as conn:
+            tablas_cie10 = [
+                """CREATE TABLE IF NOT EXISTS alerta_emails (
+                    id SERIAL PRIMARY KEY,
+                    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+                    email VARCHAR(300) NOT NULL,
+                    nombre_contacto VARCHAR(200),
+                    tipo VARCHAR(50) DEFAULT 'talento_humano',
+                    activo BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );""",
+                """CREATE TABLE IF NOT EXISTS alertas_180_log (
+                    id SERIAL PRIMARY KEY,
+                    cedula VARCHAR(30) NOT NULL,
+                    tipo_alerta VARCHAR(50) NOT NULL,
+                    dias_acumulados INTEGER,
+                    cadena_codigos_cie10 VARCHAR(500),
+                    emails_enviados TEXT,
+                    enviado_ok BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );""",
+                "CREATE INDEX IF NOT EXISTS idx_alerta_emails_company ON alerta_emails(company_id);",
+                "CREATE INDEX IF NOT EXISTS idx_alertas_180_log_cedula ON alertas_180_log(cedula);",
+                "CREATE INDEX IF NOT EXISTS idx_alertas_180_log_created ON alertas_180_log(created_at);",
+            ]
+            for sql in tablas_cie10:
+                try:
+                    conn.execute(text(sql))
+                except Exception:
+                    pass
+            conn.commit()
+        print("✅ Tablas CIE-10/Alertas inicializadas")
     except Exception as e:
         print(f"⚠️ Auto-migración: {e}")
     
@@ -267,6 +306,28 @@ def startup_event():
         print("✅ Sistema de auto-renovación de token activado")
     except Exception as e:
         print(f"⚠️ Error iniciando scheduler token: {e}")
+    
+    # ⭐ Scheduler de alertas 180 días (diario a las 7am)
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from app.services.alerta_180_service import ejecutar_revision_alertas
+        from app.database import SessionLocal
+        
+        def _revision_diaria_180():
+            try:
+                db = SessionLocal()
+                resultado = ejecutar_revision_alertas(db, "all")
+                print(f"📧 Revisión 180 días: {resultado['alertas_enviadas']} alertas enviadas, {resultado['alertas_omitidas']} omitidas")
+                db.close()
+            except Exception as e:
+                print(f"⚠️ Error revisión 180 días: {e}")
+        
+        scheduler_180 = BackgroundScheduler()
+        scheduler_180.add_job(_revision_diaria_180, 'cron', hour=7, minute=0, id='alerta_180_diaria')
+        scheduler_180.start()
+        print("✅ Alertas 180 días programadas (diario 7:00 AM)")
+    except Exception as e:
+        print(f"⚠️ Error iniciando scheduler alertas 180: {e}")
 
 @app.on_event("shutdown")
 def shutdown_event():

@@ -234,6 +234,52 @@ class SearchHistory(Base):
     
     created_at = Column(DateTime, default=get_utc_now, index=True)
 
+
+# ==================== MODELOS CIE-10 / ALERTAS 180 ====================
+
+class AlertaEmail(Base):
+    """
+    Correos para recibir alertas de 180 días por empresa.
+    Permite configurar múltiples destinatarios por cada compañía.
+    
+    Tipos:
+    - talento_humano: correo principal de TTHH de la empresa
+    - adicional: correos extra que el admin quiera agregar
+    """
+    __tablename__ = 'alerta_emails'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=True)
+    
+    email = Column(String(300), nullable=False)
+    nombre_contacto = Column(String(200))
+    tipo = Column(String(50), default='talento_humano')  # talento_humano | adicional | admin
+    activo = Column(Boolean, default=True)
+    
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    
+    # Relación opcional con empresa (NULL = alerta global para todas las empresas)
+    empresa = relationship("Company", backref="alerta_emails")
+
+
+class Alerta180Log(Base):
+    """
+    Log de alertas 180 días enviadas.
+    Evita enviar la misma alerta repetidamente.
+    """
+    __tablename__ = 'alertas_180_log'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cedula = Column(String(30), nullable=False, index=True)
+    tipo_alerta = Column(String(50), nullable=False)        # ALERTA_TEMPRANA | ALERTA_CRITICA | LIMITE_180_SUPERADO
+    dias_acumulados = Column(Integer)
+    cadena_codigos_cie10 = Column(String(500))               # Códigos involucrados
+    emails_enviados = Column(Text)                           # Lista de correos notificados
+    
+    enviado_ok = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=get_utc_now, index=True)
+
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
 
 def get_database_url():
