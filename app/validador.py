@@ -835,10 +835,11 @@ async def exportar_casos(
     estado: Optional[str] = None,
     desde: Optional[str] = None,
     hasta: Optional[str] = None,
+    q: Optional[str] = None,
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
-    """Exportar casos a Excel"""
+    """Exportar casos a Excel — respeta TODOS los filtros activos"""
     
     query = db.query(Case).join(Employee, Case.employee_id == Employee.id, isouter=True)
     
@@ -850,13 +851,27 @@ async def exportar_casos(
     if estado and estado != "all":
         query = query.filter(Case.estado == estado)
     
+    if q and q.strip():
+        busqueda = f"%{q.strip()}%"
+        query = query.filter(
+            (Case.serial.ilike(busqueda)) |
+            (Case.cedula.ilike(busqueda)) |
+            (Employee.nombre.ilike(busqueda))
+        )
+    
     if desde:
-        fecha_desde = datetime.fromisoformat(desde)
-        query = query.filter(Case.created_at >= fecha_desde)
+        try:
+            fecha_desde = datetime.fromisoformat(desde)
+            query = query.filter(Case.created_at >= fecha_desde)
+        except ValueError:
+            pass
     
     if hasta:
-        fecha_hasta = datetime.fromisoformat(hasta)
-        query = query.filter(Case.created_at <= fecha_hasta)
+        try:
+            fecha_hasta = datetime.fromisoformat(hasta)
+            query = query.filter(Case.created_at <= fecha_hasta)
+        except ValueError:
+            pass
     
     casos = query.all()
     
