@@ -925,6 +925,257 @@ async def exportar_casos(
     else:
         raise HTTPException(status_code=400, detail="Formato no soportado. Use 'xlsx' o 'csv'")
 
+
+# ═══════════════════════════════════════════════════════════
+# EXPORTACIÓN MASIVA DE PDFs EN ZIP
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/exportar/zip")
+async def exportar_casos_zip(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    📦 Exporta PDFs de incapacidades como ZIP desde Google Drive.
+    
+    Body JSON:
+    {
+      "filtro_fecha": "subida" | "incapacidad" | "historico",
+      "fecha_desde": "2026-01-01",    // opcional si historico
+      "fecha_hasta": "2026-02-15",    // opcional si historico
+      "empresa": "all" | "ELIOT",
+      "tipo": "all" | "enfermedad_general",
+      "cedulas": "1085043374,39017565"  // opcional, separadas por comas
+    }
+    """
+    import zipfile
+    
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body JSON requerido")
+    
+    filtro_fecha = body.get("filtro_fecha", "historico")
+    fecha_desde_str = body.get("fecha_desde")
+    fecha_hasta_str = body.get("fecha_hasta")
+    empresa_filtro = body.get("empresa", "all")
+    tipo_filtro = body.get("tipo", "all")
+    cedulas_raw = body.get("cedulas", "")
+    
+    # Build query
+    query = db.query(Case).join(Employee, Case.employee_id == Employee.id, isouter=True)
+    
+    # Filtro por empresa
+    if empresa_filtro and empresa_filtro != "all":
+        company = db.query(Company).filter(Company.nombre == empresa_filtro).first()
+        if company:
+            query = query.filter(Case.company_id == company.id)
+    
+    # Filtro por tipo
+    if tipo_filtro and tipo_filtro != "all":
+        query = query.filter(Case.tipo == tipo_filtro)
+    
+    # Filtro por cédulas específicas
+    if cedulas_raw and cedulas_raw.strip():
+        cedulas_list = [c.strip() for c in cedulas_raw.split(",") if c.strip()]
+        if cedulas_list:
+            query = query.filter(Case.cedula.in_(cedulas_list))
+    
+    # Filtro por fechas
+    if filtro_fecha != "historico":
+        if fecha_desde_str:
+            try:
+                fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="fecha_desde inválida. Use YYYY-MM-DD")
+        else:
+            fd = None
+        
+        if fecha_hasta_str:
+            try:
+                fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="fecha_hasta inválida. Use YYYY-MM-DD")
+        else:
+            fh = None
+        
+        if filtro_fecha == "subida":
+            if fd:
+                query = query.filter(Case.created_at >= fd)
+            if fh:
+                query = query.filter(Case.created_at <= fh)
+        elif filtro_fecha == "incapacidad":
+            if fd:
+                query = query.filter(Case.fecha_inicio >= fd)
+            if fh:
+                query = query.filter(Case.fecha_inicio <= fh)
+    
+    casos = query.order_by(Case.created_at.desc()).all()
+    
+    if not casos:
+        raise HTTPException(status_code=404, detail="No se encontraron casos con esos filtros")
+    
+    # Limitar a 500 para no sobrecargar
+    if len(casos) > 500:
+        casos = casos[:500]
+    
+    print(f"📦 Exportación ZIP: {len(casos)} casos a descargar")
+    
+    # Crear ZIP en memoria
+    zip_buffer = io.BytesIO()
+    descargados = 0
+    errores = 0
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for caso in casos:
+            if not caso.drive_link:
+                errores += 1
+                continue
+            
+            try:
+                # Extraer file_id del link de Drive
+                drive_id = None
+                if "/file/d/" in caso.drive_link:
+                    drive_id = caso.drive_link.split("/file/d/")[1].split("/")[0]
+                elif "id=" in caso.drive_link:
+                    drive_id = caso.drive_link.split("id=")[1].split("&")[0]
+                
+                if not drive_id:
+                    errores += 1
+                    continue
+                
+                # Descargar PDF de Drive
+                download_url = f"https://drive.google.com/uc?export=download&id={drive_id}"
+                response = requests.get(download_url, timeout=15)
+                
+                if response.status_code != 200 or len(response.content) < 100:
+                    errores += 1
+                    continue
+                
+                # Nombre del archivo: cedula_serial_fecha.pdf
+                emp_nombre = caso.empleado.nombre.replace(" ", "_") if caso.empleado else caso.cedula
+                fecha_str = caso.created_at.strftime("%Y%m%d") if caso.created_at else "sin_fecha"
+                empresa_nombre = caso.empresa.nombre if caso.empresa else "otra"
+                filename = f"{empresa_nombre}/{caso.cedula}_{emp_nombre}_{fecha_str}.pdf"
+                
+                zf.writestr(filename, response.content)
+                descargados += 1
+                
+                if descargados % 10 == 0:
+                    print(f"   📥 {descargados}/{len(casos)} descargados...")
+                
+            except Exception as e:
+                print(f"   ❌ Error descargando {caso.serial}: {e}")
+                errores += 1
+                continue
+    
+    zip_buffer.seek(0)
+    
+    print(f"✅ ZIP generado: {descargados} PDFs, {errores} errores")
+    
+    fecha_label = datetime.now().strftime("%Y%m%d_%H%M")
+    
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=incapacidades_{fecha_label}_{descargados}pdfs.zip",
+            "X-Total-Casos": str(len(casos)),
+            "X-Descargados": str(descargados),
+            "X-Errores": str(errores),
+        }
+    )
+
+
+@router.post("/exportar/zip/preview")
+async def preview_exportar_zip(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    👁️ Preview: muestra cuántos casos se descargarían con esos filtros, SIN descargar.
+    Mismo body que /exportar/zip.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body JSON requerido")
+    
+    filtro_fecha = body.get("filtro_fecha", "historico")
+    fecha_desde_str = body.get("fecha_desde")
+    fecha_hasta_str = body.get("fecha_hasta")
+    empresa_filtro = body.get("empresa", "all")
+    tipo_filtro = body.get("tipo", "all")
+    cedulas_raw = body.get("cedulas", "")
+    
+    query = db.query(Case).join(Employee, Case.employee_id == Employee.id, isouter=True)
+    
+    if empresa_filtro and empresa_filtro != "all":
+        company = db.query(Company).filter(Company.nombre == empresa_filtro).first()
+        if company:
+            query = query.filter(Case.company_id == company.id)
+    
+    if tipo_filtro and tipo_filtro != "all":
+        query = query.filter(Case.tipo == tipo_filtro)
+    
+    if cedulas_raw and cedulas_raw.strip():
+        cedulas_list = [c.strip() for c in cedulas_raw.split(",") if c.strip()]
+        if cedulas_list:
+            query = query.filter(Case.cedula.in_(cedulas_list))
+    
+    if filtro_fecha != "historico":
+        if fecha_desde_str:
+            try:
+                fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
+            except ValueError:
+                fd = None
+            if fd:
+                if filtro_fecha == "subida":
+                    query = query.filter(Case.created_at >= fd)
+                elif filtro_fecha == "incapacidad":
+                    query = query.filter(Case.fecha_inicio >= fd)
+        if fecha_hasta_str:
+            try:
+                fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            except ValueError:
+                fh = None
+            if fh:
+                if filtro_fecha == "subida":
+                    query = query.filter(Case.created_at <= fh)
+                elif filtro_fecha == "incapacidad":
+                    query = query.filter(Case.fecha_inicio <= fh)
+    
+    total = query.count()
+    con_pdf = query.filter(Case.drive_link.isnot(None), Case.drive_link != "").count()
+    
+    # Muestra de los primeros 10
+    muestra = query.order_by(Case.created_at.desc()).limit(10).all()
+    preview = []
+    for c in muestra:
+        preview.append({
+            "serial": c.serial,
+            "cedula": c.cedula,
+            "nombre": c.empleado.nombre if c.empleado else c.cedula,
+            "empresa": c.empresa.nombre if c.empresa else "N/A",
+            "tipo": c.tipo.value if c.tipo else None,
+            "fecha_inicio": c.fecha_inicio.strftime("%Y-%m-%d") if c.fecha_inicio else None,
+            "created_at": c.created_at.strftime("%Y-%m-%d") if c.created_at else None,
+            "tiene_pdf": bool(c.drive_link),
+        })
+    
+    return {
+        "ok": True,
+        "total_casos": total,
+        "con_pdf": con_pdf,
+        "sin_pdf": total - con_pdf,
+        "limite_maximo": 500,
+        "se_descargarian": min(con_pdf, 500),
+        "muestra": preview,
+    }
+
+
 @router.get("/casos/{serial}/pdf")
 async def obtener_pdf_caso(
     serial: str,
