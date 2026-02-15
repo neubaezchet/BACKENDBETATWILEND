@@ -1018,3 +1018,88 @@ async def powerbi_global(
     except Exception as e:
         logger.error(f"Error PowerBI global: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# 🔄 ENDPOINT: ESTADO DE SINCRONIZACIÓN BD ↔ EXCEL
+# ============================================================
+
+@router.get("/sync/estado")
+async def get_estado_sync():
+    """
+    📊 Estado en tiempo real de la sincronización BD ↔ Excel Kactus
+    - Casos con/sin datos Kactus
+    - Casos con/sin diagnóstico y CIE-10
+    - Traslapos detectados
+    - Última sincronización
+    """
+    from app.sync_excel import obtener_estado_sync
+    return obtener_estado_sync()
+
+
+@router.get("/sync/traslapos")
+async def get_traslapos(
+    empresa: str = Query("all"),
+    db: Session = Depends(get_db)
+):
+    """
+    🔀 Listado de todas las incapacidades con traslapo de fechas detectado
+    """
+    try:
+        query = db.query(Case).filter(Case.dias_traslapo > 0)
+        
+        if empresa != "all":
+            company = db.query(Company).filter(Company.nombre == empresa).first()
+            if company:
+                query = query.filter(Case.company_id == company.id)
+        
+        traslapos = query.order_by(Case.fecha_inicio.desc()).all()
+        
+        resultado = []
+        for caso in traslapos:
+            emp = db.query(Employee).filter(Employee.cedula == caso.cedula).first()
+            comp = db.query(Company).filter(Company.id == caso.company_id).first() if caso.company_id else None
+            
+            resultado.append({
+                "serial": caso.serial,
+                "cedula": caso.cedula,
+                "nombre": emp.nombre if emp else "?",
+                "empresa": comp.nombre if comp else "?",
+                "tipo": caso.tipo.value if caso.tipo else None,
+                "fecha_inicio_original": str(caso.fecha_inicio.date()) if caso.fecha_inicio else None,
+                "fecha_fin_original": str(caso.fecha_fin.date()) if caso.fecha_fin else None,
+                "fecha_inicio_kactus": str(caso.fecha_inicio_kactus.date()) if caso.fecha_inicio_kactus else None,
+                "fecha_fin_kactus": str(caso.fecha_fin_kactus.date()) if caso.fecha_fin_kactus else None,
+                "dias_incapacidad_original": caso.dias_incapacidad,
+                "dias_kactus": caso.dias_kactus,
+                "dias_traslapo": caso.dias_traslapo,
+                "traslapo_con_serial": caso.traslapo_con_serial,
+                "diagnostico": caso.diagnostico,
+                "codigo_cie10": caso.codigo_cie10,
+                "diagnostico_kactus": caso.diagnostico_kactus,
+                "estado": caso.estado.value if caso.estado else None,
+                "kactus_sync_at": str(caso.kactus_sync_at) if caso.kactus_sync_at else None,
+            })
+        
+        return {
+            "ok": True,
+            "total": len(resultado),
+            "traslapos": resultado
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/vaciar-kactus")
+async def vaciar_kactus_manual():
+    """
+    🗑️ Vaciar manualmente la Hoja 3 (Cases_Kactus) del Excel.
+    Solo funciona si todos los datos ya están sincronizados en BD.
+    """
+    try:
+        from app.sync_excel import vaciar_hoja_kactus_quincenal
+        vaciar_hoja_kactus_quincenal()
+        return {"ok": True, "mensaje": "Vaciado ejecutado — verificar logs"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

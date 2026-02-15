@@ -235,7 +235,14 @@ def startup_event():
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS es_prorroga BOOLEAN DEFAULT FALSE;",
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS numero_incapacidad VARCHAR(50);",
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS medico_tratante VARCHAR(200);",
-                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS institucion_origen VARCHAR(200);"
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS institucion_origen VARCHAR(200);",
+                # Traslapo + Kactus enhanced
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS diagnostico_kactus TEXT;",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_inicio_kactus TIMESTAMP;",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_fin_kactus TIMESTAMP;",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS dias_traslapo INTEGER DEFAULT 0;",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS traslapo_con_serial VARCHAR(50);",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS kactus_sync_at TIMESTAMP;",
             ]
             for sql in migraciones:
                 conn.execute(text(sql))
