@@ -1724,7 +1724,8 @@ async def validar_caso_con_checks(
                 email_tthh_destinatario,
                 asunto_tthh,
                 email_tthh,
-                adjuntos_paths
+                adjuntos_paths,
+                caso=caso  # ✅ CORREGIDO: Incluir copias empresa + BD
             )
             
             # Email confirmación a la empleada (plantilla estática)
