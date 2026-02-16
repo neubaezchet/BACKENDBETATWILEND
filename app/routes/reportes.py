@@ -315,17 +315,25 @@ async def get_dashboard_completo(
         total = len(casos)
         por_estado = defaultdict(int)
         total_dias_incapacidad = 0
+        total_dias_traslapo = 0
         
         for c in casos:
             est = c.estado.value if c.estado else "NUEVO"
             por_estado[est] += 1
             if c.dias_incapacidad:
                 total_dias_incapacidad += c.dias_incapacidad
+            if c.dias_traslapo:
+                total_dias_traslapo += c.dias_traslapo
+        
+        # Días efectivos = días totales - días traslapados (no contar doble)
+        dias_efectivos = total_dias_incapacidad - total_dias_traslapo
         
         kpis = {
             "total_casos": total,
-            "total_dias_incapacidad": total_dias_incapacidad,
-            "promedio_dias": round(total_dias_incapacidad / total, 1) if total > 0 else 0,
+            "total_dias_incapacidad": dias_efectivos,
+            "total_dias_brutos": total_dias_incapacidad,
+            "total_dias_traslapo": total_dias_traslapo,
+            "promedio_dias": round(dias_efectivos / total, 1) if total > 0 else 0,
             "por_estado": dict(por_estado),
             "completas": por_estado.get("COMPLETA", 0),
             "incompletas": por_estado.get("INCOMPLETA", 0) + por_estado.get("ILEGIBLE", 0) + por_estado.get("INCOMPLETA_ILEGIBLE", 0),
@@ -475,7 +483,7 @@ async def get_dashboard_completo(
             nombre = emp.nombre if emp else cedula
             empresa_n = primer_caso.empresa.nombre if primer_caso.empresa else "N/A"
             
-            total_dias_persona = sum(c.dias_incapacidad or 0 for c in casos_persona)
+            total_dias_persona = sum(c.dias_incapacidad or 0 for c in casos_persona) - sum(c.dias_traslapo or 0 for c in casos_persona)
             total_dias_kactus = sum(c.dias_kactus or 0 for c in casos_persona)
             diagnosticos = list(set(c.diagnostico for c in casos_persona if c.diagnostico))
             codigos_cie10 = list(set(c.codigo_cie10 for c in casos_persona if c.codigo_cie10))
@@ -631,6 +639,9 @@ async def powerbi_analisis_persona(
                 "fecha_inicio": fi.strftime("%Y-%m-%d") if fi else None,
                 "fecha_fin": ff.strftime("%Y-%m-%d") if ff else None,
                 "dias": c.dias_incapacidad or 0,
+                "dias_traslapo": c.dias_traslapo or 0,
+                "dias_efectivos": (c.dias_incapacidad or 0) - (c.dias_traslapo or 0),
+                "traslapo_con": c.traslapo_con_serial or None,
                 "tipo": c.tipo.value if c.tipo else "",
                 "estado": c.estado.value if c.estado else "",
                 "diagnostico": c.diagnostico or "",
@@ -919,7 +930,8 @@ async def powerbi_global(
 
             analisis = analizar_historial_empleado(db, ced)
             
-            total_dias = sum(c.dias_incapacidad or 0 for c in casos)
+            # Días efectivos = días totales - días traslapados (no contar doble)
+            total_dias = sum(c.dias_incapacidad or 0 for c in casos) - sum(c.dias_traslapo or 0 for c in casos)
             cadenas_activas = [c for c in analisis.get("cadenas_prorroga", []) if c.get("es_cadena_prorroga")]
             max_cadena = max((c["dias_acumulados"] for c in cadenas_activas), default=0)
             
