@@ -1,6 +1,6 @@
 """
-DETECTOR DE PRÓRROGAS v2 — Motor con detección de huecos
-=========================================================
+DETECTOR DE PRÓRROGAS v3 — Motor con detección de huecos temporales
+=====================================================================
 Analiza el historial de incapacidades de un empleado,
 detecta prórrogas automáticamente por correlación CIE-10,
 cuenta días acumulados, detecta huecos en cadenas de prórroga,
@@ -11,6 +11,13 @@ REGLA DE CORTE 30 DÍAS:
 - El sistema registra el hueco y alerta a Talento Humano
 - Si el empleado envía después un certificado que llena el hueco → llenado retroactivo
 - Se calcula "días en incapacidad" (total) vs "días en prórroga" (cadena activa)
+
+REGLA DE HUECOS TEMPORALES (<30 DÍAS): ⭐ NUEVO v3
+- Si aparece un diagnóstico NO CORRELACIONADO que dura <30 días
+  ENTRE dos diagnósticos SÍ correlacionados, la cadena NO se rompe.
+- Los días del diagnóstico no correlacionado NO se cuentan en la cadena.
+- Ejemplo: A09(60d) → J00(10d) → A09(20d) = cadena de 80d (J00 ignorado)
+- Si el diagnóstico no correlacionado dura ≥30 días → SÍ rompe la cadena.
 
 Normativa colombiana aplicable:
 - Ley 776/2002 Art. 3: Incapacidad temporal hasta 180 días calendario
@@ -121,12 +128,14 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
     """
     Detecta cadenas de prórrogas: secuencias de incapacidades correlacionadas.
     
-    Algoritmo:
+    Algoritmo v3 con detección de huecos temporales:
     1. Toma cada caso como posible inicio de cadena
     2. Para cada caso posterior, verifica:
-       a. Proximidad temporal (fecha_inicio nueva ≤ 30-90 días de fecha_fin anterior)
+       a. Proximidad temporal (brecha ≤ 30 días)
        b. Correlación de códigos CIE-10
-    3. Si ambos se cumplen, es prórroga → se agrega a la cadena
+    3. Si ambos se cumplen → prórroga directa
+    4. Si NO correlacionado pero <30 días → hueco temporal (no rompe cadena)
+    5. Si la brecha > 30 días PERO hay huecos <30d que la explican → cadena continúa
     """
     if not casos:
         return []
@@ -147,6 +156,7 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
             "dias_acumulados": caso_inicial.dias_incapacidad or 0,
             "fecha_inicio_cadena": caso_inicial.fecha_inicio,
             "fecha_fin_cadena": caso_inicial.fecha_fin or caso_inicial.fecha_inicio,
+            "huecos_ignorados": [],  # v3: huecos temporales <30d
         }
         
         # Agregar código del caso inicial
@@ -157,6 +167,7 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
         
         asignados.add(i)
         ultimo_caso = caso_inicial
+        huecos_pendientes = []  # v3: track potential temporal gaps
         
         # Buscar prórrogas
         for j in range(i + 1, len(casos)):
@@ -167,6 +178,12 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
             resultado = _es_prorroga_de(ultimo_caso, caso_siguiente)
             
             if resultado["es_prorroga"]:
+                # ─── v3: Finalizar huecos pendientes como ignorados ───
+                for hp in huecos_pendientes:
+                    cadena["huecos_ignorados"].append(hp["info"])
+                    asignados.add(hp["index"])
+                huecos_pendientes = []
+                
                 # Días de traslapo a descontar (si hay solapamiento)
                 dias_traslapo_desc = resultado.get("dias_traslapo", 0)
                 # También verificar el campo dias_traslapo del caso en BD
@@ -193,11 +210,123 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
                 
                 asignados.add(j)
                 ultimo_caso = caso_siguiente
+            else:
+                # ─── v3: DETECTOR DE HUECOS TEMPORALES ───
+                brecha = resultado.get("brecha_dias")
+                dias_caso_sig = caso_siguiente.dias_incapacidad or 0
+                codigo_sig = _normalizar_codigo(caso_siguiente.codigo_cie10 or "")
+                codigo_ult = _normalizar_codigo(ultimo_caso.codigo_cie10 or "")
+                
+                # CASO A: Brecha > 30 días PERO hay huecos pendientes que pueden explicar el gap
+                if (brecha is not None and brecha > VENTANA_CORTE_PRORROGA
+                        and huecos_pendientes and codigo_ult and codigo_sig):
+                    
+                    # Calcular brecha efectiva descontando días cubiertos por huecos
+                    dias_cubiertos_huecos = sum(
+                        hp["caso"].dias_incapacidad or 0 for hp in huecos_pendientes
+                    )
+                    brecha_efectiva = brecha - dias_cubiertos_huecos
+                    
+                    if brecha_efectiva <= VENTANA_CORTE_PRORROGA:
+                        # Re-evaluar correlación (porque _es_prorroga_de cortó por brecha > 30)
+                        corr = son_correlacionados(
+                            codigo_ult, codigo_sig,
+                            dias_entre=max(0, int(brecha_efectiva)),
+                            codigo_anterior=codigo_ult
+                        )
+                        
+                        if corr["correlacionados"]:
+                            # ✅ Huecos explican el gap → cadena continúa
+                            for hp in huecos_pendientes:
+                                hp["info"]["razon"] = (
+                                    f"Hueco temporal <30d ({hp['caso'].dias_incapacidad}d con "
+                                    f"{hp['caso'].codigo_cie10 or 'sin código'}). "
+                                    f"No rompe cadena de {codigo_ult}."
+                                )
+                                cadena["huecos_ignorados"].append(hp["info"])
+                                asignados.add(hp["index"])
+                            huecos_pendientes = []
+                            
+                            # Agregar a la cadena como prórroga con hueco
+                            dias_traslapo_desc = caso_siguiente.dias_traslapo or 0
+                            cadena["prorrogas"].append({
+                                **_caso_a_dict(caso_siguiente),
+                                "tipo_deteccion": "prorroga_con_hueco_temporal",
+                                "confianza": corr.get("confianza", "MEDIA"),
+                                "asertividad": corr.get("asertividad", 0.0),
+                                "brecha_dias": brecha,
+                                "brecha_efectiva": int(brecha_efectiva),
+                                "dias_traslapo": dias_traslapo_desc,
+                                "explicacion": (
+                                    f"Prórroga con hueco temporal: {codigo_ult}→{codigo_sig}. "
+                                    f"Brecha real {brecha}d pero efectiva {int(brecha_efectiva)}d "
+                                    f"(descontados {dias_cubiertos_huecos}d de diagnósticos no relacionados <30d)."
+                                ),
+                                "requiere_validacion_medica": corr.get("requiere_validacion_medica", False),
+                            })
+                            dias_efectivos = (caso_siguiente.dias_incapacidad or 0) - dias_traslapo_desc
+                            cadena["dias_acumulados"] += max(dias_efectivos, 0)
+                            cadena["fecha_fin_cadena"] = caso_siguiente.fecha_fin or caso_siguiente.fecha_inicio
+                            
+                            if codigo_sig:
+                                cadena["codigos_cie10"].add(codigo_sig)
+                            
+                            asignados.add(j)
+                            ultimo_caso = caso_siguiente
+                            continue
+                    
+                    # Extensión no funcionó — verificar si este caso es un nuevo hueco
+                    if codigo_ult and codigo_sig:
+                        # Verificar si este caso NO es correlacionado y es <30d → nuevo hueco
+                        corr_check = son_correlacionados(codigo_ult, codigo_sig)
+                        if not corr_check["correlacionados"] and dias_caso_sig < 30:
+                            huecos_pendientes.append({
+                                "index": j,
+                                "caso": caso_siguiente,
+                                "info": {
+                                    "serial": caso_siguiente.serial,
+                                    "codigo_cie10": caso_siguiente.codigo_cie10,
+                                    "diagnostico": caso_siguiente.diagnostico,
+                                    "dias": dias_caso_sig,
+                                    "fecha_inicio": caso_siguiente.fecha_inicio.isoformat() if caso_siguiente.fecha_inicio else None,
+                                    "fecha_fin": caso_siguiente.fecha_fin.isoformat() if caso_siguiente.fecha_fin else None,
+                                    "razon": f"Posible hueco temporal <30d entre diagnósticos correlacionados"
+                                }
+                            })
+                        else:
+                            huecos_pendientes = []
+                    else:
+                        huecos_pendientes = []
+                
+                # CASO B: Brecha ≤ 30 pero no correlacionado → posible hueco temporal
+                elif (brecha is not None and 0 <= brecha <= VENTANA_CORTE_PRORROGA
+                      and dias_caso_sig < 30):
+                    huecos_pendientes.append({
+                        "index": j,
+                        "caso": caso_siguiente,
+                        "info": {
+                            "serial": caso_siguiente.serial,
+                            "codigo_cie10": caso_siguiente.codigo_cie10,
+                            "diagnostico": caso_siguiente.diagnostico,
+                            "dias": dias_caso_sig,
+                            "fecha_inicio": caso_siguiente.fecha_inicio.isoformat() if caso_siguiente.fecha_inicio else None,
+                            "fecha_fin": caso_siguiente.fecha_fin.isoformat() if caso_siguiente.fecha_fin else None,
+                            "razon": f"Posible hueco temporal <30d entre diagnósticos correlacionados"
+                        }
+                    })
+                
+                # CASO C: ≥30 días no correlacionado o brecha indefinida → reset
+                else:
+                    huecos_pendientes = []
+        
+        # Al final del inner loop, descartar huecos pendientes no finalizados
+        huecos_pendientes = []
         
         # Convertir set a lista para serialización
         cadena["codigos_cie10"] = sorted(cadena["codigos_cie10"])
         cadena["total_incapacidades_cadena"] = 1 + len(cadena["prorrogas"])
         cadena["es_cadena_prorroga"] = len(cadena["prorrogas"]) > 0
+        cadena["total_huecos_ignorados"] = len(cadena["huecos_ignorados"])
         
         # Serializar fechas
         cadena["fecha_inicio_cadena"] = cadena["fecha_inicio_cadena"].isoformat() if cadena["fecha_inicio_cadena"] else None
@@ -310,16 +439,14 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
                 "evidencia": correlacion.get("evidencia", "")
             }
         else:
-            # No correlacionados pero muy cercanos temporalmente
-            if brecha <= 1:
-                return {
-                    "es_prorroga": True,
-                    "tipo": "continuidad_directa",
-                    "confianza": "MEDIA",
-                    "asertividad": 50.0,
-                    "brecha_dias": brecha,
-                    "explicacion": f"Continuidad directa ({brecha}d) aunque códigos {codigo_anterior}→{codigo_nuevo} no tienen correlación definida (asertividad {asertividad}%). Requiere revisión médica."
-                }
+            # v3: No correlacionados → NO es prórroga (independiente de la brecha)
+            # El detector de huecos temporales en _detectar_cadenas_prorroga
+            # se encarga de no romper la cadena si este caso dura <30 días
+            resultado_base["explicacion"] = (
+                f"Códigos {codigo_anterior}→{codigo_nuevo} NO correlacionados "
+                f"(asertividad {asertividad}%). Brecha {brecha}d. "
+                f"No se considera prórroga."
+            )
     elif codigo_anterior or codigo_nuevo:
         # Solo uno tiene código
         if brecha <= 15:

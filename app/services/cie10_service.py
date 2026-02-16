@@ -53,6 +53,7 @@ _exclusiones_data: Optional[dict] = None
 _direccionales_data: Optional[dict] = None
 _umbrales_data: Optional[dict] = None
 _validaciones_data: Optional[dict] = None
+_dias_tipicos_data: Optional[dict] = None
 _codigo_a_grupos: Optional[dict] = None  # índice invertido: código → lista de grupos
 
 
@@ -127,6 +128,20 @@ def _cargar_validaciones() -> dict:
     return _validaciones_data
 
 
+def _cargar_dias_tipicos() -> dict:
+    """Carga las reglas de validación de coherencia clínica por código"""
+    global _dias_tipicos_data
+    if _dias_tipicos_data is None:
+        ruta = _DATA_DIR / "dias_tipicos_cie10.json"
+        if ruta.exists():
+            with open(ruta, "r", encoding="utf-8") as f:
+                _dias_tipicos_data = json.load(f)
+            print(f"✅ Validaciones de coherencia clínica cargadas: {len(_dias_tipicos_data.get('validaciones_especificas', {}))} códigos específicos")
+        else:
+            _dias_tipicos_data = {"reglas_por_defecto": {}, "validaciones_especificas": {}}
+    return _dias_tipicos_data
+
+
 def _construir_indice_invertido() -> dict:
     """Construye un índice: código → [lista de grupos donde aparece]"""
     global _codigo_a_grupos
@@ -145,7 +160,7 @@ def _construir_indice_invertido() -> dict:
 def recargar_datos():
     """Fuerza recarga de TODOS los JSONs (para actualizaciones en caliente)"""
     global _cie10_data, _correlaciones_data, _codigo_a_grupos
-    global _exclusiones_data, _direccionales_data, _umbrales_data, _validaciones_data
+    global _exclusiones_data, _direccionales_data, _umbrales_data, _validaciones_data, _dias_tipicos_data
     _cie10_data = None
     _correlaciones_data = None
     _codigo_a_grupos = None
@@ -153,6 +168,7 @@ def recargar_datos():
     _direccionales_data = None
     _umbrales_data = None
     _validaciones_data = None
+    _dias_tipicos_data = None
     _cargar_cie10()
     _cargar_correlaciones()
     _construir_indice_invertido()
@@ -160,7 +176,8 @@ def recargar_datos():
     _cargar_direccionales()
     _cargar_umbrales()
     _cargar_validaciones()
-    return {"ok": True, "mensaje": "Datos CIE-10 v2 completos recargados (correlaciones, exclusiones, direccionales, umbrales, historial)"}
+    _cargar_dias_tipicos()
+    return {"ok": True, "mensaje": "Datos CIE-10 v3 completos recargados (correlaciones, exclusiones, direccionales, umbrales, historial, coherencia días)"}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -210,7 +227,33 @@ def buscar_codigo(codigo: str) -> Optional[dict]:
             "permite_prorroga": _permite_prorroga(cod_norm),
             "capitulo": capitulo,
         }
-    # No encontrado exacto, pero podemos dar info del capítulo
+    # No encontrado en nuestra base de 259 códigos
+    # ─── Fallback a base oficial MinSalud (12,568 códigos) ───
+    try:
+        from app.services.oms_icd_service import buscar_codigo_oficial
+        oficial = buscar_codigo_oficial(cod_norm)
+        if oficial and oficial.get("encontrado"):
+            capitulo = _identificar_capitulo(cod_norm)
+            return {
+                "codigo": cod_norm,
+                "codigo_original": codigo,
+                "descripcion": oficial["titulo"],
+                "bloque": "",
+                "grupo": "",
+                "capitulo": capitulo,
+                "dias_tipicos": [],
+                "encontrado": True,
+                "fuente": "MinSalud_CIE10_Oficial",
+                # ─── Campos jerárquicos v3 ───
+                "sistema_anatomico": _obtener_sistema_anatomico(cod_norm),
+                "gravedad_estimada": "INDETERMINADA",
+                "causa_externa": _es_causa_externa(cod_norm),
+                "permite_prorroga": _permite_prorroga(cod_norm),
+            }
+    except ImportError:
+        pass
+
+    # No encontrado en ninguna base
     capitulo = _identificar_capitulo(cod_norm)
     return {
         "codigo": cod_norm,
@@ -933,6 +976,152 @@ def validar_conteo_dias(fecha_inicio, fecha_fin, dias_incapacidad: int) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════
+# VALIDACIÓN DE COHERENCIA CLÍNICA (DÍAS vs DIAGNÓSTICO)
+# ═══════════════════════════════════════════════════════════
+
+def validar_dias_coherencia(codigo: str, dias_solicitados: int) -> dict:
+    """
+    Valida si los días de incapacidad son coherentes con el diagnóstico CIE-10.
+    Detecta posible fraude (exceso de días) o error médico (déficit de días).
+    
+    LÓGICA:
+    1. Buscar regla específica para el código en dias_tipicos_cie10.json
+    2. Si no hay regla específica, calcular desde dias_tipicos del cie10_2026.json
+       usando factores multiplicadores (×2 advertencia, ×3.5 alto, ×5 crítico)
+    3. Verificar alertas por rango de días
+    
+    Retorna:
+        {
+            "valido": bool,
+            "codigo": str,
+            "diagnostico": str,
+            "dias_solicitados": int,
+            "dias_tipicos": [min, max],
+            "dias_maximos_recomendados": int,
+            "nivel_alerta": "OK"|"ADVERTENCIA"|"ALTA"|"CRITICA",
+            "alertas": [...],
+            "requiere_revision_medica": bool
+        }
+    """
+    cod_norm = _normalizar_codigo(codigo)
+    info = buscar_codigo(codigo)
+    dias_tipicos_cfg = _cargar_dias_tipicos()
+    reglas_defecto = dias_tipicos_cfg.get("reglas_por_defecto", {})
+    validaciones = dias_tipicos_cfg.get("validaciones_especificas", {})
+    
+    # Buscar regla específica
+    regla = validaciones.get(cod_norm)
+    
+    nombre = ""
+    dias_min = 1
+    dias_tipicos_val = 0
+    dias_max_sin_alerta = 0
+    dias_max_absolutos = 0
+    alertas_config = []
+    
+    if regla:
+        # Regla específica encontrada
+        nombre = regla.get("nombre", info.get("descripcion", ""))
+        dias_min = regla.get("dias_minimos", 1)
+        dias_tipicos_val = regla.get("dias_tipicos", 0)
+        dias_max_sin_alerta = regla.get("dias_maximos_sin_alerta", 0)
+        dias_max_absolutos = regla.get("dias_maximos_absolutos", 9999)
+        alertas_config = regla.get("alertas", [])
+    elif info.get("dias_tipicos") and len(info["dias_tipicos"]) >= 2:
+        # Regla por defecto calculada desde dias_tipicos
+        nombre = info.get("descripcion", "")
+        dia_min_t, dia_max_t = info["dias_tipicos"][0], info["dias_tipicos"][1]
+        dias_min = dia_min_t
+        dias_tipicos_val = dia_max_t
+        factor_adv = reglas_defecto.get("factor_advertencia", 2.0)
+        factor_alt = reglas_defecto.get("factor_alto", 3.5)
+        factor_crit = reglas_defecto.get("factor_critico", 5.0)
+        dias_max_sin_alerta = int(dia_max_t * factor_adv)
+        dias_max_alto = int(dia_max_t * factor_alt)
+        dias_max_absolutos = int(dia_max_t * factor_crit)
+        
+        # Generar alertas automáticas
+        alertas_config = [
+            {
+                "min_dias": dias_max_sin_alerta + 1,
+                "max_dias": dias_max_alto,
+                "nivel": "ADVERTENCIA",
+                "mensaje": reglas_defecto.get("mensaje_exceso_advertencia", "Días por encima del rango típico.")
+            },
+            {
+                "min_dias": dias_max_alto + 1,
+                "max_dias": dias_max_absolutos,
+                "nivel": "ALTA",
+                "mensaje": reglas_defecto.get("mensaje_exceso_alto", "Días significativamente por encima del rango.")
+            },
+            {
+                "min_dias": dias_max_absolutos + 1,
+                "max_dias": 9999,
+                "nivel": "CRITICA",
+                "mensaje": reglas_defecto.get("mensaje_exceso_critico", "ALERTA: Días excesivos para este diagnóstico.")
+            },
+        ]
+    else:
+        # Sin datos de días típicos
+        return {
+            "valido": True,
+            "codigo": cod_norm,
+            "diagnostico": info.get("descripcion", ""),
+            "dias_solicitados": dias_solicitados,
+            "dias_tipicos": [],
+            "dias_maximos_recomendados": None,
+            "nivel_alerta": "OK",
+            "alertas": [],
+            "requiere_revision_medica": False,
+            "nota": "Código sin datos de días típicos para validación"
+        }
+    
+    # ─── Evaluar alertas ───
+    alertas = []
+    nivel_max = "OK"
+    prioridades = {"OK": 0, "ADVERTENCIA": 1, "ALTA": 2, "CRITICA": 3}
+    
+    # Verificar déficit (días por debajo del mínimo)
+    if dias_solicitados < dias_min:
+        alerta_deficit = {
+            "nivel": "ADVERTENCIA",
+            "tipo": "DEFICIT",
+            "mensaje": f"Días solicitados ({dias_solicitados}) por debajo del mínimo típico ({dias_min}d) para {nombre}. Verificar alta médica prematura."
+        }
+        alertas.append(alerta_deficit)
+        if prioridades.get("ADVERTENCIA", 0) > prioridades.get(nivel_max, 0):
+            nivel_max = "ADVERTENCIA"
+    
+    # Verificar exceso — buscar alerta por rango
+    for alerta_cfg in alertas_config:
+        min_d = alerta_cfg.get("min_dias", 0)
+        max_d = alerta_cfg.get("max_dias", 9999)
+        if min_d <= dias_solicitados <= max_d:
+            nivel_alerta = alerta_cfg.get("nivel", "ADVERTENCIA")
+            alertas.append({
+                "nivel": nivel_alerta,
+                "tipo": "EXCESO" if dias_solicitados > dias_max_sin_alerta else "DEFICIT",
+                "mensaje": alerta_cfg.get("mensaje", "")
+            })
+            if prioridades.get(nivel_alerta, 0) > prioridades.get(nivel_max, 0):
+                nivel_max = nivel_alerta
+    
+    return {
+        "valido": nivel_max != "CRITICA",
+        "codigo": cod_norm,
+        "diagnostico": nombre,
+        "dias_solicitados": dias_solicitados,
+        "dias_tipicos": info.get("dias_tipicos", [dias_min, dias_tipicos_val]),
+        "dias_maximos_recomendados": dias_max_sin_alerta,
+        "dias_maximos_absolutos": dias_max_absolutos,
+        "nivel_alerta": nivel_max,
+        "alertas": alertas,
+        "requiere_revision_medica": nivel_max in ["ALTA", "CRITICA"],
+        "accion_recomendada": dias_tipicos_cfg.get("niveles_alerta", {}).get(nivel_max, {}).get("accion", "")
+    }
+
+
+# ═══════════════════════════════════════════════════════════
 # INFO GENERAL
 # ═══════════════════════════════════════════════════════════
 
@@ -960,6 +1149,7 @@ def info_sistema() -> dict:
         "total_direccionales": len(direc.get("direccionales", [])),
         "total_grupos_temporales": len(umbr.get("umbrales_por_grupo", {})),
         "total_validaciones_historicas": valid.get("estadisticas", {}).get("total_validaciones", 0),
+        "total_codigos_coherencia_dias": len(_cargar_dias_tipicos().get("validaciones_especificas", {})),
         "precision_historica": valid.get("estadisticas", {}).get("precision_historica"),
         "jerarquia_niveles": [
             "Nivel 1: Mismo código (100%)",

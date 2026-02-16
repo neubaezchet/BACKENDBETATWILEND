@@ -12,3 +12,8 @@ credentials.json
 *.log
 .DS_Store
 data/~$*
+
+# API docs / instaladores (referencia local, no deploy)
+_api_docs/
+instalador/
+*.zip

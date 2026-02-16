@@ -1,0 +1,372 @@
+{
+  "version": "1.0",
+  "fuente": "GPC MinSalud Colombia 2026 + OMS/OPS CIE-10 + GATISO Resolución 2844/2007",
+  "ultima_actualizacion": "2026-02-15",
+  "nota": "Validación de coherencia clínica: días de incapacidad vs diagnóstico CIE-10. Detecta posible fraude o error médico.",
+
+  "reglas_por_defecto": {
+    "_nota": "Se aplican cuando un código NO tiene regla específica. Factores se multiplican por dias_tipicos[1] (máx) del cie10_2026.json.",
+    "factor_advertencia": 2.0,
+    "factor_alto": 3.5,
+    "factor_critico": 5.0,
+    "minimo_absoluto_dias": 1,
+    "mensaje_exceso_advertencia": "Días solicitados superan el rango típico. Verificar justificación médica.",
+    "mensaje_exceso_alto": "Días significativamente por encima del rango. Solicitar concepto de especialista.",
+    "mensaje_exceso_critico": "ALERTA: Días excesivos para este diagnóstico. Posible fraude o error diagnóstico.",
+    "mensaje_deficit_advertencia": "Días solicitados por debajo del mínimo típico. Verificar alta prematura."
+  },
+
+  "niveles_alerta": {
+    "OK": { "prioridad": 0, "color": "verde", "accion": "Aprobar normalmente" },
+    "ADVERTENCIA": { "prioridad": 1, "color": "amarillo", "accion": "Revisar justificación médica" },
+    "ALTA": { "prioridad": 2, "color": "naranja", "accion": "Solicitar concepto de especialista / segunda opinión" },
+    "CRITICA": { "prioridad": 3, "color": "rojo", "accion": "Bloquear y derivar a investigación / auditoría médica" }
+  },
+
+  "validaciones_especificas": {
+    "J00": {
+      "nombre": "Rinofaringitis aguda (resfriado común)",
+      "dias_minimos": 1,
+      "dias_tipicos": 3,
+      "dias_maximos_sin_alerta": 7,
+      "dias_maximos_absolutos": 14,
+      "alertas": [
+        { "min_dias": 8, "max_dias": 14, "nivel": "ADVERTENCIA", "mensaje": "Resfriado común rara vez requiere >7 días. Verificar posibles complicaciones." },
+        { "min_dias": 15, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Resfriado común NO justifica >14 días. Posible fraude o error diagnóstico." }
+      ]
+    },
+    "J02": {
+      "nombre": "Faringitis aguda",
+      "dias_minimos": 2,
+      "dias_tipicos": 4,
+      "dias_maximos_sin_alerta": 10,
+      "dias_maximos_absolutos": 21,
+      "alertas": [
+        { "min_dias": 11, "max_dias": 21, "nivel": "ADVERTENCIA", "mensaje": "Faringitis >10 días. Verificar si evolucionó a complicación." },
+        { "min_dias": 22, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Faringitis NO justifica >21 días. Posible fraude." }
+      ]
+    },
+    "J03": {
+      "nombre": "Amigdalitis aguda",
+      "dias_minimos": 3,
+      "dias_tipicos": 5,
+      "dias_maximos_sin_alerta": 14,
+      "dias_maximos_absolutos": 30,
+      "alertas": [
+        { "min_dias": 15, "max_dias": 30, "nivel": "ADVERTENCIA", "mensaje": "Amigdalitis >14 días. Evaluar amigdalectomía." },
+        { "min_dias": 31, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Amigdalitis aguda NO justifica >30 días." }
+      ]
+    },
+    "A09": {
+      "nombre": "Diarrea y gastroenteritis infecciosa",
+      "dias_minimos": 2,
+      "dias_tipicos": 5,
+      "dias_maximos_sin_alerta": 10,
+      "dias_maximos_absolutos": 21,
+      "alertas": [
+        { "min_dias": 11, "max_dias": 21, "nivel": "ADVERTENCIA", "mensaje": "Gastroenteritis >10 días. Verificar deshidratación o infección persistente." },
+        { "min_dias": 22, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Gastroenteritis infecciosa NO justifica >21 días. Reevaluar diagnóstico." }
+      ]
+    },
+    "R51": {
+      "nombre": "Cefalea",
+      "dias_minimos": 1,
+      "dias_tipicos": 2,
+      "dias_maximos_sin_alerta": 5,
+      "dias_maximos_absolutos": 14,
+      "alertas": [
+        { "min_dias": 6, "max_dias": 14, "nivel": "ADVERTENCIA", "mensaje": "Cefalea >5 días. Descartar patología neurológica subyacente." },
+        { "min_dias": 15, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Cefalea simple NO justifica >14 días. Requiere reclasificación diagnóstica." }
+      ]
+    },
+    "R10": {
+      "nombre": "Dolor abdominal y pélvico",
+      "dias_minimos": 1,
+      "dias_tipicos": 3,
+      "dias_maximos_sin_alerta": 10,
+      "dias_maximos_absolutos": 21,
+      "alertas": [
+        { "min_dias": 11, "max_dias": 21, "nivel": "ADVERTENCIA", "mensaje": "Dolor abdominal >10 días. Estudiar causa subyacente." },
+        { "min_dias": 22, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Dolor abdominal persistente >21 días requiere diagnóstico definitivo, no código R." }
+      ]
+    },
+    "K29": {
+      "nombre": "Gastritis y duodenitis",
+      "dias_minimos": 2,
+      "dias_tipicos": 5,
+      "dias_maximos_sin_alerta": 14,
+      "dias_maximos_absolutos": 30,
+      "alertas": [
+        { "min_dias": 15, "max_dias": 30, "nivel": "ADVERTENCIA", "mensaje": "Gastritis >14 días. Verificar adherencia a tratamiento." },
+        { "min_dias": 31, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Gastritis aguda NO justifica >30 días." }
+      ]
+    },
+    "H10": {
+      "nombre": "Conjuntivitis",
+      "dias_minimos": 2,
+      "dias_tipicos": 5,
+      "dias_maximos_sin_alerta": 14,
+      "dias_maximos_absolutos": 21,
+      "alertas": [
+        { "min_dias": 15, "max_dias": 21, "nivel": "ADVERTENCIA", "mensaje": "Conjuntivitis >14 días. Evaluar complicación ocular." },
+        { "min_dias": 22, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Conjuntivitis NO justifica >21 días." }
+      ]
+    },
+    "M54": {
+      "nombre": "Dorsalgia (dolor de espalda)",
+      "dias_minimos": 3,
+      "dias_tipicos": 7,
+      "dias_maximos_sin_alerta": 30,
+      "dias_maximos_absolutos": 90,
+      "alertas": [
+        { "min_dias": 31, "max_dias": 60, "nivel": "ADVERTENCIA", "mensaje": "Dolor de espalda >30 días. Verificar si requiere cirugía o tratamiento especializado." },
+        { "min_dias": 61, "max_dias": 90, "nivel": "ALTA", "mensaje": "Dorsalgia prolongada >60 días. Evaluar posible invalidez permanente o calificación PCL." },
+        { "min_dias": 91, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Dorsalgia >90 días debe ser re-evaluada por especialista. Posible calificación PCL." }
+      ]
+    },
+    "M51": {
+      "nombre": "Trastornos de discos intervertebrales",
+      "dias_minimos": 7,
+      "dias_tipicos": 21,
+      "dias_maximos_sin_alerta": 90,
+      "dias_maximos_absolutos": 180,
+      "alertas": [
+        { "min_dias": 91, "max_dias": 180, "nivel": "ALTA", "mensaje": "Hernia discal >90 días. Evaluar cirugía o calificación PCL." },
+        { "min_dias": 181, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Patología discal >180 días requiere concepto Fondo de Pensiones." }
+      ]
+    },
+    "I21": {
+      "nombre": "Infarto agudo del miocardio",
+      "dias_minimos": 30,
+      "dias_tipicos": 60,
+      "dias_maximos_sin_alerta": 180,
+      "dias_maximos_absolutos": 365,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 29, "nivel": "CRITICA", "mensaje": "ALERTA: Infarto con <30 días es INSUFICIENTE. Verificar alta médica prematura. Riesgo vital." },
+        { "min_dias": 181, "max_dias": 365, "nivel": "ALTA", "mensaje": "Infarto >180 días. Evaluar secuelas cardíacas y posible pensión por invalidez." },
+        { "min_dias": 366, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Post-infarto >365 días. Debe estar en proceso de calificación PCL." }
+      ]
+    },
+    "I63": {
+      "nombre": "Infarto cerebral (ACV)",
+      "dias_minimos": 30,
+      "dias_tipicos": 90,
+      "dias_maximos_sin_alerta": 180,
+      "dias_maximos_absolutos": 540,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 29, "nivel": "CRITICA", "mensaje": "ALERTA: ACV con <30 días es INSUFICIENTE. Riesgo de secuelas neurológicas graves." },
+        { "min_dias": 181, "max_dias": 540, "nivel": "ALTA", "mensaje": "ACV >180 días. Evaluar rehabilitación y calificación PCL." }
+      ]
+    },
+    "S06": {
+      "nombre": "Traumatismo intracraneal (TEC)",
+      "dias_minimos": 7,
+      "dias_tipicos": 30,
+      "dias_maximos_sin_alerta": 90,
+      "dias_maximos_absolutos": 180,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 6, "nivel": "ADVERTENCIA", "mensaje": "TEC con <7 días. Verificar severidad del trauma." },
+        { "min_dias": 91, "max_dias": 180, "nivel": "ALTA", "mensaje": "TEC >90 días. Evaluar secuelas neurológicas permanentes." },
+        { "min_dias": 181, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: TEC >180 días requiere calificación PCL obligatoria." }
+      ]
+    },
+    "S72": {
+      "nombre": "Fractura del fémur",
+      "dias_minimos": 30,
+      "dias_tipicos": 90,
+      "dias_maximos_sin_alerta": 180,
+      "dias_maximos_absolutos": 365,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 29, "nivel": "CRITICA", "mensaje": "ALERTA: Fractura de fémur con <30 días es INSUFICIENTE. Alto riesgo de complicaciones." },
+        { "min_dias": 181, "max_dias": 365, "nivel": "ALTA", "mensaje": "Fractura de fémur >180 días. Evaluar pseudoartrosis o calificación PCL." }
+      ]
+    },
+    "S82": {
+      "nombre": "Fractura de pierna (incluye tobillo)",
+      "dias_minimos": 30,
+      "dias_tipicos": 75,
+      "dias_maximos_sin_alerta": 180,
+      "dias_maximos_absolutos": 365,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 29, "nivel": "CRITICA", "mensaje": "ALERTA: Fractura de pierna con <30 días es INSUFICIENTE." },
+        { "min_dias": 181, "max_dias": 365, "nivel": "ALTA", "mensaje": "Fractura de pierna >180 días. Evaluar complicaciones ortopédicas." }
+      ]
+    },
+    "S42": {
+      "nombre": "Fractura del hombro y del brazo",
+      "dias_minimos": 21,
+      "dias_tipicos": 60,
+      "dias_maximos_sin_alerta": 120,
+      "dias_maximos_absolutos": 270,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 20, "nivel": "ADVERTENCIA", "mensaje": "Fractura de hombro/brazo con <21 días. Verificar tipo de fractura." },
+        { "min_dias": 121, "max_dias": 270, "nivel": "ALTA", "mensaje": "Fractura >120 días. Evaluar consolidación y posible pseudoartrosis." }
+      ]
+    },
+    "O80": {
+      "nombre": "Parto único espontáneo",
+      "dias_minimos": 8,
+      "dias_tipicos": 56,
+      "dias_maximos_sin_alerta": 70,
+      "dias_maximos_absolutos": 126,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 7, "nivel": "CRITICA", "mensaje": "ALERTA: Licencia de maternidad <8 días. Ley 2114/2021 establece mínimo 18 semanas." },
+        { "min_dias": 71, "max_dias": 126, "nivel": "ADVERTENCIA", "mensaje": "Parto normal con licencia extendida. Verificar complicaciones posparto." }
+      ]
+    },
+    "O82": {
+      "nombre": "Parto único por cesárea",
+      "dias_minimos": 14,
+      "dias_tipicos": 56,
+      "dias_maximos_sin_alerta": 90,
+      "dias_maximos_absolutos": 126,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 13, "nivel": "CRITICA", "mensaje": "ALERTA: Cesárea con <14 días es INSUFICIENTE. Ley 2114/2021." },
+        { "min_dias": 91, "max_dias": 126, "nivel": "ADVERTENCIA", "mensaje": "Cesárea con licencia extendida >90 días. Verificar complicaciones quirúrgicas." }
+      ]
+    },
+    "F32": {
+      "nombre": "Episodio depresivo",
+      "dias_minimos": 7,
+      "dias_tipicos": 30,
+      "dias_maximos_sin_alerta": 90,
+      "dias_maximos_absolutos": 180,
+      "alertas": [
+        { "min_dias": 91, "max_dias": 180, "nivel": "ALTA", "mensaje": "Depresión >90 días. Evaluar adherencia a tratamiento psiquiátrico y posible PCL." },
+        { "min_dias": 181, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Depresión >180 días. Debe estar en proceso Fondo de Pensiones." }
+      ]
+    },
+    "F33": {
+      "nombre": "Trastorno depresivo recurrente",
+      "dias_minimos": 14,
+      "dias_tipicos": 60,
+      "dias_maximos_sin_alerta": 120,
+      "dias_maximos_absolutos": 270,
+      "alertas": [
+        { "min_dias": 121, "max_dias": 270, "nivel": "ALTA", "mensaje": "Depresión recurrente >120 días. Evaluar discapacidad mental y calificación PCL." }
+      ]
+    },
+    "F20": {
+      "nombre": "Esquizofrenia",
+      "dias_minimos": 14,
+      "dias_tipicos": 90,
+      "dias_maximos_sin_alerta": 180,
+      "dias_maximos_absolutos": 540,
+      "alertas": [
+        { "min_dias": 181, "max_dias": 540, "nivel": "ALTA", "mensaje": "Esquizofrenia >180 días. Evaluar calificación PCL y pensión de invalidez." }
+      ]
+    },
+    "C34": {
+      "nombre": "Tumor maligno del bronquio y del pulmón",
+      "dias_minimos": 14,
+      "dias_tipicos": 90,
+      "dias_maximos_sin_alerta": 180,
+      "dias_maximos_absolutos": 540,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 13, "nivel": "ADVERTENCIA", "mensaje": "Cáncer de pulmón con <14 días. Verificar plan de tratamiento." },
+        { "min_dias": 181, "max_dias": 540, "nivel": "ALTA", "mensaje": "Cáncer >180 días. Evaluar pronóstico y calificación PCL." }
+      ]
+    },
+    "E11": {
+      "nombre": "Diabetes mellitus tipo 2",
+      "dias_minimos": 3,
+      "dias_tipicos": 14,
+      "dias_maximos_sin_alerta": 30,
+      "dias_maximos_absolutos": 90,
+      "alertas": [
+        { "min_dias": 31, "max_dias": 60, "nivel": "ADVERTENCIA", "mensaje": "Diabetes T2 >30 días. Verificar descompensación o complicaciones." },
+        { "min_dias": 61, "max_dias": 90, "nivel": "ALTA", "mensaje": "Diabetes T2 >60 días. Evaluar complicaciones severas (nefropatía, retinopatía)." },
+        { "min_dias": 91, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Diabetes T2 >90 días sin complicación codificada. Reclasificar diagnóstico." }
+      ]
+    },
+    "J45": {
+      "nombre": "Asma",
+      "dias_minimos": 3,
+      "dias_tipicos": 7,
+      "dias_maximos_sin_alerta": 21,
+      "dias_maximos_absolutos": 60,
+      "alertas": [
+        { "min_dias": 22, "max_dias": 60, "nivel": "ADVERTENCIA", "mensaje": "Asma >21 días. Evaluar severidad y control asmático." },
+        { "min_dias": 61, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Asma NO justifica >60 días salvo crisis severa con hospitalización." }
+      ]
+    },
+    "K35": {
+      "nombre": "Apendicitis aguda",
+      "dias_minimos": 7,
+      "dias_tipicos": 21,
+      "dias_maximos_sin_alerta": 45,
+      "dias_maximos_absolutos": 90,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 6, "nivel": "ADVERTENCIA", "mensaje": "Apendicitis con <7 días. Verificar si fue operado o tratamiento conservador." },
+        { "min_dias": 46, "max_dias": 90, "nivel": "ALTA", "mensaje": "Post-apendicectomía >45 días. Evaluar complicaciones quirúrgicas." },
+        { "min_dias": 91, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Apendicitis >90 días requiere investigación." }
+      ]
+    },
+    "G56": {
+      "nombre": "Síndrome del túnel carpiano",
+      "dias_minimos": 7,
+      "dias_tipicos": 21,
+      "dias_maximos_sin_alerta": 60,
+      "dias_maximos_absolutos": 120,
+      "alertas": [
+        { "min_dias": 61, "max_dias": 120, "nivel": "ALTA", "mensaje": "Túnel carpiano >60 días. Evaluar cirugía y posible enfermedad laboral (GATISO)." },
+        { "min_dias": 121, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Túnel carpiano >120 días. Calificar como enfermedad laboral." }
+      ]
+    },
+    "K80": {
+      "nombre": "Colelitiasis (cálculos biliares)",
+      "dias_minimos": 7,
+      "dias_tipicos": 21,
+      "dias_maximos_sin_alerta": 45,
+      "dias_maximos_absolutos": 90,
+      "alertas": [
+        { "min_dias": 46, "max_dias": 90, "nivel": "ADVERTENCIA", "mensaje": "Post-colecistectomía >45 días. Verificar complicaciones." },
+        { "min_dias": 91, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Colelitiasis >90 días requiere justificación quirúrgica." }
+      ]
+    },
+    "N17": {
+      "nombre": "Insuficiencia renal aguda",
+      "dias_minimos": 14,
+      "dias_tipicos": 45,
+      "dias_maximos_sin_alerta": 90,
+      "dias_maximos_absolutos": 180,
+      "alertas": [
+        { "min_dias": 1, "max_dias": 13, "nivel": "ADVERTENCIA", "mensaje": "IRA con <14 días. Verificar resolución completa." },
+        { "min_dias": 91, "max_dias": 180, "nivel": "ALTA", "mensaje": "IRA >90 días. Evaluar progresión a ERC y calificación." }
+      ]
+    },
+    "N18": {
+      "nombre": "Insuficiencia renal crónica",
+      "dias_minimos": 7,
+      "dias_tipicos": 30,
+      "dias_maximos_sin_alerta": 120,
+      "dias_maximos_absolutos": 365,
+      "alertas": [
+        { "min_dias": 121, "max_dias": 180, "nivel": "ALTA", "mensaje": "ERC >120 días. Evaluar diálisis y calificación PCL." },
+        { "min_dias": 181, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: ERC >180 días. Debe estar en proceso Fondo de Pensiones." }
+      ]
+    },
+    "L50": {
+      "nombre": "Urticaria",
+      "dias_minimos": 1,
+      "dias_tipicos": 3,
+      "dias_maximos_sin_alerta": 7,
+      "dias_maximos_absolutos": 14,
+      "alertas": [
+        { "min_dias": 8, "max_dias": 14, "nivel": "ADVERTENCIA", "mensaje": "Urticaria >7 días. Evaluar causa alérgica subyacente." },
+        { "min_dias": 15, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Urticaria NO justifica >14 días." }
+      ]
+    },
+    "R05": {
+      "nombre": "Tos",
+      "dias_minimos": 1,
+      "dias_tipicos": 2,
+      "dias_maximos_sin_alerta": 5,
+      "dias_maximos_absolutos": 14,
+      "alertas": [
+        { "min_dias": 6, "max_dias": 14, "nivel": "ADVERTENCIA", "mensaje": "Tos >5 días. Descartar neumonía, TBC u otra causa." },
+        { "min_dias": 15, "max_dias": 9999, "nivel": "CRITICA", "mensaje": "ALERTA: Tos como diagnóstico principal NO justifica >14 días. Reclasificar." }
+      ]
+    }
+  }
+}
