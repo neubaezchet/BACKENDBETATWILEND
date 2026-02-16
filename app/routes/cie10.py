@@ -16,6 +16,7 @@ from app.services.cie10_service import (
     son_correlacionados,
     obtener_todos_correlacionados,
     validar_dias,
+    validar_dias_coherencia,
     validar_conteo_dias,
     recargar_datos,
     info_sistema,
@@ -23,6 +24,15 @@ from app.services.cie10_service import (
 from app.services.prorroga_detector import (
     analizar_historial_empleado,
     analisis_masivo_prorrogas,
+)
+from app.services.oms_icd_service import (
+    buscar_codigo_oficial,
+    buscar_por_texto,
+    obtener_cie11_de_cie10,
+    obtener_cie10_de_cie11,
+    buscar_codigo_completo,
+    info_servicio_oms,
+    recargar_datos_oms,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +59,10 @@ class ValidarConteoRequest(BaseModel):
     fecha_inicio: str = Field(..., description="Fecha inicio (YYYY-MM-DD)")
     fecha_fin: str = Field(..., description="Fecha fin (YYYY-MM-DD)")
     dias: int = Field(..., description="Días reportados")
+
+class ValidarCoherenciaRequest(BaseModel):
+    codigo: str = Field(..., description="Código CIE-10 (ej: J00, M54, I21)")
+    dias: int = Field(..., description="Días de incapacidad solicitados")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -153,6 +167,30 @@ async def validar_conteo_dias_ep(req: ValidarConteoRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/validar-coherencia-dias")
+async def validar_coherencia_dias_endpoint(req: ValidarCoherenciaRequest):
+    """
+    🔍 Valida si los días solicitados son coherentes con el diagnóstico CIE-10
+    
+    Detecta:
+    - Posible FRAUDE: ej. 60 días por resfriado común (J00)
+    - Error MÉDICO: ej. 5 días por infarto (I21) = alta prematura
+    - COHERENCIA: ej. 14 días por dorsalgia (M54) = OK
+    
+    Niveles de alerta:
+    - OK: Días coherentes con diagnóstico
+    - ADVERTENCIA: Revisar justificación médica
+    - ALTA: Solicitar concepto de especialista
+    - CRITICA: Bloquear y derivar a investigación
+    """
+    try:
+        resultado = validar_dias_coherencia(req.codigo, req.dias)
+        return {"ok": True, **resultado}
+    except Exception as e:
+        logger.error(f"Error validando coherencia días: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ═══════════════════════════════════════════════════════════
 # 4. ANÁLISIS DE PRÓRROGAS POR EMPLEADO
 # ═══════════════════════════════════════════════════════════
@@ -250,4 +288,133 @@ async def info_cie10():
         return {"ok": True, **info}
     except Exception as e:
         logger.error(f"Error info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════
+# 7. OMS / MINSALUD — BASE OFICIAL 12,568 CÓDIGOS
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/oficial/{codigo}")
+async def buscar_oficial(codigo: str):
+    """
+    🔍 Busca un código CIE-10 en la base oficial MinSalud (12,568 códigos)
+    
+    Acepta: A00, A00.0, A000, a00.0
+    """
+    try:
+        resultado = buscar_codigo_oficial(codigo)
+        return {"ok": True, **(resultado or {})}
+    except Exception as e:
+        logger.error(f"Error buscar oficial: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/oficial/buscar/texto")
+async def buscar_texto_oficial(
+    q: str = Query(..., description="Texto a buscar (ej: resfriado, diabetes, lumbar)"),
+    limite: int = Query(20, ge=1, le=100, description="Máximo resultados")
+):
+    """
+    🔎 Búsqueda por texto en la base oficial MinSalud
+    
+    Busca en títulos y descripciones de los 12,568 códigos oficiales.
+    Ejemplo: /oficial/buscar/texto?q=resfriado
+    """
+    try:
+        resultados = buscar_por_texto(q, limite)
+        return {
+            "ok": True,
+            "query": q,
+            "total": len(resultados),
+            "resultados": resultados
+        }
+    except Exception as e:
+        logger.error(f"Error buscar texto: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cie11/{codigo_cie10}")
+async def mapear_a_cie11(codigo_cie10: str):
+    """
+    🔄 Obtiene los códigos CIE-11 equivalentes a un código CIE-10
+    
+    Basado en las tablas oficiales de mapping OMS (17,349 registros).
+    Preparación para la transición a CIE-11.
+    """
+    try:
+        resultados = obtener_cie11_de_cie10(codigo_cie10)
+        return {
+            "ok": True,
+            "codigo_cie10": codigo_cie10,
+            "total_equivalencias": len(resultados),
+            "cie11": resultados
+        }
+    except Exception as e:
+        logger.error(f"Error mapear CIE-11: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cie10-desde-cie11/{codigo_cie11}")
+async def mapear_desde_cie11(codigo_cie11: str):
+    """
+    🔄 Obtiene los códigos CIE-10 correspondientes a un código CIE-11
+    
+    Soporta códigos poscoordinados (usar - en lugar de /).
+    """
+    try:
+        resultados = obtener_cie10_de_cie11(codigo_cie11)
+        return {
+            "ok": True,
+            "codigo_cie11": codigo_cie11,
+            "total_equivalencias": len(resultados),
+            "cie10": resultados
+        }
+    except Exception as e:
+        logger.error(f"Error mapear desde CIE-11: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/completo/{codigo}")
+async def buscar_completo(codigo: str):
+    """
+    🔍 Búsqueda completa de un código CIE-10 con todas las fuentes:
+    
+    1. Base oficial MinSalud (12,568 códigos) — instantáneo
+    2. Mapping CIE-10 ↔ CIE-11 (17,349 registros) — instantáneo
+    3. ICD API OMS (si hay credenciales) — en línea
+    """
+    try:
+        resultado = await buscar_codigo_completo(codigo)
+        return {"ok": True, **resultado}
+    except Exception as e:
+        logger.error(f"Error búsqueda completa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/oms/info")
+async def info_oms():
+    """
+    ℹ️ Información del servicio OMS / MinSalud
+    
+    Muestra fuentes disponibles, cantidad de códigos, estado de la ICD API.
+    """
+    try:
+        info = info_servicio_oms()
+        return {"ok": True, **info}
+    except Exception as e:
+        logger.error(f"Error info OMS: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/oms/recargar")
+async def recargar_oms():
+    """
+    🔄 Recarga los datos OMS/MinSalud sin reiniciar el servidor
+    """
+    try:
+        resultado = recargar_datos_oms()
+        return {"ok": True, **resultado}
+    except Exception as e:
+        logger.error(f"Error recargar OMS: {e}")
         raise HTTPException(status_code=500, detail=str(e))
