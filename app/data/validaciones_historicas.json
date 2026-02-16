@@ -1,0 +1,47 @@
+{
+  "version": "2026.2",
+  "descripcion": "Historial de validaciones CIE-10: Registro de decisiones sobre correlaciones para aprendizaje continuo",
+  "fuente": "Generado automáticamente por el sistema de prórrogas",
+  "nota": "Este archivo se actualiza automáticamente cuando se confirman o rechazan correlaciones. Permite mejorar la asertividad con el tiempo.",
+
+  "estadisticas": {
+    "total_validaciones": 0,
+    "correlaciones_confirmadas": 0,
+    "correlaciones_rechazadas": 0,
+    "ultima_actualizacion": null,
+    "precision_historica": null
+  },
+
+  "validaciones": [],
+
+  "ajustes_aprendidos": {},
+
+  "esquema_validacion": {
+    "descripcion": "Estructura de cada entrada en validaciones[]",
+    "campos": {
+      "id": "Identificador único (auto-generado)",
+      "fecha": "Fecha de la validación (ISO 8601)",
+      "codigo_a": "Primer código CIE-10",
+      "codigo_b": "Segundo código CIE-10",
+      "grupo_detectado": "Grupo de correlación donde se encontraron",
+      "asertividad_calculada": "Asertividad que calculó el sistema (%)",
+      "dias_entre": "Días entre las incapacidades",
+      "resultado": "CONFIRMADO | RECHAZADO | PENDIENTE",
+      "razon_rechazo": "Si rechazado, la razón médica",
+      "validado_por": "Usuario o sistema que validó",
+      "cedula_empleado": "Cédula del caso (para contexto)",
+      "ajuste_sugerido": "Si el sistema debería ajustar su asertividad base"
+    }
+  },
+
+  "esquema_ajustes": {
+    "descripcion": "Estructura de ajustes_aprendidos — clave: 'codigoA_codigoB'",
+    "campos": {
+      "total_casos": "Número total de veces que se evaluó este par",
+      "confirmados": "Veces confirmado como prórroga",
+      "rechazados": "Veces rechazado",
+      "asertividad_ajustada": "Nueva asertividad basada en historial: (confirmados/total)*100",
+      "ultima_actualizacion": "Fecha del último ajuste"
+    }
+  }
+}

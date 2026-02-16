@@ -1,0 +1,176 @@
+{
+  "version": "2026.2",
+  "descripcion": "Matriz de exclusiones CIE-10: Pares de diagnósticos que NO deben correlacionarse como prórroga aunque pertenezcan al mismo grupo",
+  "fuente": "Basado en evidencia clínica OMS/OPS, GPC MinSalud Colombia, y criterio médico epidemiológico",
+  "nota": "Si un par aparece aquí, la asertividad se reduce al valor indicado. Si 'bloquear' = true, se descarta la correlación completamente.",
+
+  "exclusiones": [
+    {
+      "codigo_a": "F10",
+      "codigo_b": "F20",
+      "grupo": "SALUD_MENTAL",
+      "razon": "Trastorno por uso de alcohol (F10) y esquizofrenia (F20) son entidades clínicamente independientes. La psicosis alcohólica se clasifica en F10.5, no en F20.",
+      "asertividad_reducida": 25,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "DSM-5-TR: trastorno por sustancias vs espectro esquizofrénico son ejes diagnósticos diferentes"
+    },
+    {
+      "codigo_a": "F10",
+      "codigo_b": "F42",
+      "grupo": "SALUD_MENTAL",
+      "razon": "Trastorno por alcohol (F10) y TOC (F42) son independientes clínicamente. Comorbilidad posible pero no implica prórroga.",
+      "asertividad_reducida": 20,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "DSM-5-TR: ejes diagnósticos independientes"
+    },
+    {
+      "codigo_a": "F20",
+      "codigo_b": "F51",
+      "grupo": "SALUD_MENTAL",
+      "razon": "Esquizofrenia (F20) e insomnio no orgánico (F51) no se consideran prórroga mutua. El insomnio en esquizofrenia se maneja dentro del mismo diagnóstico.",
+      "asertividad_reducida": 30,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "CIE-10: El insomnio asociado a psicosis se clasifica dentro del F20"
+    },
+    {
+      "codigo_a": "E10",
+      "codigo_b": "E05",
+      "grupo": "METABOLICO_ENDOCRINO",
+      "razon": "DM tipo 1 (E10) e hipertiroidismo (E05) son endocrinopatías autoinmunes independientes. La coexistencia es síndrome poliendocrino, pero cada una tiene evolución clínica propia.",
+      "asertividad_reducida": 35,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "Endocrinología: patogénesis diferente (islotes vs tiroides)"
+    },
+    {
+      "codigo_a": "D50",
+      "codigo_b": "E03",
+      "grupo": "METABOLICO_ENDOCRINO",
+      "razon": "Anemia ferropénica (D50) e hipotiroidismo (E03) son condiciones independientes. Pueden coexistir pero no hay relación causal directa que justifique prórroga.",
+      "asertividad_reducida": 25,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "No hay fisiopatología compartida directa"
+    },
+    {
+      "codigo_a": "M05",
+      "codigo_b": "M80",
+      "grupo": "OSTEOMUSCULAR_GENERAL",
+      "razon": "Artritis reumatoide seropositiva (M05) y osteoporosis (M80) pueden coexistir pero son enfermedades con tratamiento y evolución independientes. Solo si la osteoporosis es inducida por corticoides del tratamiento de AR se considera prórroga.",
+      "asertividad_reducida": 40,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "Reumatología: entidades independientes salvo osteoporosis iatrogénica"
+    },
+    {
+      "codigo_a": "K02",
+      "codigo_b": "K07",
+      "grupo": "BUCAL_DENTAL",
+      "razon": "Caries (K02) y anomalías dentofaciales/ATM (K07) son patologías bucales independientes sin relación fisiopatológica directa.",
+      "asertividad_reducida": 20,
+      "bloquear": true,
+      "requiere_validacion": false,
+      "evidencia": "Odontología: etiología completamente diferente"
+    },
+    {
+      "codigo_a": "L40",
+      "codigo_b": "B35",
+      "grupo": "DERMATOLOGICO",
+      "razon": "Psoriasis (L40) y dermatofitosis/tiña (B35) son etiológicamente distintas (autoinmune vs infecciosa). No hay evolución de una a otra.",
+      "asertividad_reducida": 15,
+      "bloquear": true,
+      "requiere_validacion": false,
+      "evidencia": "Dermatología: autoinmune vs micótica, sin relación causal"
+    },
+    {
+      "codigo_a": "L20",
+      "codigo_b": "L70",
+      "grupo": "DERMATOLOGICO",
+      "razon": "Dermatitis atópica (L20) y acné (L70) son condiciones dermatológicas independientes con fisiopatología diferente.",
+      "asertividad_reducida": 15,
+      "bloquear": true,
+      "requiere_validacion": false,
+      "evidencia": "Dermatología: mecanismos inmunológicos diferentes"
+    },
+    {
+      "codigo_a": "H10",
+      "codigo_b": "H40",
+      "grupo": "OFTALMOLOGICO",
+      "razon": "Conjuntivitis (H10) y glaucoma (H40) son patologías oculares independientes. La conjuntivitis no evoluciona a glaucoma.",
+      "asertividad_reducida": 15,
+      "bloquear": true,
+      "requiere_validacion": false,
+      "evidencia": "Oftalmología: mecanismos fisiopatológicos completamente diferentes"
+    },
+    {
+      "codigo_a": "H10",
+      "codigo_b": "H25",
+      "grupo": "OFTALMOLOGICO",
+      "razon": "Conjuntivitis (H10) y catarata senil (H25) no están relacionadas causalmente.",
+      "asertividad_reducida": 10,
+      "bloquear": true,
+      "requiere_validacion": false,
+      "evidencia": "Oftalmología: mecanismos independientes"
+    },
+    {
+      "codigo_a": "I10",
+      "codigo_b": "I83",
+      "grupo": "CARDIOVASCULAR",
+      "razon": "Hipertensión esencial (I10) y várices de miembros inferiores (I83) son patologías vasculares diferentes (arterial vs venosa). No hay relación fisiopatológica directa.",
+      "asertividad_reducida": 20,
+      "bloquear": true,
+      "requiere_validacion": false,
+      "evidencia": "Cardiología: sistema arterial vs sistema venoso superficial"
+    },
+    {
+      "codigo_a": "N30",
+      "codigo_b": "N40",
+      "grupo": "URINARIO",
+      "razon": "Cistitis (N30) e hiperplasia prostática (N40) pueden coexistir pero son diagnósticos independientes en su manejo. Solo si la HPB causa retención→IVU se vinculan.",
+      "asertividad_reducida": 45,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "Urología: relación indirecta — requiere validación del mecanismo"
+    },
+    {
+      "codigo_a": "A09",
+      "codigo_b": "K58",
+      "grupo": "GASTROINTESTINAL_INFECCIOSO",
+      "razon": "Diarrea infecciosa (A09) y síndrome de intestino irritable (K58) son entidades diferentes. Existe el SII post-infeccioso pero requiere validación temporal >3 meses.",
+      "asertividad_reducida": 40,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "Gastroenterología: SII post-infeccioso existe pero requiere criterios Roma IV y >3 meses"
+    },
+    {
+      "codigo_a": "G43",
+      "codigo_b": "G40",
+      "grupo": "NEUROLOGICO",
+      "razon": "Migraña (G43) y epilepsia (G40) son entidades neurológicas independientes. Aunque comparten cierta fisiopatología (hiperexcitabilidad neuronal), no se consideran prórroga mutua.",
+      "asertividad_reducida": 30,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "Neurología: entidades diagnósticas separadas en CIE-10 y DSM"
+    },
+    {
+      "codigo_a": "C53",
+      "codigo_b": "N92",
+      "grupo": "GINECOLOGICO",
+      "razon": "Cáncer cervicouterino (C53) y sangrado menstrual excesivo (N92) solo correlacionan si el sangrado es síntoma del cáncer. Requiere validación clínica.",
+      "asertividad_reducida": 40,
+      "bloquear": false,
+      "requiere_validacion": true,
+      "evidencia": "Ginecología: correlación posible pero requiere confirmación diagnóstica"
+    }
+  ],
+
+  "reglas_aplicacion": {
+    "prioridad": "Las exclusiones tienen prioridad sobre la pertenencia a grupo",
+    "bidireccional": true,
+    "nota": "Si codigo_a→codigo_b está excluido, codigo_b→codigo_a también lo está (salvo que se defina en direccionales_cie10.json)",
+    "subcategorias": "La exclusión aplica al código base y todas sus subcategorías (ej: F10 incluye F10.0, F10.1, etc.)"
+  }
+}

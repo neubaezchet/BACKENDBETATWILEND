@@ -1,0 +1,372 @@
+{
+  "version": "2026.2",
+  "descripcion": "Umbrales temporales CIE-10: Degradación de asertividad según los días transcurridos entre incapacidades",
+  "fuente": "Basado en Ley 776/2002, Decreto 1427/2022, evidencia clínica y GPC MinSalud Colombia",
+  "nota": "La asertividad de correlación disminuye conforme pasan los días entre el fin de una incapacidad y el inicio de la siguiente. Cada grupo tiene su propia curva de degradación basada en la fisiopatología.",
+
+  "umbrales_por_grupo": {
+
+    "DEFAULT": {
+      "descripcion": "Umbral por defecto para grupos sin configuración específica",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Prórroga inmediata — máxima asertividad"},
+        {"min_dias": 8, "max_dias": 14, "factor": 0.95, "nota": "Primera semana — muy probable prórroga"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.85, "nota": "Ventana estándar Ley 776/2002"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.65, "nota": "Fuera de ventana — posible recaída"},
+        {"min_dias": 61, "max_dias": 90, "factor": 0.45, "nota": "Ventana extendida — baja probabilidad"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.20, "nota": "Muy improbable como prórroga"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.05, "nota": "Nueva cadena de incapacidad"}
+      ]
+    },
+
+    "RESPIRATORIO_SUPERIOR": {
+      "descripcion": "Infecciones respiratorias superiores tienen resolución rápida (7-14 días)",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 5, "factor": 1.00, "nota": "Curso natural de IRA"},
+        {"min_dias": 6, "max_dias": 14, "factor": 0.90, "nota": "Complicación de IRA"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.60, "nota": "Posible nueva infección"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.30, "nota": "Improbable como prórroga"},
+        {"min_dias": 61, "max_dias": 9999, "factor": 0.10, "nota": "Nueva infección independiente"}
+      ]
+    },
+
+    "RESPIRATORIO_INFERIOR": {
+      "descripcion": "Infecciones respiratorias inferiores tienen resolución más lenta (14-30 días)",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Progresión natural"},
+        {"min_dias": 8, "max_dias": 21, "factor": 0.95, "nota": "Complicación esperada"},
+        {"min_dias": 22, "max_dias": 45, "factor": 0.75, "nota": "Neumonía complicada"},
+        {"min_dias": 46, "max_dias": 90, "factor": 0.45, "nota": "Posible recaída"},
+        {"min_dias": 91, "max_dias": 9999, "factor": 0.15, "nota": "Nueva infección"}
+      ]
+    },
+
+    "RESPIRATORIO_CRUZADO": {
+      "descripcion": "Cruce VAS→VAI requiere ventana temporal corta",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Descenso infeccioso típico"},
+        {"min_dias": 8, "max_dias": 14, "factor": 0.85, "nota": "Complicación tardía"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.55, "nota": "Improbable como evolución"},
+        {"min_dias": 31, "max_dias": 9999, "factor": 0.15, "nota": "Infecciones independientes"}
+      ]
+    },
+
+    "GASTROINTESTINAL_INFECCIOSO": {
+      "descripcion": "EDA tiene resolución rápida pero complicaciones GI crónicas tienen ventana amplia",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Complicación inmediata de EDA"},
+        {"min_dias": 8, "max_dias": 21, "factor": 0.90, "nota": "Complicación GI sub-aguda"},
+        {"min_dias": 22, "max_dias": 45, "factor": 0.70, "nota": "Posible SII post-infeccioso"},
+        {"min_dias": 46, "max_dias": 90, "factor": 0.45, "nota": "Relación temporal débil"},
+        {"min_dias": 91, "max_dias": 9999, "factor": 0.15, "nota": "Eventos independientes"}
+      ]
+    },
+
+    "OSTEOMUSCULAR_COLUMNA": {
+      "descripcion": "Patología de columna tiene evolución crónica — ventana amplia",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Recaída frecuente"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.85, "nota": "Recaída documentada"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.65, "nota": "Posible recaída crónica"},
+        {"min_dias": 121, "max_dias": 180, "factor": 0.40, "nota": "Relación temporal débil"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.15, "nota": "Episodio independiente"}
+      ]
+    },
+
+    "OSTEOMUSCULAR_MIEMBRO_SUPERIOR": {
+      "descripcion": "DME de miembro superior tienen recaídas frecuentes en trabajadores",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Recaída por reincorporación"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.80, "nota": "Recaída ocupacional"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.60, "nota": "Posible reagudización"},
+        {"min_dias": 121, "max_dias": 9999, "factor": 0.20, "nota": "Episodio nuevo"}
+      ]
+    },
+
+    "OSTEOMUSCULAR_MIEMBRO_INFERIOR": {
+      "descripcion": "Similar a miembro superior con rehabilitación potencialmente más prolongada",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Recaída frecuente"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.80, "nota": "Reagudización"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.55, "nota": "Posible recaída crónica"},
+        {"min_dias": 121, "max_dias": 9999, "factor": 0.20, "nota": "Episodio nuevo"}
+      ]
+    },
+
+    "OSTEOMUSCULAR_GENERAL": {
+      "descripcion": "Grupo amplio — ventana similar a columna",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.90, "nota": "Ventana estándar"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.70, "nota": "Posible recaída"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.45, "nota": "Relación temporal débil"},
+        {"min_dias": 121, "max_dias": 9999, "factor": 0.15, "nota": "Episodio independiente"}
+      ]
+    },
+
+    "SALUD_MENTAL": {
+      "descripcion": "Trastornos mentales tienen evolución crónica con recaídas — ventana muy amplia",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Recaída frecuente"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.88, "nota": "Recaída documentada"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.75, "nota": "Recurrencia depresiva/ansiosa"},
+        {"min_dias": 121, "max_dias": 180, "factor": 0.55, "nota": "Posible recurrencia"},
+        {"min_dias": 181, "max_dias": 365, "factor": 0.30, "nota": "Relación temporal débil"},
+        {"min_dias": 366, "max_dias": 9999, "factor": 0.10, "nota": "Episodio independiente"}
+      ]
+    },
+
+    "CARDIOVASCULAR": {
+      "descripcion": "Enfermedades cardiovasculares son crónicas con complicaciones a largo plazo",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Complicación CV"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.85, "nota": "Comorbilidad CV activa"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.65, "nota": "Posible complicación crónica"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.30, "nota": "Relación temporal débil"}
+      ]
+    },
+
+    "METABOLICO_ENDOCRINO": {
+      "descripcion": "Enfermedades endocrinas/metabólicas son crónicas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.92, "nota": "Descompensación"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.75, "nota": "Complicación metabólica"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.50, "nota": "Posible relación"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.20, "nota": "Eventos independientes"}
+      ]
+    },
+
+    "EMBARAZO_PARTO": {
+      "descripcion": "Embarazo tiene ventana temporal natural de 9 meses + puerperio 42 días",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Complicación inmediata"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.98, "nota": "Complicación obstétrica"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.95, "nota": "Puerperio activo"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.85, "nota": "Puerperio tardío"},
+        {"min_dias": 121, "max_dias": 280, "factor": 0.75, "nota": "Dentro del embarazo"},
+        {"min_dias": 281, "max_dias": 9999, "factor": 0.20, "nota": "Fuera de gestación"}
+      ]
+    },
+
+    "ONCOLOGICO": {
+      "descripcion": "Procesos oncológicos tienen tratamientos prolongados (6-12 meses) y seguimiento",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Ciclo de tratamiento"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.98, "nota": "Entre ciclos QT/RT"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.95, "nota": "Tratamiento activo"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.85, "nota": "Seguimiento oncológico"},
+        {"min_dias": 181, "max_dias": 365, "factor": 0.70, "nota": "Vigilancia oncológica"},
+        {"min_dias": 366, "max_dias": 9999, "factor": 0.35, "nota": "Posible recurrencia tardía"}
+      ]
+    },
+
+    "VIH_SIDA": {
+      "descripcion": "VIH es crónico — complicaciones oportunistas en cualquier momento",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Complicación aguda"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.98, "nota": "Infección oportunista"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.92, "nota": "Complicación sub-aguda"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.80, "nota": "Complicación crónica"},
+        {"min_dias": 181, "max_dias": 365, "factor": 0.65, "nota": "Seguimiento VIH"},
+        {"min_dias": 366, "max_dias": 9999, "factor": 0.40, "nota": "Complicación tardía"}
+      ]
+    },
+
+    "TUBERCULOSIS": {
+      "descripcion": "TB tiene tratamiento de 6-9 meses y secuelas prolongadas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Tratamiento activo"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.98, "nota": "Fase intensiva"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.95, "nota": "Fase de continuación"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.85, "nota": "Tratamiento completo"},
+        {"min_dias": 181, "max_dias": 270, "factor": 0.70, "nota": "Secuelas de TB"},
+        {"min_dias": 271, "max_dias": 9999, "factor": 0.30, "nota": "Posible recaída TB"}
+      ]
+    },
+
+    "TRAUMATICO_CABEZA_CUELLO": {
+      "descripcion": "TCE tiene secuelas prolongadas (cefalea, vértigo, cognitivas)",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Agudo"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Sub-agudo"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.85, "nota": "Síndrome post-conmoción"},
+        {"min_dias": 61, "max_dias": 180, "factor": 0.65, "nota": "Secuelas crónicas"},
+        {"min_dias": 181, "max_dias": 365, "factor": 0.40, "nota": "Secuelas tardías"},
+        {"min_dias": 366, "max_dias": 9999, "factor": 0.15, "nota": "Evento independiente"}
+      ]
+    },
+
+    "TRAUMATICO_TORAX_ABDOMEN": {
+      "descripcion": "Trauma toraco-abdominal con recuperación de 4-8 semanas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Agudo"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Recuperación"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.75, "nota": "Complicación tardía"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.45, "nota": "Secuela"},
+        {"min_dias": 121, "max_dias": 9999, "factor": 0.15, "nota": "Evento independiente"}
+      ]
+    },
+
+    "HEPATICO": {
+      "descripcion": "Hepatopatías son crónicas y progresivas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Complicación aguda"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Evolución hepática"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.85, "nota": "Hepatopatía crónica"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.65, "nota": "Complicación crónica"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.30, "nota": "Posible reagudización"}
+      ]
+    },
+
+    "URINARIO": {
+      "descripcion": "IVU recurrente tiene ciclos de 4-6 semanas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Complicación inmediata"},
+        {"min_dias": 8, "max_dias": 21, "factor": 0.92, "nota": "IVU recurrente"},
+        {"min_dias": 22, "max_dias": 45, "factor": 0.75, "nota": "Recurrencia"},
+        {"min_dias": 46, "max_dias": 90, "factor": 0.50, "nota": "IVU nueva posible"},
+        {"min_dias": 91, "max_dias": 9999, "factor": 0.20, "nota": "Evento independiente"}
+      ]
+    },
+
+    "QUIRURGICO_POSTOPERATORIO": {
+      "descripcion": "Complicaciones post-Qx tienen ventana amplia según tipo de cirugía",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Postoperatorio inmediato"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.98, "nota": "Postoperatorio mediato"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.90, "nota": "Complicación post-Qx"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.75, "nota": "Seguimiento quirúrgico"},
+        {"min_dias": 121, "max_dias": 180, "factor": 0.50, "nota": "Complicación tardía"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.20, "nota": "Evento no relacionado"}
+      ]
+    },
+
+    "RENAL_CRONICO": {
+      "descripcion": "ERC es crónica y progresiva — ventana muy amplia",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Descompensación"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Complicación renal"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.88, "nota": "Progresión ERC"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.70, "nota": "Comorbilidad crónica"},
+        {"min_dias": 181, "max_dias": 365, "factor": 0.50, "nota": "Relación temporal posible"},
+        {"min_dias": 366, "max_dias": 9999, "factor": 0.25, "nota": "Evento potencialmente independiente"}
+      ]
+    },
+
+    "ACCIDENTE_TRABAJO": {
+      "descripcion": "ATEL — lesiones por AT correlacionan en ventana amplia por rehabilitación",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Lesión aguda AT"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Rehabilitación AT"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.85, "nota": "Secuela AT"},
+        {"min_dias": 91, "max_dias": 180, "factor": 0.60, "nota": "Complicación tardía AT"},
+        {"min_dias": 181, "max_dias": 365, "factor": 0.35, "nota": "Secuela crónica"},
+        {"min_dias": 366, "max_dias": 9999, "factor": 0.10, "nota": "Independiente"}
+      ]
+    },
+
+    "ENFERMEDAD_LABORAL_DME": {
+      "descripcion": "DME laborales tienen recaídas frecuentes por reexposición ocupacional",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.95, "nota": "Recaída por reincorporación"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.85, "nota": "Reagudización ocupacional"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.70, "nota": "Recaída crónica"},
+        {"min_dias": 121, "max_dias": 180, "factor": 0.50, "nota": "Posible relación"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.20, "nota": "Episodio nuevo"}
+      ]
+    },
+
+    "DENGUE_ARBOVIROSIS": {
+      "descripcion": "Dengue resolución 7-14 días, complicaciones hasta 30 días",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Fase crítica dengue"},
+        {"min_dias": 8, "max_dias": 14, "factor": 0.95, "nota": "Fase de recuperación"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.75, "nota": "Complicación tardía"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.40, "nota": "Secuela (Chikungunya artralgia)"},
+        {"min_dias": 61, "max_dias": 9999, "factor": 0.15, "nota": "Evento independiente"}
+      ]
+    },
+
+    "NEUROLOGICO": {
+      "descripcion": "Enfermedades neurológicas crónicas y progresivas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Prórroga directa"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.92, "nota": "Evolución neurológica"},
+        {"min_dias": 31, "max_dias": 90, "factor": 0.80, "nota": "Complicación sub-aguda"},
+        {"min_dias": 61, "max_dias": 180, "factor": 0.60, "nota": "Progresión crónica"},
+        {"min_dias": 181, "max_dias": 9999, "factor": 0.25, "nota": "Posible recaída"}
+      ]
+    },
+
+    "DERMATOLOGICO": {
+      "descripcion": "Dermatosis con recaídas frecuentes",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Complicación inmediata"},
+        {"min_dias": 8, "max_dias": 21, "factor": 0.85, "nota": "Reagudización"},
+        {"min_dias": 22, "max_dias": 45, "factor": 0.60, "nota": "Recaída"},
+        {"min_dias": 46, "max_dias": 90, "factor": 0.35, "nota": "Posible recurrencia"},
+        {"min_dias": 91, "max_dias": 9999, "factor": 0.15, "nota": "Evento independiente"}
+      ]
+    },
+
+    "GINECOLOGICO": {
+      "descripcion": "Patología ginecológica con ciclos menstruales (28 días)",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Complicación directa"},
+        {"min_dias": 15, "max_dias": 35, "factor": 0.88, "nota": "Siguiente ciclo menstrual"},
+        {"min_dias": 36, "max_dias": 60, "factor": 0.70, "nota": "Recurrencia"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.45, "nota": "Relación temporal débil"},
+        {"min_dias": 121, "max_dias": 9999, "factor": 0.15, "nota": "Evento independiente"}
+      ]
+    },
+
+    "OFTALMOLOGICO": {
+      "descripcion": "Patología ocular con evolución variable",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Complicación inmediata"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.85, "nota": "Evolución ocular"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.60, "nota": "Complicación sub-aguda"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.40, "nota": "Posible relación"},
+        {"min_dias": 121, "max_dias": 9999, "factor": 0.15, "nota": "Evento independiente"}
+      ]
+    },
+
+    "OTOLOGICO": {
+      "descripcion": "Patología ótica con resolución en 2-4 semanas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 7, "factor": 1.00, "nota": "Complicación inmediata"},
+        {"min_dias": 8, "max_dias": 21, "factor": 0.88, "nota": "Otitis evolución"},
+        {"min_dias": 22, "max_dias": 45, "factor": 0.60, "nota": "OMA recurrente"},
+        {"min_dias": 46, "max_dias": 90, "factor": 0.35, "nota": "Relación temporal débil"},
+        {"min_dias": 91, "max_dias": 9999, "factor": 0.15, "nota": "Evento independiente"}
+      ]
+    },
+
+    "BUCAL_DENTAL": {
+      "descripcion": "Tratamiento dental puede requerir múltiples sesiones en semanas",
+      "rangos": [
+        {"min_dias": 0, "max_dias": 14, "factor": 1.00, "nota": "Sesión de tratamiento"},
+        {"min_dias": 15, "max_dias": 30, "factor": 0.90, "nota": "Complicación dental"},
+        {"min_dias": 31, "max_dias": 60, "factor": 0.65, "nota": "Siguiente procedimiento"},
+        {"min_dias": 61, "max_dias": 120, "factor": 0.35, "nota": "Posible relación"},
+        {"min_dias": 121, "max_dias": 9999, "factor": 0.10, "nota": "Evento independiente"}
+      ]
+    }
+  },
+
+  "reglas_aplicacion": {
+    "formula": "asertividad_final = asertividad_base_grupo * factor_temporal * (ajuste_exclusion * ajuste_direccional)",
+    "minimo": 5,
+    "maximo": 100,
+    "umbral_prorroga": 60,
+    "umbral_posible_prorroga": 40,
+    "nota_legal": "Ley 776/2002 Art 3: La ventana de 30 días es referencia legal. Los umbrales > 30 días aplican criterio clínico complementario."
+  }
+}
