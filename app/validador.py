@@ -19,7 +19,8 @@ import pandas as pd
 
 from app.database import (
     get_db, Case, CaseDocument, CaseEvent, CaseNote, Employee, 
-    Company, SearchHistory, EstadoCaso, EstadoDocumento, TipoIncapacidad
+    Company, SearchHistory, EstadoCaso, EstadoDocumento, TipoIncapacidad,
+    CorreoNotificacion, AlertaEmail, Alerta180Log
 )
 from app.checks_disponibles import CHECKS_DISPONIBLES, obtener_checks_por_tipo
 from app.email_templates import get_email_template_universal
@@ -3037,7 +3038,8 @@ async def eliminar_caso_completo(
 
 
 # ========================================
-# 🧹 LIMPIAR TODOS LOS CASOS (ADMIN)
+# 🧹 LIMPIAR TODO EL SISTEMA (ADMIN)
+# Elimina TODOS los registros EXCEPTO Employee y Company
 # ========================================
 
 @router.delete("/casos-limpiar-todos")
@@ -3046,34 +3048,39 @@ async def limpiar_todos_los_casos(
     db: Session = Depends(get_db)
 ):
     """
-    🧹 Elimina TODOS los casos del sistema (base de datos y Google Drive)
+    🧹 Elimina TODO el sistema como si nunca se hubiera enviado ninguna incapacidad.
     
-    Requiere contraseña correcta.
-    Operación irreversible.
+    SE ELIMINA:
+    - Cases (incapacidades)
+    - CaseDocument (documentos adjuntos)
+    - CaseEvent (eventos/historial)
+    - CaseNote (notas)
+    - SearchHistory (historial de búsquedas)
+    - CorreoNotificacion (correos configurados en Hoja 4)
+    - AlertaEmail (alertas de email)
+    - Alerta180Log (logs de alertas 180 días)
+    - Archivos en Google Drive
+    
+    NO SE ELIMINA:
+    - Employee (empleados — vienen de Hoja 1)
+    - Company (empresas — vienen de Hoja 2)
+    
+    Requiere contraseña correcta. Operación irreversible.
     """
-    # Validar contraseña
     CONTRASEÑA_MAESTRO = "1085043374"
     
     if contraseña != CONTRASEÑA_MAESTRO:
         raise HTTPException(status_code=403, detail="Contraseña incorrecta")
     
     try:
-        # 1. Obtener todos los casos
+        resumen = {}
+        errores_lista = []
+        archivos_eliminados = 0
+        
+        # 1. Obtener todos los casos para eliminar archivos de Drive
         todos_los_casos = db.query(Case).all()
         total_casos = len(todos_los_casos)
         
-        if total_casos == 0:
-            return {
-                "status": "ok",
-                "mensaje": "No hay casos para eliminar",
-                "casos_eliminados": 0,
-                "errores": []
-            }
-        
-        archivos_eliminados = 0
-        errores_lista = []
-        
-        # 2. Eliminar cada caso de Drive y BD
         for caso in todos_los_casos:
             try:
                 if caso.drive_link:
@@ -3087,21 +3094,67 @@ async def limpiar_todos_los_casos(
                             archivos_eliminados += 1
                     except Exception as e:
                         errores_lista.append(f"Error Drive ({caso.serial}): {str(e)}")
-                
-                # Eliminar de BD
-                db.delete(caso)
-                
             except Exception as e:
-                errores_lista.append(f"Error BD ({caso.serial}): {str(e)}")
+                errores_lista.append(f"Error procesando caso: {str(e)}")
         
-        # 3. Commit
+        # 2. Eliminar TODAS las tablas relacionadas (orden por dependencias FK)
+        #    EXCEPTO Employee y Company que son datos maestros del Excel
+        
+        # Tablas hijas de Case
+        n_docs = db.query(CaseDocument).delete()
+        resumen["documentos"] = n_docs
+        
+        n_events = db.query(CaseEvent).delete()
+        resumen["eventos"] = n_events
+        
+        n_notes = db.query(CaseNote).delete()
+        resumen["notas"] = n_notes
+        
+        # Tablas independientes
+        n_search = db.query(SearchHistory).delete()
+        resumen["historial_busquedas"] = n_search
+        
+        try:
+            n_correos = db.query(CorreoNotificacion).delete()
+            resumen["correos_notificacion"] = n_correos
+        except Exception as e:
+            errores_lista.append(f"Error CorreoNotificacion: {str(e)}")
+            db.rollback()
+        
+        try:
+            n_alertas = db.query(AlertaEmail).delete()
+            resumen["alertas_email"] = n_alertas
+        except Exception as e:
+            errores_lista.append(f"Error AlertaEmail: {str(e)}")
+            db.rollback()
+        
+        try:
+            n_logs180 = db.query(Alerta180Log).delete()
+            resumen["alertas_180_log"] = n_logs180
+        except Exception as e:
+            errores_lista.append(f"Error Alerta180Log: {str(e)}")
+            db.rollback()
+        
+        # Tabla principal
+        n_cases = db.query(Case).delete()
+        resumen["casos"] = n_cases
+        
+        # 3. Commit todo
         db.commit()
+        
+        total_eliminados = sum(resumen.values())
+        
+        print(f"🧹 LIMPIEZA TOTAL completada:")
+        for tabla, cantidad in resumen.items():
+            print(f"   • {tabla}: {cantidad} registros eliminados")
+        print(f"   • Archivos Drive: {archivos_eliminados}")
         
         return {
             "status": "ok",
-            "mensaje": f"🧹 Sistema limpiado: {total_casos} casos eliminados",
-            "casos_eliminados": total_casos,
-            "archivos_eliminados": archivos_eliminados,
+            "mensaje": f"🧹 Sistema limpiado completamente: {total_eliminados} registros eliminados",
+            "detalle": resumen,
+            "archivos_drive_eliminados": archivos_eliminados,
+            "tablas_preservadas": ["Employee (empleados)", "Company (empresas)"],
             "errores": errores_lista
         }
         
