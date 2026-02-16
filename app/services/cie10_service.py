@@ -841,6 +841,66 @@ def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = 
     
     correlacionados = asertividad_final >= umbral_posible
     
+    # ═══ PASO 8: VALIDACIÓN CRUZADA OMS ═══
+    # Validar con datos locales OMS (12,568 códigos + mapping CIE-11) — síncrono
+    validacion_oms = None
+    try:
+        from app.services.oms_icd_service import validar_correlacion_oms_local_sync
+        validacion_oms = validar_correlacion_oms_local_sync(cod1, cod2)
+    except (ImportError, Exception) as e:
+        pass
+    
+    # ═══ Integrar resultado OMS con resultado local ═══
+    fuente_final = "LOCAL"
+    confianza_oms = None
+    razon_oms = None
+    cita_legal_oms = None
+    conflicto_oms = False
+    
+    if validacion_oms and validacion_oms.get("validado_oms"):
+        confianza_oms = validacion_oms.get("confianza_oms", 0)
+        razon_oms = validacion_oms.get("razon_oms", "")
+        cita_legal_oms = validacion_oms.get("cita_legal_oms", "")
+        oms_dice_si = validacion_oms.get("correlacionados_oms", False)
+        
+        if correlacionados and oms_dice_si:
+            # ✅ AMBOS DICEN SÍ → elevar al máximo de ambas confianzas
+            asertividad_final = max(asertividad_final, min(100.0, (asertividad_final + confianza_oms) / 2 + 10))
+            asertividad_final = round(asertividad_final, 1)
+            fuente_final = "LOCAL+OMS"
+            
+            # Recalcular confianza
+            if asertividad_final >= 90:
+                confianza = "MUY_ALTA"
+            elif asertividad_final >= 75:
+                confianza = "ALTA"
+            elif asertividad_final >= 55:
+                confianza = "MEDIA"
+            
+        elif correlacionados and not oms_dice_si:
+            # ⚠️ LOCAL dice SÍ, OMS dice NO → advertir, mantener local
+            conflicto_oms = True
+            fuente_final = "LOCAL (OMS no confirma)"
+            req_validacion = True
+            
+        elif not correlacionados and oms_dice_si and confianza_oms >= 80:
+            # 🔄 LOCAL dice NO pero OMS dice SÍ con alta confianza → RESCATAR
+            correlacionados = True
+            asertividad_final = round(confianza_oms * 0.85, 1)  # Confianza reducida por no tener local
+            fuente_final = "OMS (rescate)"
+            req_validacion = True
+            nivel_jerarquico = validacion_oms.get("nivel_oms", "OMS")
+            mejor_evidencia = razon_oms
+            
+            if asertividad_final >= 90:
+                confianza = "MUY_ALTA"
+            elif asertividad_final >= 75:
+                confianza = "ALTA"
+            elif asertividad_final >= 55:
+                confianza = "MEDIA"
+            else:
+                confianza = "BAJA"
+    
     # ═══ Construir explicación final ═══
     explicacion_parts = [f"{cod1} ↔ {cod2}"]
     if grupos_comunes:
@@ -851,6 +911,10 @@ def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = 
         explicacion_parts.append(f"Temporal: {nota_temporal}")
     if exclusion and not exclusion.get("bloquear"):
         explicacion_parts.append(f"⚠️ Exclusión parcial: {exclusion.get('razon', '')}")
+    if razon_oms:
+        explicacion_parts.append(f"OMS: {razon_oms[:120]}")
+    if conflicto_oms:
+        explicacion_parts.append("⚠️ CONFLICTO: Sistema local y OMS difieren — requiere revisión clínica")
     
     explicacion_final = ". ".join(explicacion_parts)
     
@@ -858,6 +922,7 @@ def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = 
         "correlacionados": correlacionados,
         "asertividad": asertividad_final,
         "confianza": confianza,
+        "fuente": fuente_final,
         "grupos_comunes": list(grupos_comunes) if grupos_comunes else ([mejor_grupo] if mejor_grupo else []),
         "mismo_bloque": mismo_bloque,
         "nivel_jerarquico": nivel_jerarquico,
@@ -877,11 +942,116 @@ def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = 
             "asertividad_final": asertividad_final,
             "umbral_prorroga": umbral_prorroga,
             "umbral_posible_prorroga": umbral_posible,
-            "formula": f"base({round(mejor_asertividad,1)}) → exclusion({ajuste_exclusion}) → direccional({ajuste_direccional}) → temporal(×{factor_temporal}) → historico({ajuste_historico}) = {asertividad_final}%"
+            "formula": f"base({round(mejor_asertividad,1)}) → exclusion({ajuste_exclusion}) → direccional({ajuste_direccional}) → temporal(×{factor_temporal}) → historico({ajuste_historico}) → OMS({confianza_oms}) = {asertividad_final}%"
         },
+        "validacion_oms": {
+            "validado": validacion_oms is not None and validacion_oms.get("validado_oms", False),
+            "confianza_oms": confianza_oms,
+            "nivel_oms": validacion_oms.get("nivel_oms") if validacion_oms else None,
+            "razon_oms": razon_oms,
+            "cita_legal_oms": cita_legal_oms,
+            "conflicto": conflicto_oms
+        } if validacion_oms else {"validado": False, "nota": "OMS no consultada"},
         "requiere_validacion_medica": req_validacion,
         "evidencia": mejor_evidencia
     }
+
+
+async def _validar_oms_hibrido(codigo1: str, codigo2: str) -> dict:
+    """
+    Intenta validar con API OMS en vivo primero, si falla usa datos locales.
+    """
+    import os
+    try:
+        from app.services.oms_icd_service import validar_correlacion_oms, validar_correlacion_oms_local
+        
+        # Si hay credenciales API, intentar en vivo primero
+        if os.environ.get("ICD_API_CLIENT_ID"):
+            try:
+                resultado_api = await validar_correlacion_oms(codigo1, codigo2)
+                if resultado_api and resultado_api.get("validado_oms"):
+                    resultado_api["metodo"] = "api_oms_vivo"
+                    return resultado_api
+            except Exception:
+                pass
+        
+        # Fallback: validación con datos locales OMS
+        return await validar_correlacion_oms_local(codigo1, codigo2)
+        
+    except ImportError:
+        return {"validado_oms": False, "error": "oms_icd_service no disponible"}
+
+
+async def son_correlacionados_auditoria(codigo1: str, codigo2: str,
+                                         dias_entre: Optional[int] = None) -> dict:
+    """
+    Versión de auditoría de son_correlacionados() — usa API OMS en vivo.
+    
+    FLUJO:
+      1. Ejecuta son_correlacionados() (local, instantáneo)
+      2. Consulta API OMS para cross-validar (2-3 segundos)
+      3. Si ambos coinciden → 100% confianza
+      4. Si difieren → marca conflicto para revisión
+    
+    Retorna el resultado local ENRIQUECIDO con validación OMS + cita legal.
+    """
+    # PASO 1: Resultado local (instantáneo)
+    resultado_local = son_correlacionados(codigo1, codigo2, dias_entre=dias_entre)
+    
+    # PASO 2: Validación OMS (API en vivo + datos locales)
+    validacion_oms = await _validar_oms_hibrido(codigo1, codigo2)
+    
+    if not validacion_oms or not validacion_oms.get("validado_oms"):
+        resultado_local["validacion_oms"] = {
+            "validado": False,
+            "error": validacion_oms.get("error", "No se pudo validar con OMS") if validacion_oms else "OMS no disponible"
+        }
+        resultado_local["fuente"] = resultado_local.get("fuente", "LOCAL")
+        return resultado_local
+    
+    # PASO 3: Integrar resultados
+    oms_dice_si = validacion_oms.get("correlacionados_oms", False)
+    local_dice_si = resultado_local.get("correlacionados", False)
+    confianza_oms = validacion_oms.get("confianza_oms", 0)
+    asertividad_local = resultado_local.get("asertividad", 0)
+    
+    if local_dice_si and oms_dice_si:
+        # ✅ AMBOS CONFIRMAN → fusionar confianzas → hasta 100%
+        asertividad_combinada = min(100.0, round((asertividad_local + confianza_oms) / 2 + 15, 1))
+        resultado_local["correlacionados"] = True
+        resultado_local["asertividad"] = asertividad_combinada
+        resultado_local["confianza"] = "MUY_ALTA" if asertividad_combinada >= 90 else "ALTA"
+        resultado_local["fuente"] = "LOCAL+OMS_CONFIRMADO"
+        
+    elif local_dice_si and not oms_dice_si:
+        # ⚠️ CONFLICTO: Local SÍ, OMS NO
+        resultado_local["fuente"] = "LOCAL (OMS no confirma)"
+        resultado_local["requiere_validacion_medica"] = True
+        
+    elif not local_dice_si and oms_dice_si and confianza_oms >= 75:
+        # 🔄 RESCATE: Local NO pero OMS SÍ con alta confianza
+        resultado_local["correlacionados"] = True
+        resultado_local["asertividad"] = round(confianza_oms * 0.85, 1)
+        resultado_local["confianza"] = "ALTA" if confianza_oms >= 85 else "MEDIA"
+        resultado_local["fuente"] = "OMS_RESCATE"
+        resultado_local["requiere_validacion_medica"] = True
+        
+    else:
+        # ❌ AMBOS DICEN NO
+        resultado_local["fuente"] = "LOCAL+OMS_DESCARTADO"
+    
+    resultado_local["validacion_oms"] = {
+        "validado": True,
+        "metodo": validacion_oms.get("metodo", "local_minsalud"),
+        "correlacionados_oms": oms_dice_si,
+        "confianza_oms": confianza_oms,
+        "nivel_oms": validacion_oms.get("nivel_oms", ""),
+        "razon_oms": validacion_oms.get("razon_oms", ""),
+        "cita_legal_oms": validacion_oms.get("cita_legal_oms", ""),
+        "conflicto": local_dice_si != oms_dice_si
+    }
+    
+    return resultado_local
 
 
 def _mismo_bloque(cod1: str, cod2: str) -> bool:
