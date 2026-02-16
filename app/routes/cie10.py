@@ -14,6 +14,7 @@ from app.database import get_db
 from app.services.cie10_service import (
     buscar_codigo,
     son_correlacionados,
+    son_correlacionados_auditoria,
     obtener_todos_correlacionados,
     validar_dias,
     validar_dias_coherencia,
@@ -33,6 +34,9 @@ from app.services.oms_icd_service import (
     buscar_codigo_completo,
     info_servicio_oms,
     recargar_datos_oms,
+    validar_correlacion_oms,
+    validar_correlacion_oms_local,
+    validar_correlacion_oms_local_sync,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +67,11 @@ class ValidarConteoRequest(BaseModel):
 class ValidarCoherenciaRequest(BaseModel):
     codigo: str = Field(..., description="Código CIE-10 (ej: J00, M54, I21)")
     dias: int = Field(..., description="Días de incapacidad solicitados")
+
+class CorrelacionAuditoriaRequest(BaseModel):
+    codigo1: str = Field(..., description="Primer código CIE-10")
+    codigo2: str = Field(..., description="Segundo código CIE-10")
+    dias_entre: Optional[int] = Field(None, description="Días entre fin inc.1 e inicio inc.2")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -417,4 +426,59 @@ async def recargar_oms():
         return {"ok": True, **resultado}
     except Exception as e:
         logger.error(f"Error recargar OMS: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════
+# 8. VALIDACIÓN CON OMS — AUDITORÍA Y CORRELACIÓN 100%
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/correlacion-auditoria")
+async def correlacion_auditoria(req: CorrelacionAuditoriaRequest):
+    """
+    🔒 Validación de correlación con respaldo OMS para AUDITORÍA.
+    
+    Flujo:
+      1. Motor local CIE-10 v3 (6 niveles jerárquicos) → resultado instantáneo
+      2. API OMS en vivo / datos locales MinSalud (12,568 códigos + CIE-11) → cross-validación
+      3. Si ambos coinciden → 100% confianza con cita legal OMS
+      4. Si difieren → marca conflicto para revisión clínica
+    
+    Ideal para: casos de 180 días, auditorías EPS, defensa ante Fondo de Pensiones.
+    
+    Ejemplo:
+      POST {"codigo1": "A09", "codigo2": "K52.9", "dias_entre": 5}
+      → {"correlacionados": true, "asertividad": 95.0, "fuente": "LOCAL+OMS_CONFIRMADO",
+         "cita_legal_oms": "Según OMS ICD-10..."}
+    """
+    try:
+        resultado = await son_correlacionados_auditoria(
+            req.codigo1, req.codigo2, dias_entre=req.dias_entre
+        )
+        return {"ok": True, **resultado}
+    except Exception as e:
+        logger.error(f"Error correlación auditoría: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/correlacion-oms")
+async def correlacion_oms_directa(req: CorrelacionRequest):
+    """
+    🌐 Validación de correlación DIRECTA contra API OMS en vivo.
+    
+    No usa el motor local — consulta directamente la jerarquía OMS.
+    Requiere credenciales ICD API configuradas (ICD_API_CLIENT_ID, ICD_API_CLIENT_SECRET).
+    Si no hay credenciales, usa datos locales MinSalud (12,568 códigos + mapping CIE-11).
+    
+    Retorna: parent compartido, exclusiones, cita legal OMS.
+    """
+    try:
+        import os
+        if os.environ.get("ICD_API_CLIENT_ID"):
+            resultado = await validar_correlacion_oms(req.codigo1, req.codigo2)
+        else:
+            resultado = await validar_correlacion_oms_local(req.codigo1, req.codigo2)
+        return {"ok": True, **resultado}
+    except Exception as e:
+        logger.error(f"Error correlación OMS: {e}")
         raise HTTPException(status_code=500, detail=str(e))
