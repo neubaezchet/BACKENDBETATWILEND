@@ -56,15 +56,44 @@ def enviar_a_n8n(
             whatsapp = None
             whatsapp_message = None
     
-    # ✅ Construir payload
+    # ✅ CONSTRUIR LISTA DE CCs (lógica original que funcionaba con todos los dominios)
+    cc_list = []
+    
+    print(f"🔍 DEBUG n8n_notifier:")
+    print(f"   email (TO): {email}")
+    print(f"   correo_bd: {correo_bd}")
+    print(f"   cc_email: {cc_email}")
+    
+    # Agregar correo del empleado en BD (si existe y es diferente al principal)
+    if correo_bd and correo_bd.strip():
+        if correo_bd.lower().strip() != email.lower().strip():
+            cc_list.append(correo_bd.strip())
+            print(f"   ✓ correo_bd agregado a cc_list: {correo_bd}")
+        else:
+            print(f"   ✗ correo_bd es igual al TO, no se agrega")
+    
+    # Agregar correo de la empresa (si existe y no es duplicado)
+    if cc_email and cc_email.strip():
+        # Puede tener múltiples emails separados por coma
+        for ce in cc_email.split(','):
+            ce = ce.strip()
+            if ce and '@' in ce and ce.lower() not in [c.lower() for c in cc_list] and ce.lower() != email.lower().strip():
+                cc_list.append(ce)
+                print(f"   ✓ cc_email agregado a cc_list: {ce}")
+    
+    print(f"   📧 cc_list final: {cc_list}")
+    
+    # ✅ PAYLOAD — cc_email COMBINADO (compatible con workflow viejo Y nuevo)
+    cc_email_combinado = ",".join(cc_list) if cc_list else ""
+    
     payload = {
         "tipo_notificacion": tipo_notificacion,
         "email": email,
         "serial": serial,
         "subject": subject,
         "html_content": html_content,
-        "cc_email": cc_email or "",
-        "correo_bd": correo_bd or "",
+        "cc_email": cc_email_combinado,          # ✅ TODOS los CCs combinados (compatible con workflow viejo)
+        "correo_bd": correo_bd or "",            # ✅ También separado (compatible con workflow v5+)
         "whatsapp": whatsapp or "",
         "whatsapp_message": whatsapp_message or "",
         "adjuntos": adjuntos_base64
@@ -76,8 +105,8 @@ def enviar_a_n8n(
         print(f"{'='*80}")
         print(f"🔗 URL: {n8n_webhook_url}")
         print(f"📧 TO: {email}")
-        print(f"📧 CC_EMPRESA: {cc_email or 'N/A'}")
-        print(f"📧 CC_BD: {correo_bd or 'N/A'}")
+        print(f"📧 CC (combinado): {cc_email_combinado or 'N/A'}")
+        print(f"📧 CC_BD (separado): {correo_bd or 'N/A'}")
         print(f"📱 WhatsApp: {whatsapp or 'N/A'}")
         print(f"🎫 Serial: {serial}")
         print(f"📋 Tipo: {tipo_notificacion}")
