@@ -424,8 +424,6 @@ def sincronizar_excel_completo():
                         # ═══ ACTUALIZAR CAMPOS KACTUS ═══
                         if num_incap:
                             caso.numero_incapacidad = num_incap
-                        if pd.notna(row.get("dias_kactus")):
-                            caso.dias_kactus = int(row["dias_kactus"])
                         if pd.notna(row.get("codigo_cie10")):
                             caso.codigo_cie10 = str(row["codigo_cie10"]).strip()
                         if pd.notna(row.get("diagnostico")):

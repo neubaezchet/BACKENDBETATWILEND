@@ -95,8 +95,8 @@ def analizar_historial_empleado(db: Session, cedula: str) -> dict:
     # Generar alertas (incluye huecos/prórrogas cortadas)
     alertas = _generar_alertas_180(cadenas, cedula, nombre, huecos)
     
-    # Calcular totales
-    dias_total = sum(c.dias_incapacidad or 0 for c in casos)
+    # Calcular totales — restar días traslapados para no contar doble
+    dias_total = sum(c.dias_incapacidad or 0 for c in casos) - sum(c.dias_traslapo or 0 for c in casos)
     
     # Días en prórroga = cadena activa más larga (solo cadenas con prórrogas)
     dias_prorroga = max(
@@ -167,14 +167,23 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
             resultado = _es_prorroga_de(ultimo_caso, caso_siguiente)
             
             if resultado["es_prorroga"]:
+                # Días de traslapo a descontar (si hay solapamiento)
+                dias_traslapo_desc = resultado.get("dias_traslapo", 0)
+                # También verificar el campo dias_traslapo del caso en BD
+                if not dias_traslapo_desc and caso_siguiente.dias_traslapo:
+                    dias_traslapo_desc = caso_siguiente.dias_traslapo
+                
                 cadena["prorrogas"].append({
                     **_caso_a_dict(caso_siguiente),
                     "tipo_deteccion": resultado["tipo"],
                     "confianza": resultado["confianza"],
                     "brecha_dias": resultado["brecha_dias"],
+                    "dias_traslapo": dias_traslapo_desc,
                     "explicacion": resultado["explicacion"],
                 })
-                cadena["dias_acumulados"] += caso_siguiente.dias_incapacidad or 0
+                # Sumar días REALES: días de la incapacidad MENOS los días traslapados
+                dias_efectivos = (caso_siguiente.dias_incapacidad or 0) - dias_traslapo_desc
+                cadena["dias_acumulados"] += max(dias_efectivos, 0)
                 cadena["fecha_fin_cadena"] = caso_siguiente.fecha_fin or caso_siguiente.fecha_inicio
                 
                 if caso_siguiente.codigo_cie10:
@@ -226,10 +235,18 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
     brecha = (fecha_inicio_nuevo.date() - fecha_fin_anterior.date()).days
     resultado_base["brecha_dias"] = brecha
     
-    # Si la brecha es negativa o muy grande, no es prórroga
-    if brecha < -1:  # Permitir 1 día de traslape
-        resultado_base["explicacion"] = f"Incapacidades traslapadas ({brecha} días)"
-        return resultado_base
+    # Si la brecha es negativa = TRASLAPO (superposición de fechas)
+    # Traslapos SÍ son parte de la cadena, solo se descuentan los días superpuestos
+    if brecha < 0:
+        dias_traslapo_calc = abs(brecha)
+        return {
+            "es_prorroga": True,
+            "tipo": "traslapo",
+            "confianza": "alta",
+            "brecha_dias": brecha,
+            "dias_traslapo": dias_traslapo_calc,
+            "explicacion": f"Incapacidades traslapadas ({dias_traslapo_calc} días de solapamiento). Los días traslapados se cuentan UNA sola vez."
+        }
     
     if brecha > VENTANA_CORTE_PRORROGA:
         resultado_base["explicacion"] = f"Brecha de {brecha} días — CADENA CORTADA (regla >30d sin incapacidad)"
