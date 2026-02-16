@@ -1,19 +1,36 @@
 """
-SERVICIO CIE-10 v2 — Motor de correlación con asertividad explícita
-====================================================================
+SERVICIO CIE-10 v3 — Motor de correlación jerárquica con asertividad explícita
+================================================================================
 Sistema de correlación de diagnósticos CIE-10 con porcentaje de asertividad
-calculado a partir de múltiples factores:
-  1. Asertividad base del grupo de correlación
-  2. Exclusiones (pares que NO deben correlacionarse)
-  3. Correlaciones direccionales (A→B vs B→A)
-  4. Umbrales temporales (degradación por días transcurridos)
-  5. Historial de validaciones (aprendizaje continuo)
+calculado a partir de múltiples factores y jerarquía de 6 niveles:
+
+  JERARQUÍA DE CORRELACIÓN (de mayor a menor asertividad):
+    Nivel 1 — Mismo código:           100%
+    Nivel 2 — Mismo bloque CIE-10:     90%  (ej: J00-J06 = vías resp. superiores)
+    Nivel 3 — Grupo de correlación:    var%  (definido en correlaciones_cie10.json)
+    Nivel 4 — Mismo sistema anatómico:  70%  (ej: RESPIRATORIO↔RESPIRATORIO)
+    Nivel 5 — Inter-sistema vinculado:  65-80% (ej: ENDOCRINO→VISUAL por diabetes)
+    Nivel 6 — Mismo capítulo CIE-10:   55%  (misma letra pero sin vínculo clínico)
+    Sin correlación:                     0%
+
+  MODIFICADORES (aplicados sobre la asertividad base):
+    A. Exclusiones: pares que NO deben correlacionarse
+    B. Correlaciones direccionales: A→B vs B→A
+    C. Umbrales temporales: degradación por días transcurridos
+    D. Historial de validaciones: aprendizaje continuo
+
+  CAMPOS DERIVADOS POR CÓDIGO:
+    - sistema_anatomico: derivado de la letra del código
+    - gravedad_estimada: derivada de dias_tipicos (LEVE/MODERADA/GRAVE/MUY_GRAVE)
+    - causa_externa: true para códigos S,T,V,W,X,Y
+    - permite_prorroga: true excepto códigos Z (factores de salud)
 
 Normativa colombiana 2026:
   - Ley 776/2002 Art. 3
   - Decreto 1427/2022
   - CIE-10 OMS/OPS vigente — Resolución 1895/2001 MinSalud
   - GPC MinSalud Colombia
+  - GATISO Resolución 2844/2007
 
 Para actualizar: edite los archivos JSON en app/data/
 """
@@ -172,11 +189,12 @@ def _normalizar_codigo(codigo: str) -> str:
 # ═══════════════════════════════════════════════════════════
 
 def buscar_codigo(codigo: str) -> Optional[dict]:
-    """Busca un código CIE-10 y retorna su información completa"""
+    """Busca un código CIE-10 y retorna su información completa con jerarquía"""
     cie10 = _cargar_cie10()
     cod_norm = _normalizar_codigo(codigo)
     info = cie10.get("codigos", {}).get(cod_norm)
     if info:
+        capitulo = _identificar_capitulo(cod_norm)
         return {
             "codigo": cod_norm,
             "codigo_original": codigo,
@@ -185,6 +203,12 @@ def buscar_codigo(codigo: str) -> Optional[dict]:
             "grupo": info.get("grupo", ""),
             "dias_tipicos": info.get("dias_tipicos", []),
             "encontrado": True,
+            # ─── Campos jerárquicos v3 ───
+            "sistema_anatomico": _obtener_sistema_anatomico(cod_norm),
+            "gravedad_estimada": _obtener_gravedad_estimada(cod_norm),
+            "causa_externa": _es_causa_externa(cod_norm),
+            "permite_prorroga": _permite_prorroga(cod_norm),
+            "capitulo": capitulo,
         }
     # No encontrado exacto, pero podemos dar info del capítulo
     capitulo = _identificar_capitulo(cod_norm)
@@ -197,6 +221,11 @@ def buscar_codigo(codigo: str) -> Optional[dict]:
         "capitulo": capitulo,
         "dias_tipicos": [],
         "encontrado": False,
+        # ─── Campos jerárquicos v3 ───
+        "sistema_anatomico": _obtener_sistema_anatomico(cod_norm),
+        "gravedad_estimada": "INDETERMINADA",
+        "causa_externa": _es_causa_externa(cod_norm),
+        "permite_prorroga": _permite_prorroga(cod_norm),
     }
 
 
@@ -209,6 +238,102 @@ def _identificar_capitulo(codigo: str) -> Optional[dict]:
             inicio, fin = rango.split("-")
             if inicio <= codigo <= fin + "Z":
                 return {"capitulo": cap_id, "rango": rango, "titulo": cap_data.get("titulo", "")}
+    return None
+
+
+# ═══════════════════════════════════════════════════════════
+# JERARQUÍA CIE-10: SISTEMA ANATÓMICO + GRAVEDAD + INDICADORES
+# ═══════════════════════════════════════════════════════════
+
+def _obtener_sistema_anatomico(codigo: str) -> str:
+    """
+    Obtiene el sistema anatómico de un código CIE-10.
+    Basado en la clasificación OMS/OPS:
+      - Letra del código → sistema principal
+      - Refinamiento para capítulo H (VISUAL vs AUDITIVO)
+    """
+    if not codigo or len(codigo) < 1:
+        return "DESCONOCIDO"
+    
+    cie10 = _cargar_cie10()
+    sistemas = cie10.get("sistemas_anatomicos", {})
+    
+    letra = codigo[0].upper()
+    
+    # Caso especial: H se divide en VISUAL (H00-H59) y AUDITIVO (H60-H95)
+    if letra == "H" and len(codigo) >= 3:
+        try:
+            num = int(codigo[1:3])
+            if num <= 59:
+                return "VISUAL"
+            else:
+                return "AUDITIVO"
+        except ValueError:
+            pass
+    
+    mapeo = sistemas.get("mapeo_por_letra", {})
+    return mapeo.get(letra, "DESCONOCIDO")
+
+
+def _obtener_gravedad_estimada(codigo: str) -> str:
+    """
+    Estima la gravedad de un código CIE-10 a partir de sus días típicos máximos.
+    Basado en reglas_gravedad del JSON.
+    """
+    cie10 = _cargar_cie10()
+    info = cie10.get("codigos", {}).get(codigo, {})
+    dias_tipicos = info.get("dias_tipicos", [])
+    
+    if not dias_tipicos or len(dias_tipicos) < 2:
+        return "INDETERMINADA"
+    
+    max_dias = dias_tipicos[1]
+    
+    reglas = cie10.get("reglas_gravedad", {}).get("rangos", [])
+    for regla in reglas:
+        if max_dias <= regla.get("max_dias", 9999):
+            return regla.get("gravedad", "INDETERMINADA")
+    
+    return "INDETERMINADA"
+
+
+def _es_causa_externa(codigo: str) -> bool:
+    """Determina si un código CIE-10 es de causa externa (traumático)"""
+    if not codigo:
+        return False
+    cie10 = _cargar_cie10()
+    prefijos = cie10.get("indicadores_por_prefijo", {}).get("causa_externa", ["S", "T", "V", "W", "X", "Y"])
+    return codigo[0].upper() in prefijos
+
+
+def _permite_prorroga(codigo: str) -> bool:
+    """Determina si un código permite prórroga directa (excluye factores Z)"""
+    if not codigo:
+        return True
+    cie10 = _cargar_cie10()
+    no_prorroga = cie10.get("indicadores_por_prefijo", {}).get("no_permite_prorroga_directa", ["Z"])
+    return codigo[0].upper() not in no_prorroga
+
+
+def _buscar_correlacion_inter_sistema(sistema1: str, sistema2: str) -> Optional[dict]:
+    """
+    Busca si existe una correlación inter-sistema definida.
+    Las correlaciones inter-sistema son bidireccionales.
+    
+    Retorna: {"asertividad": float, "ejemplo": str, "evidencia": str} o None
+    """
+    cie10 = _cargar_cie10()
+    inter = cie10.get("correlaciones_inter_sistema", {})
+    
+    for par in inter.get("pares", []):
+        sa = par.get("sistema_a", "")
+        sb = par.get("sistema_b", "")
+        if (sistema1 == sa and sistema2 == sb) or (sistema1 == sb and sistema2 == sa):
+            return {
+                "asertividad": par.get("asertividad", 65),
+                "ejemplo": par.get("ejemplo", ""),
+                "evidencia": par.get("evidencia", "")
+            }
     return None
 
 
@@ -501,30 +626,53 @@ def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = 
     grupos_cod2 = set(indice.get(cod2, []))
     grupos_comunes = grupos_cod1 & grupos_cod2
     
-    if not grupos_comunes and not mismo_bloque:
-        # Mismo capítulo (misma letra)
+    # ─── Determinar sistemas anatómicos (v3) ───
+    sistema1 = _obtener_sistema_anatomico(cod1)
+    sistema2 = _obtener_sistema_anatomico(cod2)
+    mismo_sistema = (sistema1 == sistema2 and sistema1 != "DESCONOCIDO")
+    inter_sistema = _buscar_correlacion_inter_sistema(sistema1, sistema2) if not mismo_sistema else None
+    
+    # ═══ JERARQUÍA DE 6 NIVELES ═══
+    # Nivel 2: Mismo bloque (90%) — sube de 65% a 90% porque clínicamente
+    # los códigos del mismo bloque CIE-10 son de la misma entidad diagnóstica
+    # Ej: J00-J06 son todas infecciones agudas de vías resp. superiores
+    if grupos_comunes:
+        # Nivel 3: Grupo de correlación (usa asertividad del grupo)
+        pass  # Se procesan abajo
+    elif mismo_bloque:
+        # Nivel 2: Mismo bloque CIE-10 → 90%
+        pass  # Se procesan abajo
+    elif mismo_sistema:
+        # Nivel 4: Mismo sistema anatómico → 70%
         if cod1[0] == cod2[0]:
-            resultado_base["asertividad"] = 15.0
-            resultado_base["confianza"] = "BAJA"
-            resultado_base["explicacion"] = f"{cod1} y {cod2} mismo capítulo CIE-10 pero sin correlación clínica definida"
-            resultado_base["detalles_calculo"] = {
-                "asertividad_base_grupo": 15.0,
-                "formula": "Mismo capítulo sin correlación = 15%"
-            }
-            return resultado_base
-        
-        resultado_base["explicacion"] = f"{cod1} y {cod2} no tienen correlación diagnóstica identificada"
+            # Mismo capítulo (misma letra) + mismo sistema = 70%
+            pass
+        else:
+            # Diferente capítulo pero mismo sistema (ej: S y T = TRAUMATICO) = 70%
+            pass
+    elif inter_sistema:
+        # Nivel 5: Inter-sistema vinculado → 65-80%
+        pass
+    elif cod1[0] == cod2[0]:
+        # Nivel 6: Mismo capítulo sin vínculo clínico → 55%
+        pass
+    else:
+        # Sin correlación
+        resultado_base["explicacion"] = f"{cod1} y {cod2} no tienen correlación diagnóstica identificada (sistemas: {sistema1} ↔ {sistema2})"
         return resultado_base
     
-    # ═══ PASO 2: Obtener asertividad base del grupo ═══
+    # ═══ PASO 2: Obtener asertividad base según nivel jerárquico ═══
     corr = _cargar_correlaciones()
     mejor_asertividad = 0.0
     mejor_grupo = ""
     mejor_evidencia = ""
     req_validacion = False
     explicaciones = []
+    nivel_jerarquico = ""
     
     if grupos_comunes:
+        # NIVEL 3: Grupo de correlación
+        nivel_jerarquico = "GRUPO_CORRELACION"
         for g in grupos_comunes:
             grupo_data = corr["grupos_correlacion"].get(g, {})
             asert = grupo_data.get("asertividad", 80)
@@ -536,11 +684,36 @@ def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = 
                 req_validacion = True
             explicaciones.append(grupo_data.get("logica", ""))
     elif mismo_bloque:
-        # Mismo bloque pero no en correlaciones explícitas
-        mejor_asertividad = 65.0
+        # NIVEL 2: Mismo bloque CIE-10 → 90%
+        nivel_jerarquico = "MISMO_BLOQUE"
+        mejor_asertividad = 90.0
         mejor_grupo = "MISMO_BLOQUE"
-        mejor_evidencia = "CIE-10: Mismo bloque diagnóstico"
-        explicaciones.append(f"{cod1} y {cod2} pertenecen al mismo bloque CIE-10")
+        mejor_evidencia = "CIE-10 OMS: Mismo bloque diagnóstico — entidades clínicas estrechamente relacionadas"
+        explicaciones.append(f"{cod1} y {cod2} pertenecen al mismo bloque CIE-10 (alta afinidad clínica)")
+    elif mismo_sistema:
+        # NIVEL 4: Mismo sistema anatómico → 70%
+        nivel_jerarquico = "MISMO_SISTEMA"
+        mejor_asertividad = 70.0
+        mejor_grupo = f"SISTEMA_{sistema1}"
+        mejor_evidencia = f"CIE-10 OMS: Mismo sistema anatómico ({sistema1})"
+        explicaciones.append(f"{cod1} y {cod2} afectan el mismo sistema ({sistema1})")
+        req_validacion = True
+    elif inter_sistema:
+        # NIVEL 5: Inter-sistema vinculado → asertividad del par
+        nivel_jerarquico = "INTER_SISTEMA"
+        mejor_asertividad = inter_sistema["asertividad"]
+        mejor_grupo = f"INTER_{sistema1}_{sistema2}"
+        mejor_evidencia = inter_sistema["evidencia"]
+        explicaciones.append(f"Correlación inter-sistema {sistema1}↔{sistema2}: {inter_sistema['ejemplo']}")
+        req_validacion = True
+    elif cod1[0] == cod2[0]:
+        # NIVEL 6: Mismo capítulo sin vínculo clínico → 55%
+        nivel_jerarquico = "MISMO_CAPITULO"
+        mejor_asertividad = 55.0
+        mejor_grupo = "MISMO_CAPITULO"
+        mejor_evidencia = "CIE-10 OMS: Mismo capítulo diagnóstico"
+        explicaciones.append(f"{cod1} y {cod2} mismo capítulo CIE-10 sin correlación clínica definida")
+        req_validacion = True
     
     asertividad_base = mejor_asertividad
     
@@ -642,12 +815,15 @@ def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = 
         "correlacionados": correlacionados,
         "asertividad": asertividad_final,
         "confianza": confianza,
-        "grupos_comunes": list(grupos_comunes) if grupos_comunes else (["MISMO_BLOQUE"] if mismo_bloque else []),
+        "grupos_comunes": list(grupos_comunes) if grupos_comunes else ([mejor_grupo] if mejor_grupo else []),
         "mismo_bloque": mismo_bloque,
+        "nivel_jerarquico": nivel_jerarquico,
+        "sistemas_anatomicos": {"codigo1": sistema1, "codigo2": sistema2, "mismo_sistema": mismo_sistema},
         "explicacion": explicacion_final,
         "detalles_calculo": {
             "asertividad_base_grupo": round(mejor_asertividad, 1),
             "grupo_principal": mejor_grupo,
+            "nivel_jerarquico": nivel_jerarquico,
             "ajuste_exclusion": ajuste_exclusion,
             "ajuste_direccional": ajuste_direccional,
             "factor_temporal": factor_temporal,
@@ -771,10 +947,12 @@ def info_sistema() -> dict:
     valid = _cargar_validaciones()
     
     return {
-        "version_motor": "2.0",
+        "version_motor": "3.0",
         "version_cie10": cie10.get("version"),
         "total_codigos": len(cie10.get("codigos", {})),
         "total_capitulos": len(cie10.get("capitulos", {})),
+        "total_sistemas_anatomicos": len(cie10.get("sistemas_anatomicos", {}).get("sistemas_lista", [])),
+        "total_correlaciones_inter_sistema": len(cie10.get("correlaciones_inter_sistema", {}).get("pares", [])),
         "version_correlaciones": corr.get("version"),
         "total_grupos_correlacion": len(corr.get("grupos_correlacion", {})),
         "total_codigos_indexados": len(indice),
@@ -783,6 +961,14 @@ def info_sistema() -> dict:
         "total_grupos_temporales": len(umbr.get("umbrales_por_grupo", {})),
         "total_validaciones_historicas": valid.get("estadisticas", {}).get("total_validaciones", 0),
         "precision_historica": valid.get("estadisticas", {}).get("precision_historica"),
+        "jerarquia_niveles": [
+            "Nivel 1: Mismo código (100%)",
+            "Nivel 2: Mismo bloque (90%)",
+            "Nivel 3: Grupo correlación (variable)",
+            "Nivel 4: Mismo sistema anatómico (70%)",
+            "Nivel 5: Inter-sistema vinculado (65-80%)",
+            "Nivel 6: Mismo capítulo (55%)"
+        ],
         "ventana_prorroga_dias": corr.get("reglas_temporales", {}).get("ventana_prorroga_dias", 30),
         "ventana_prorroga_maxima": corr.get("reglas_temporales", {}).get("ventana_prorroga_maxima_dias", 90),
         "umbral_prorroga": umbr.get("reglas_aplicacion", {}).get("umbral_prorroga", 60),

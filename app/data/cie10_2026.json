@@ -28,6 +28,144 @@
     "XXI": { "rango": "Z00-Z99", "titulo": "Factores que influyen en el estado de salud y contacto con servicios de salud" }
   },
 
+  "_comentario_jerarquia": "Clasificación jerárquica OMS CIE-10: Capítulo → Bloque → Grupo → Código. Se agregan sistemas anatómicos para correlación inter-capítulo.",
+  
+  "sistemas_anatomicos": {
+    "_fuente": "OMS CIE-10 - Agrupación por sistema anatómico/funcional para correlación cruzada",
+    "mapeo_por_letra": {
+      "A": "INFECCIOSO",    "B": "INFECCIOSO",
+      "C": "NEOPLASICO",    "D": "HEMATOLOGICO",
+      "E": "ENDOCRINO",     "F": "MENTAL",
+      "G": "NERVIOSO",      "H": "SENSORIAL",
+      "I": "CIRCULATORIO",  "J": "RESPIRATORIO",
+      "K": "DIGESTIVO",     "L": "TEGUMENTARIO",
+      "M": "OSTEOMUSCULAR", "N": "GENITOURINARIO",
+      "O": "REPRODUCTIVO",  "P": "PERINATAL",
+      "Q": "CONGENITO",     "R": "SINTOMATICO",
+      "S": "TRAUMATICO",    "T": "TRAUMATICO",
+      "V": "CAUSA_EXTERNA", "W": "CAUSA_EXTERNA",
+      "X": "CAUSA_EXTERNA", "Y": "CAUSA_EXTERNA",
+      "Z": "FACTORES_SALUD"
+    },
+    "refinamiento_por_bloque": {
+      "_nota": "Bloques del capítulo H se dividen en VISUAL y AUDITIVO",
+      "H00-H59": "VISUAL",
+      "H60-H95": "AUDITIVO"
+    },
+    "sistemas_lista": [
+      "INFECCIOSO", "NEOPLASICO", "HEMATOLOGICO", "ENDOCRINO",
+      "MENTAL", "NERVIOSO", "VISUAL", "AUDITIVO",
+      "CIRCULATORIO", "RESPIRATORIO", "DIGESTIVO", "TEGUMENTARIO",
+      "OSTEOMUSCULAR", "GENITOURINARIO", "REPRODUCTIVO",
+      "PERINATAL", "CONGENITO", "SINTOMATICO", "TRAUMATICO",
+      "CAUSA_EXTERNA", "FACTORES_SALUD"
+    ]
+  },
+
+  "correlaciones_inter_sistema": {
+    "_fuente": "Guías de Práctica Clínica MinSalud Colombia + GATISO Resolución 2844/2007 + evidencia clínica OMS",
+    "_nota": "Correlaciones entre capítulos CIE-10 distintos por vínculo fisiopatológico demostrado. Asertividad siempre menor que intra-bloque.",
+    "pares": [
+      {
+        "sistema_a": "ENDOCRINO", "sistema_b": "VISUAL",
+        "asertividad": 72, "ejemplo": "Diabetes E11 → Retinopatía H36",
+        "evidencia": "GPC MinSalud Diabetes 2015 — complicaciones microvasculares"
+      },
+      {
+        "sistema_a": "ENDOCRINO", "sistema_b": "GENITOURINARIO",
+        "asertividad": 70, "ejemplo": "Diabetes E11 → Nefropatía N18",
+        "evidencia": "GPC MinSalud Diabetes 2015 — complicaciones renales"
+      },
+      {
+        "sistema_a": "ENDOCRINO", "sistema_b": "NERVIOSO",
+        "asertividad": 68, "ejemplo": "Diabetes E11 → Neuropatía G63",
+        "evidencia": "GPC MinSalud Diabetes — neuropatía periférica diabética"
+      },
+      {
+        "sistema_a": "ENDOCRINO", "sistema_b": "CIRCULATORIO",
+        "asertividad": 70, "ejemplo": "Diabetes E11 → Enfermedad vascular I70",
+        "evidencia": "GPC MinSalud Diabetes — macroangiopatía"
+      },
+      {
+        "sistema_a": "CIRCULATORIO", "sistema_b": "NERVIOSO",
+        "asertividad": 75, "ejemplo": "Hipertensión I10 → ACV I63/G45",
+        "evidencia": "GPC MinSalud HTA 2013 — complicaciones cerebrovasculares"
+      },
+      {
+        "sistema_a": "CIRCULATORIO", "sistema_b": "GENITOURINARIO",
+        "asertividad": 65, "ejemplo": "HTA I10 → Nefroesclerosis N18",
+        "evidencia": "GPC MinSalud HTA — daño renal hipertensivo"
+      },
+      {
+        "sistema_a": "OSTEOMUSCULAR", "sistema_b": "NERVIOSO",
+        "asertividad": 75, "ejemplo": "Hernia disco M51 → Radiculopatía G56",
+        "evidencia": "GATISO DME Resolución 2844/2007 — lesiones por compresión nerviosa"
+      },
+      {
+        "sistema_a": "OSTEOMUSCULAR", "sistema_b": "TRAUMATICO",
+        "asertividad": 78, "ejemplo": "Artrosis M17 → Fractura S82",
+        "evidencia": "Secuelas traumáticas osteomusculares — rehabilitación funcional"
+      },
+      {
+        "sistema_a": "RESPIRATORIO", "sistema_b": "INFECCIOSO",
+        "asertividad": 72, "ejemplo": "EPOC J44 → Neumonía bacteriana J15/A49",
+        "evidencia": "GPC MinSalud EPOC — sobreinfección respiratoria"
+      },
+      {
+        "sistema_a": "DIGESTIVO", "sistema_b": "INFECCIOSO",
+        "asertividad": 70, "ejemplo": "Cirrosis K74 → Peritonitis bacteriana A41",
+        "evidencia": "Complicaciones infecciosas hepatológicas"
+      },
+      {
+        "sistema_a": "MENTAL", "sistema_b": "NERVIOSO",
+        "asertividad": 70, "ejemplo": "Depresión F32 → Cefalea crónica G44",
+        "evidencia": "GPC MinSalud Depresión — comorbilidad neurológica/somatización"
+      },
+      {
+        "sistema_a": "GENITOURINARIO", "sistema_b": "REPRODUCTIVO",
+        "asertividad": 80, "ejemplo": "IVU N39 → Infección urinaria en embarazo O23",
+        "evidencia": "GPC MinSalud Embarazo — complicaciones genitourinarias"
+      },
+      {
+        "sistema_a": "HEMATOLOGICO", "sistema_b": "REPRODUCTIVO",
+        "asertividad": 72, "ejemplo": "Anemia D50 → Anemia gestacional O99",
+        "evidencia": "GPC MinSalud Embarazo — anemia gestacional"
+      },
+      {
+        "sistema_a": "INFECCIOSO", "sistema_b": "HEMATOLOGICO",
+        "asertividad": 65, "ejemplo": "VIH B20 → Anemia D64",
+        "evidencia": "Complicaciones hematológicas por infecciones crónicas"
+      },
+      {
+        "sistema_a": "NEOPLASICO", "sistema_b": "HEMATOLOGICO",
+        "asertividad": 75, "ejemplo": "Cáncer C34 → Anemia D50",
+        "evidencia": "Anemia asociada a neoplasias — síndrome paraneoplásico"
+      },
+      {
+        "sistema_a": "TRAUMATICO", "sistema_b": "NERVIOSO",
+        "asertividad": 80, "ejemplo": "TEC S06 → Cefalea postraumática G44",
+        "evidencia": "Secuelas neurológicas postraumáticas"
+      }
+    ]
+  },
+
+  "reglas_gravedad": {
+    "_nota": "Gravedad estimada derivada automáticamente de dias_tipicos[1] (día máximo típico)",
+    "rangos": [
+      { "max_dias": 7, "gravedad": "LEVE" },
+      { "max_dias": 30, "gravedad": "MODERADA" },
+      { "max_dias": 90, "gravedad": "GRAVE" },
+      { "max_dias": 9999, "gravedad": "MUY_GRAVE" }
+    ]
+  },
+
+  "indicadores_por_prefijo": {
+    "_nota": "Características derivables automáticamente del prefijo del código CIE-10",
+    "causa_externa": ["S", "T", "V", "W", "X", "Y"],
+    "no_permite_prorroga_directa": ["Z"],
+    "requiere_diagnostico_definitivo": ["R"]
+  },
+
   "codigos": {
     "A00": { "desc": "Colera", "bloque": "A00-A09", "grupo": "Infecciosas intestinales", "dias_tipicos": [3, 7] },
     "A01": { "desc": "Fiebres tifoidea y paratifoidea", "bloque": "A00-A09", "grupo": "Infecciosas intestinales", "dias_tipicos": [7, 21] },
