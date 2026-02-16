@@ -1,10 +1,21 @@
 """
-SERVICIO CIE-10 - Motor de búsqueda y correlación de diagnósticos
-=================================================================
-Carga los JSONs de CIE-10 y correlaciones una sola vez en memoria.
-Provee funciones de búsqueda, validación y correlación.
+SERVICIO CIE-10 v2 — Motor de correlación con asertividad explícita
+====================================================================
+Sistema de correlación de diagnósticos CIE-10 con porcentaje de asertividad
+calculado a partir de múltiples factores:
+  1. Asertividad base del grupo de correlación
+  2. Exclusiones (pares que NO deben correlacionarse)
+  3. Correlaciones direccionales (A→B vs B→A)
+  4. Umbrales temporales (degradación por días transcurridos)
+  5. Historial de validaciones (aprendizaje continuo)
 
-Para actualizar a CIE-11: solo reemplace los archivos JSON en app/data/
+Normativa colombiana 2026:
+  - Ley 776/2002 Art. 3
+  - Decreto 1427/2022
+  - CIE-10 OMS/OPS vigente — Resolución 1895/2001 MinSalud
+  - GPC MinSalud Colombia
+
+Para actualizar: edite los archivos JSON en app/data/
 """
 
 import json
@@ -21,6 +32,10 @@ from functools import lru_cache
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _cie10_data: Optional[dict] = None
 _correlaciones_data: Optional[dict] = None
+_exclusiones_data: Optional[dict] = None
+_direccionales_data: Optional[dict] = None
+_umbrales_data: Optional[dict] = None
+_validaciones_data: Optional[dict] = None
 _codigo_a_grupos: Optional[dict] = None  # índice invertido: código → lista de grupos
 
 
@@ -44,6 +59,57 @@ def _cargar_correlaciones() -> dict:
     return _correlaciones_data
 
 
+def _cargar_exclusiones() -> dict:
+    global _exclusiones_data
+    if _exclusiones_data is None:
+        ruta = _DATA_DIR / "exclusiones_cie10.json"
+        if ruta.exists():
+            with open(ruta, "r", encoding="utf-8") as f:
+                _exclusiones_data = json.load(f)
+            print(f"✅ Exclusiones CIE-10 cargadas: {len(_exclusiones_data.get('exclusiones', []))} reglas")
+        else:
+            _exclusiones_data = {"exclusiones": []}
+    return _exclusiones_data
+
+
+def _cargar_direccionales() -> dict:
+    global _direccionales_data
+    if _direccionales_data is None:
+        ruta = _DATA_DIR / "direccionales_cie10.json"
+        if ruta.exists():
+            with open(ruta, "r", encoding="utf-8") as f:
+                _direccionales_data = json.load(f)
+            print(f"✅ Direccionales CIE-10 cargadas: {len(_direccionales_data.get('direccionales', []))} reglas")
+        else:
+            _direccionales_data = {"direccionales": []}
+    return _direccionales_data
+
+
+def _cargar_umbrales() -> dict:
+    global _umbrales_data
+    if _umbrales_data is None:
+        ruta = _DATA_DIR / "umbrales_temporales_cie10.json"
+        if ruta.exists():
+            with open(ruta, "r", encoding="utf-8") as f:
+                _umbrales_data = json.load(f)
+            print(f"✅ Umbrales temporales CIE-10 cargados: {len(_umbrales_data.get('umbrales_por_grupo', {}))} grupos")
+        else:
+            _umbrales_data = {"umbrales_por_grupo": {}, "reglas_aplicacion": {}}
+    return _umbrales_data
+
+
+def _cargar_validaciones() -> dict:
+    global _validaciones_data
+    if _validaciones_data is None:
+        ruta = _DATA_DIR / "validaciones_historicas.json"
+        if ruta.exists():
+            with open(ruta, "r", encoding="utf-8") as f:
+                _validaciones_data = json.load(f)
+        else:
+            _validaciones_data = {"ajustes_aprendidos": {}, "estadisticas": {"total_validaciones": 0}}
+    return _validaciones_data
+
+
 def _construir_indice_invertido() -> dict:
     """Construye un índice: código → [lista de grupos donde aparece]"""
     global _codigo_a_grupos
@@ -60,15 +126,24 @@ def _construir_indice_invertido() -> dict:
 
 
 def recargar_datos():
-    """Fuerza recarga de los JSONs (para actualizaciones en caliente)"""
+    """Fuerza recarga de TODOS los JSONs (para actualizaciones en caliente)"""
     global _cie10_data, _correlaciones_data, _codigo_a_grupos
+    global _exclusiones_data, _direccionales_data, _umbrales_data, _validaciones_data
     _cie10_data = None
     _correlaciones_data = None
     _codigo_a_grupos = None
+    _exclusiones_data = None
+    _direccionales_data = None
+    _umbrales_data = None
+    _validaciones_data = None
     _cargar_cie10()
     _cargar_correlaciones()
     _construir_indice_invertido()
-    return {"ok": True, "mensaje": "Datos CIE-10 y correlaciones recargados"}
+    _cargar_exclusiones()
+    _cargar_direccionales()
+    _cargar_umbrales()
+    _cargar_validaciones()
+    return {"ok": True, "mensaje": "Datos CIE-10 v2 completos recargados (correlaciones, exclusiones, direccionales, umbrales, historial)"}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -138,95 +213,455 @@ def _identificar_capitulo(codigo: str) -> Optional[dict]:
 
 
 # ═══════════════════════════════════════════════════════════
-# CORRELACIÓN DE DIAGNÓSTICOS
+# MOTOR DE EXCLUSIONES
 # ═══════════════════════════════════════════════════════════
 
-def son_correlacionados(codigo1: str, codigo2: str) -> dict:
+def _buscar_exclusion(cod1: str, cod2: str) -> Optional[dict]:
     """
-    Determina si dos códigos CIE-10 están correlacionados.
+    Busca si existe una exclusión definida para el par de códigos.
+    Las exclusiones son bidireccionales por defecto.
+    Retorna la regla de exclusión o None.
+    """
+    exclusiones = _cargar_exclusiones()
+    for excl in exclusiones.get("exclusiones", []):
+        a = _normalizar_codigo(excl.get("codigo_a", ""))
+        b = _normalizar_codigo(excl.get("codigo_b", ""))
+        if (cod1 == a and cod2 == b) or (cod1 == b and cod2 == a):
+            return excl
+    return None
+
+
+# ═══════════════════════════════════════════════════════════
+# MOTOR DE CORRELACIONES DIRECCIONALES
+# ═══════════════════════════════════════════════════════════
+
+def _buscar_direccional(cod_anterior: str, cod_nuevo: str) -> Optional[dict]:
+    """
+    Busca si existe una regla direccional para el par de códigos.
+    cod_anterior = diagnóstico de la incapacidad previa
+    cod_nuevo = diagnóstico de la incapacidad nueva
+    
+    Retorna la regla direccional con la asertividad correspondiente a la dirección,
+    o None si no hay regla.
+    """
+    direccionales = _cargar_direccionales()
+    for direc in direccionales.get("direccionales", []):
+        origen = _normalizar_codigo(direc.get("codigo_origen", ""))
+        destino = _normalizar_codigo(direc.get("codigo_destino", ""))
+        
+        if cod_anterior == origen and cod_nuevo == destino:
+            # Dirección de ida (origen → destino): usar asertividad_ida
+            return {
+                "encontrado": True,
+                "asertividad_direccional": direc.get("asertividad_ida", 80),
+                "direccion": "ida",
+                "razon": direc.get("razon", ""),
+                "evidencia": direc.get("evidencia", "")
+            }
+        elif cod_anterior == destino and cod_nuevo == origen:
+            # Dirección de vuelta (destino → origen): usar asertividad_vuelta
+            return {
+                "encontrado": True,
+                "asertividad_direccional": direc.get("asertividad_vuelta", 40),
+                "direccion": "vuelta",
+                "razon": direc.get("razon", ""),
+                "evidencia": direc.get("evidencia", "")
+            }
+    return None
+
+
+# ═══════════════════════════════════════════════════════════
+# MOTOR DE UMBRALES TEMPORALES
+# ═══════════════════════════════════════════════════════════
+
+def _obtener_factor_temporal(grupo: str, dias_entre: int) -> dict:
+    """
+    Obtiene el factor de degradación temporal para un grupo y un número de días.
+    
+    Retorna:
+        {
+            "factor": float (0.05 - 1.00),
+            "nota": str,
+            "grupo_umbral": str (grupo usado, puede ser DEFAULT)
+        }
+    """
+    umbrales = _cargar_umbrales()
+    umbrales_grupo = umbrales.get("umbrales_por_grupo", {})
+    
+    # Buscar umbral específico del grupo, o usar DEFAULT
+    rangos = None
+    grupo_usado = grupo
+    if grupo in umbrales_grupo:
+        rangos = umbrales_grupo[grupo].get("rangos", [])
+    
+    if not rangos:
+        rangos = umbrales_grupo.get("DEFAULT", {}).get("rangos", [])
+        grupo_usado = "DEFAULT"
+    
+    if not rangos:
+        # Sin umbrales configurados, usar factor por defecto basado en 30 días
+        if dias_entre <= 7:
+            return {"factor": 1.00, "nota": "Sin umbrales — prórroga inmediata", "grupo_umbral": "NONE"}
+        elif dias_entre <= 30:
+            return {"factor": 0.85, "nota": "Sin umbrales — ventana legal", "grupo_umbral": "NONE"}
+        elif dias_entre <= 90:
+            return {"factor": 0.45, "nota": "Sin umbrales — fuera de ventana", "grupo_umbral": "NONE"}
+        else:
+            return {"factor": 0.10, "nota": "Sin umbrales — muy improbable", "grupo_umbral": "NONE"}
+    
+    # Buscar el rango temporal correspondiente
+    for rango in rangos:
+        if rango["min_dias"] <= dias_entre <= rango["max_dias"]:
+            return {
+                "factor": rango["factor"],
+                "nota": rango.get("nota", ""),
+                "grupo_umbral": grupo_usado
+            }
+    
+    # Fuera de todos los rangos (no debería pasar si el último rango cubre hasta 9999)
+    return {"factor": 0.05, "nota": "Fuera de todos los rangos temporales", "grupo_umbral": grupo_usado}
+
+
+# ═══════════════════════════════════════════════════════════
+# MOTOR DE HISTORIAL DE APRENDIZAJE
+# ═══════════════════════════════════════════════════════════
+
+def _obtener_ajuste_historico(cod1: str, cod2: str) -> Optional[float]:
+    """
+    Busca si hay un ajuste aprendido para el par de códigos.
+    Retorna la asertividad ajustada o None si no hay historial suficiente.
+    """
+    validaciones = _cargar_validaciones()
+    ajustes = validaciones.get("ajustes_aprendidos", {})
+    
+    # Buscar en ambas direcciones
+    clave1 = f"{cod1}_{cod2}"
+    clave2 = f"{cod2}_{cod1}"
+    
+    ajuste = ajustes.get(clave1) or ajustes.get(clave2)
+    
+    if ajuste and ajuste.get("total_casos", 0) >= 3:  # Mínimo 3 casos para considerar
+        return ajuste.get("asertividad_ajustada")
+    
+    return None
+
+
+def registrar_validacion(codigo_a: str, codigo_b: str, grupo: str,
+                          asertividad_calculada: float, dias_entre: int,
+                          resultado: str, cedula: str = "",
+                          razon_rechazo: str = "", validado_por: str = "sistema") -> dict:
+    """
+    Registra una validación en el historial para aprendizaje continuo.
+    resultado: "CONFIRMADO" | "RECHAZADO"
+    """
+    from datetime import datetime
+    
+    validaciones = _cargar_validaciones()
+    
+    cod_a = _normalizar_codigo(codigo_a)
+    cod_b = _normalizar_codigo(codigo_b)
+    
+    # Registrar validación
+    nueva = {
+        "id": validaciones["estadisticas"].get("total_validaciones", 0) + 1,
+        "fecha": datetime.now().isoformat(),
+        "codigo_a": cod_a,
+        "codigo_b": cod_b,
+        "grupo_detectado": grupo,
+        "asertividad_calculada": asertividad_calculada,
+        "dias_entre": dias_entre,
+        "resultado": resultado,
+        "razon_rechazo": razon_rechazo,
+        "validado_por": validado_por,
+        "cedula_empleado": cedula
+    }
+    validaciones.setdefault("validaciones", []).append(nueva)
+    
+    # Actualizar estadísticas
+    stats = validaciones["estadisticas"]
+    stats["total_validaciones"] = stats.get("total_validaciones", 0) + 1
+    if resultado == "CONFIRMADO":
+        stats["correlaciones_confirmadas"] = stats.get("correlaciones_confirmadas", 0) + 1
+    elif resultado == "RECHAZADO":
+        stats["correlaciones_rechazadas"] = stats.get("correlaciones_rechazadas", 0) + 1
+    stats["ultima_actualizacion"] = datetime.now().isoformat()
+    
+    # Actualizar ajuste aprendido
+    clave = f"{cod_a}_{cod_b}"
+    ajustes = validaciones.setdefault("ajustes_aprendidos", {})
+    if clave not in ajustes:
+        ajustes[clave] = {"total_casos": 0, "confirmados": 0, "rechazados": 0}
+    
+    aj = ajustes[clave]
+    aj["total_casos"] += 1
+    if resultado == "CONFIRMADO":
+        aj["confirmados"] += 1
+    elif resultado == "RECHAZADO":
+        aj["rechazados"] += 1
+    
+    if aj["total_casos"] > 0:
+        aj["asertividad_ajustada"] = round((aj["confirmados"] / aj["total_casos"]) * 100, 1)
+    aj["ultima_actualizacion"] = datetime.now().isoformat()
+    
+    # Calcular precisión histórica global
+    total = stats.get("total_validaciones", 0)
+    confirmados = stats.get("correlaciones_confirmadas", 0)
+    if total > 0:
+        stats["precision_historica"] = round((confirmados / total) * 100, 1)
+    
+    # Guardar al archivo
+    try:
+        ruta = _DATA_DIR / "validaciones_historicas.json"
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(validaciones, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ Error guardando validaciones: {e}")
+    
+    return {"ok": True, "validacion_id": nueva["id"], "ajuste": aj}
+
+
+# ═══════════════════════════════════════════════════════════
+# CORRELACIÓN DE DIAGNÓSTICOS — MOTOR PRINCIPAL v2
+# ═══════════════════════════════════════════════════════════
+
+def son_correlacionados(codigo1: str, codigo2: str, dias_entre: Optional[int] = None,
+                         codigo_anterior: Optional[str] = None) -> dict:
+    """
+    Determina si dos códigos CIE-10 están correlacionados con asertividad explícita.
+    
+    Parámetros:
+        codigo1: Primer código CIE-10
+        codigo2: Segundo código CIE-10
+        dias_entre: Días entre fin de incapacidad 1 e inicio de incapacidad 2 (opcional)
+        codigo_anterior: Indica cuál es el código ANTERIOR temporalmente (para direccional)
+                         Si es None, se asume codigo1 es el anterior.
     
     Retorna:
         {
             "correlacionados": bool,
-            "confianza": "alta" | "media" | "baja" | "ninguna",
+            "asertividad": float (0-100),           # NUEVO: % explícito
+            "confianza": "MUY_ALTA"|"ALTA"|"MEDIA"|"BAJA"|"NINGUNA",
             "grupos_comunes": [...],
-            "explicacion": str
+            "explicacion": str,
+            "detalles_calculo": {                    # NUEVO: transparencia del cálculo
+                "asertividad_base_grupo": float,
+                "ajuste_exclusion": float | null,
+                "ajuste_direccional": float | null,
+                "factor_temporal": float | null,
+                "ajuste_historico": float | null,
+                "formula": str
+            },
+            "requiere_validacion_medica": bool,       # NUEVO
+            "evidencia": str                           # NUEVO
         }
     """
     cod1 = _normalizar_codigo(codigo1)
     cod2 = _normalizar_codigo(codigo2)
     
+    # Base result
+    resultado_base = {
+        "correlacionados": False,
+        "asertividad": 0.0,
+        "confianza": "NINGUNA",
+        "grupos_comunes": [],
+        "explicacion": "",
+        "detalles_calculo": {},
+        "requiere_validacion_medica": False,
+        "evidencia": ""
+    }
+    
     if not cod1 or not cod2:
-        return {
-            "correlacionados": False,
-            "confianza": "ninguna",
-            "grupos_comunes": [],
-            "explicacion": "Código(s) inválido(s)"
-        }
+        resultado_base["explicacion"] = "Código(s) inválido(s)"
+        return resultado_base
     
     # Caso trivial: mismo código
     if cod1 == cod2:
         return {
             "correlacionados": True,
-            "confianza": "alta",
+            "asertividad": 100.0,
+            "confianza": "MUY_ALTA",
             "grupos_comunes": ["MISMO_CODIGO"],
-            "explicacion": f"{cod1} = {cod2}: mismo diagnóstico, prórroga directa"
+            "explicacion": f"{cod1} = {cod2}: mismo diagnóstico, prórroga directa",
+            "detalles_calculo": {
+                "asertividad_base_grupo": 100.0,
+                "ajuste_exclusion": None,
+                "ajuste_direccional": None,
+                "factor_temporal": None,
+                "ajuste_historico": None,
+                "formula": "Mismo código = 100%"
+            },
+            "requiere_validacion_medica": False,
+            "evidencia": "CIE-10: Mismo diagnóstico"
         }
     
-    # Mismo bloque CIE-10 (ej: A00-A09)
+    # ═══ PASO 1: Buscar en grupos de correlación ═══
     mismo_bloque = _mismo_bloque(cod1, cod2)
-    
-    # Buscar en correlaciones
     indice = _construir_indice_invertido()
     grupos_cod1 = set(indice.get(cod1, []))
     grupos_cod2 = set(indice.get(cod2, []))
     grupos_comunes = grupos_cod1 & grupos_cod2
     
+    if not grupos_comunes and not mismo_bloque:
+        # Mismo capítulo (misma letra)
+        if cod1[0] == cod2[0]:
+            resultado_base["asertividad"] = 15.0
+            resultado_base["confianza"] = "BAJA"
+            resultado_base["explicacion"] = f"{cod1} y {cod2} mismo capítulo CIE-10 pero sin correlación clínica definida"
+            resultado_base["detalles_calculo"] = {
+                "asertividad_base_grupo": 15.0,
+                "formula": "Mismo capítulo sin correlación = 15%"
+            }
+            return resultado_base
+        
+        resultado_base["explicacion"] = f"{cod1} y {cod2} no tienen correlación diagnóstica identificada"
+        return resultado_base
+    
+    # ═══ PASO 2: Obtener asertividad base del grupo ═══
+    corr = _cargar_correlaciones()
+    mejor_asertividad = 0.0
+    mejor_grupo = ""
+    mejor_evidencia = ""
+    req_validacion = False
+    explicaciones = []
+    
     if grupos_comunes:
-        # Obtener la confianza más alta entre los grupos comunes
-        corr = _cargar_correlaciones()
-        confianzas = []
-        explicaciones = []
         for g in grupos_comunes:
             grupo_data = corr["grupos_correlacion"].get(g, {})
-            confianzas.append(grupo_data.get("confianza", "media"))
+            asert = grupo_data.get("asertividad", 80)
+            if asert > mejor_asertividad:
+                mejor_asertividad = asert
+                mejor_grupo = g
+                mejor_evidencia = grupo_data.get("evidencia", "")
+            if grupo_data.get("requiere_validacion_medica", False):
+                req_validacion = True
             explicaciones.append(grupo_data.get("logica", ""))
-        
-        mejor_confianza = "alta" if "alta" in confianzas else ("media" if "media" in confianzas else "baja")
-        
-        return {
-            "correlacionados": True,
-            "confianza": mejor_confianza,
-            "grupos_comunes": list(grupos_comunes),
-            "mismo_bloque": mismo_bloque,
-            "explicacion": f"{cod1} ↔ {cod2}: diagnósticos relacionados en {', '.join(grupos_comunes)}. {explicaciones[0] if explicaciones else ''}"
-        }
+    elif mismo_bloque:
+        # Mismo bloque pero no en correlaciones explícitas
+        mejor_asertividad = 65.0
+        mejor_grupo = "MISMO_BLOQUE"
+        mejor_evidencia = "CIE-10: Mismo bloque diagnóstico"
+        explicaciones.append(f"{cod1} y {cod2} pertenecen al mismo bloque CIE-10")
     
-    # Mismo bloque pero no en correlaciones explícitas
-    if mismo_bloque:
-        return {
-            "correlacionados": True,
-            "confianza": "media",
-            "grupos_comunes": ["MISMO_BLOQUE"],
-            "mismo_bloque": True,
-            "explicacion": f"{cod1} y {cod2} pertenecen al mismo bloque CIE-10, probable relación clínica"
-        }
+    asertividad_base = mejor_asertividad
     
-    # Misma letra (mismo capítulo general)
-    if cod1[0] == cod2[0]:
-        return {
-            "correlacionados": False,
-            "confianza": "baja",
-            "grupos_comunes": [],
-            "mismo_capitulo": True,
-            "explicacion": f"{cod1} y {cod2} están en el mismo capítulo pero sin correlación clínica definida"
-        }
+    # ═══ PASO 3: Verificar EXCLUSIONES ═══
+    ajuste_exclusion = None
+    exclusion = _buscar_exclusion(cod1, cod2)
+    if exclusion:
+        if exclusion.get("bloquear", False):
+            return {
+                "correlacionados": False,
+                "asertividad": 0.0,
+                "confianza": "NINGUNA",
+                "grupos_comunes": list(grupos_comunes),
+                "explicacion": f"EXCLUSIÓN: {cod1} ↔ {cod2} — {exclusion.get('razon', 'Diagnósticos incompatibles para prórroga')}",
+                "detalles_calculo": {
+                    "asertividad_base_grupo": asertividad_base,
+                    "ajuste_exclusion": 0.0,
+                    "formula": "Exclusión bloqueante = 0%"
+                },
+                "requiere_validacion_medica": False,
+                "evidencia": exclusion.get("evidencia", "")
+            }
+        else:
+            # Exclusión no bloqueante: reducir asertividad
+            ajuste_exclusion = exclusion.get("asertividad_reducida", 30)
+            asertividad_base = min(asertividad_base, ajuste_exclusion)
+            req_validacion = True
+    
+    # ═══ PASO 4: Verificar CORRELACIÓN DIRECCIONAL ═══
+    ajuste_direccional = None
+    cod_ant = _normalizar_codigo(codigo_anterior) if codigo_anterior else cod1
+    cod_nvo = cod2 if cod_ant == cod1 else cod1
+    
+    direccional = _buscar_direccional(cod_ant, cod_nvo)
+    if direccional and direccional.get("encontrado"):
+        ajuste_direccional = direccional["asertividad_direccional"]
+        # La asertividad direccional puede incrementar o reducir la base
+        # Tomamos el promedio ponderado (70% grupo + 30% direccional)
+        asertividad_pre_temporal = (asertividad_base * 0.7) + (ajuste_direccional * 0.3)
+        explicaciones.append(f"Dirección {direccional['direccion']}: {direccional['razon']}")
+    else:
+        asertividad_pre_temporal = asertividad_base
+    
+    # ═══ PASO 5: Aplicar UMBRAL TEMPORAL ═══
+    factor_temporal = None
+    nota_temporal = ""
+    if dias_entre is not None and dias_entre >= 0:
+        temporal = _obtener_factor_temporal(mejor_grupo, dias_entre)
+        factor_temporal = temporal["factor"]
+        nota_temporal = temporal["nota"]
+        asertividad_con_temporal = asertividad_pre_temporal * factor_temporal
+    else:
+        asertividad_con_temporal = asertividad_pre_temporal
+    
+    # ═══ PASO 6: Ajuste por HISTORIAL DE APRENDIZAJE ═══
+    ajuste_historico = _obtener_ajuste_historico(cod1, cod2)
+    if ajuste_historico is not None:
+        # Promedio ponderado: 80% cálculo actual + 20% historial
+        asertividad_final = (asertividad_con_temporal * 0.8) + (ajuste_historico * 0.2)
+    else:
+        asertividad_final = asertividad_con_temporal
+    
+    # ═══ PASO 7: Clampear y determinar confianza ═══
+    asertividad_final = max(5.0, min(100.0, round(asertividad_final, 1)))
+    
+    # Determinar nivel de confianza a partir de la asertividad
+    if asertividad_final >= 90:
+        confianza = "MUY_ALTA"
+    elif asertividad_final >= 75:
+        confianza = "ALTA"
+    elif asertividad_final >= 55:
+        confianza = "MEDIA"
+    elif asertividad_final >= 30:
+        confianza = "BAJA"
+    else:
+        confianza = "NINGUNA"
+    
+    # Umbral de correlación
+    umbrales_config = _cargar_umbrales().get("reglas_aplicacion", {})
+    umbral_prorroga = umbrales_config.get("umbral_prorroga", 60)
+    umbral_posible = umbrales_config.get("umbral_posible_prorroga", 40)
+    
+    correlacionados = asertividad_final >= umbral_posible
+    
+    # ═══ Construir explicación final ═══
+    explicacion_parts = [f"{cod1} ↔ {cod2}"]
+    if grupos_comunes:
+        explicacion_parts.append(f"Grupo(s): {', '.join(grupos_comunes)}")
+    if explicaciones:
+        explicacion_parts.append(explicaciones[0])
+    if nota_temporal:
+        explicacion_parts.append(f"Temporal: {nota_temporal}")
+    if exclusion and not exclusion.get("bloquear"):
+        explicacion_parts.append(f"⚠️ Exclusión parcial: {exclusion.get('razon', '')}")
+    
+    explicacion_final = ". ".join(explicacion_parts)
     
     return {
-        "correlacionados": False,
-        "confianza": "ninguna",
-        "grupos_comunes": [],
-        "explicacion": f"{cod1} y {cod2} no tienen correlación diagnóstica identificada"
+        "correlacionados": correlacionados,
+        "asertividad": asertividad_final,
+        "confianza": confianza,
+        "grupos_comunes": list(grupos_comunes) if grupos_comunes else (["MISMO_BLOQUE"] if mismo_bloque else []),
+        "mismo_bloque": mismo_bloque,
+        "explicacion": explicacion_final,
+        "detalles_calculo": {
+            "asertividad_base_grupo": round(mejor_asertividad, 1),
+            "grupo_principal": mejor_grupo,
+            "ajuste_exclusion": ajuste_exclusion,
+            "ajuste_direccional": ajuste_direccional,
+            "factor_temporal": factor_temporal,
+            "dias_entre": dias_entre,
+            "nota_temporal": nota_temporal,
+            "ajuste_historico": ajuste_historico,
+            "asertividad_pre_temporal": round(asertividad_pre_temporal, 1),
+            "asertividad_final": asertividad_final,
+            "umbral_prorroga": umbral_prorroga,
+            "umbral_posible_prorroga": umbral_posible,
+            "formula": f"base({round(mejor_asertividad,1)}) → exclusion({ajuste_exclusion}) → direccional({ajuste_direccional}) → temporal(×{factor_temporal}) → historico({ajuste_historico}) = {asertividad_final}%"
+        },
+        "requiere_validacion_medica": req_validacion,
+        "evidencia": mejor_evidencia
     }
 
 
@@ -326,19 +761,32 @@ def validar_conteo_dias(fecha_inicio, fecha_fin, dias_incapacidad: int) -> dict:
 # ═══════════════════════════════════════════════════════════
 
 def info_sistema() -> dict:
-    """Información del sistema CIE-10 cargado"""
+    """Información del sistema CIE-10 v2 cargado"""
     cie10 = _cargar_cie10()
     corr = _cargar_correlaciones()
     indice = _construir_indice_invertido()
+    excl = _cargar_exclusiones()
+    direc = _cargar_direccionales()
+    umbr = _cargar_umbrales()
+    valid = _cargar_validaciones()
     
     return {
+        "version_motor": "2.0",
         "version_cie10": cie10.get("version"),
         "total_codigos": len(cie10.get("codigos", {})),
         "total_capitulos": len(cie10.get("capitulos", {})),
         "version_correlaciones": corr.get("version"),
         "total_grupos_correlacion": len(corr.get("grupos_correlacion", {})),
         "total_codigos_indexados": len(indice),
+        "total_exclusiones": len(excl.get("exclusiones", [])),
+        "total_direccionales": len(direc.get("direccionales", [])),
+        "total_grupos_temporales": len(umbr.get("umbrales_por_grupo", {})),
+        "total_validaciones_historicas": valid.get("estadisticas", {}).get("total_validaciones", 0),
+        "precision_historica": valid.get("estadisticas", {}).get("precision_historica"),
         "ventana_prorroga_dias": corr.get("reglas_temporales", {}).get("ventana_prorroga_dias", 30),
         "ventana_prorroga_maxima": corr.get("reglas_temporales", {}).get("ventana_prorroga_maxima_dias", 90),
+        "umbral_prorroga": umbr.get("reglas_aplicacion", {}).get("umbral_prorroga", 60),
+        "umbral_posible_prorroga": umbr.get("reglas_aplicacion", {}).get("umbral_posible_prorroga", 40),
+        "normativa": corr.get("normativa", {}),
         "ultima_actualizacion": cie10.get("ultima_actualizacion"),
     }

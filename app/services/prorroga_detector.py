@@ -177,9 +177,11 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
                     **_caso_a_dict(caso_siguiente),
                     "tipo_deteccion": resultado["tipo"],
                     "confianza": resultado["confianza"],
+                    "asertividad": resultado.get("asertividad", 0.0),
                     "brecha_dias": resultado["brecha_dias"],
                     "dias_traslapo": dias_traslapo_desc,
                     "explicacion": resultado["explicacion"],
+                    "requiere_validacion_medica": resultado.get("requiere_validacion_medica", False),
                 })
                 # Sumar días REALES: días de la incapacidad MENOS los días traslapados
                 dias_efectivos = (caso_siguiente.dias_incapacidad or 0) - dias_traslapo_desc
@@ -213,12 +215,16 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
     Criterios (deben cumplirse AMBOS):
     1. TEMPORAL: caso_nuevo.fecha_inicio está dentro de la ventana temporal
        después de caso_anterior.fecha_fin
-    2. DIAGNÓSTICO: Los códigos CIE-10 están correlacionados
+    2. DIAGNÓSTICO: Los códigos CIE-10 están correlacionados (asertividad ≥ 40%)
+    
+    Retorna asertividad numérica (%) del motor CIE-10 v2.
+    Umbral de prórroga: ≥ 60% = prórroga, ≥ 40% = posible prórroga
     """
     resultado_base = {
         "es_prorroga": False,
         "tipo": "ninguno",
-        "confianza": "ninguna",
+        "confianza": "NINGUNA",
+        "asertividad": 0.0,
         "brecha_dias": None,
         "explicacion": ""
     }
@@ -242,7 +248,8 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
         return {
             "es_prorroga": True,
             "tipo": "traslapo",
-            "confianza": "alta",
+            "confianza": "MUY_ALTA",
+            "asertividad": 98.0,
             "brecha_dias": brecha,
             "dias_traslapo": dias_traslapo_calc,
             "explicacion": f"Incapacidades traslapadas ({dias_traslapo_calc} días de solapamiento). Los días traslapados se cuentan UNA sola vez."
@@ -252,47 +259,55 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
         resultado_base["explicacion"] = f"Brecha de {brecha} días — CADENA CORTADA (regla >30d sin incapacidad)"
         return resultado_base
     
-    # Determinar confianza temporal (dentro de los 30 días máx)
-    if brecha <= 1:
-        confianza_temporal = "alta"  # Continuidad directa (consecutivo o al día siguiente)
-    elif brecha <= 15:
-        confianza_temporal = "alta"
-    else:
-        confianza_temporal = "media"  # 16-30 días
-    
-    # Verificar correlación de diagnósticos
+    # Verificar correlación de diagnósticos con motor v2 (asertividad numérica)
     codigo_anterior = caso_anterior.codigo_cie10 or ""
     codigo_nuevo = caso_nuevo.codigo_cie10 or ""
     
-    # Si no hay códigos CIE-10, usar diagnóstico textual como fallback
+    # Si no hay códigos CIE-10, usar solo temporalidad
     if not codigo_anterior and not codigo_nuevo:
-        # Sin códigos, solo la temporalidad con baja confianza
-        if confianza_temporal in ("alta", "media") and brecha <= VENTANA_CORTE_PRORROGA:
+        if brecha <= VENTANA_CORTE_PRORROGA:
+            asert_temporal = max(15, 45 - brecha)  # 45% día 0, decrece con los días
             return {
                 "es_prorroga": True,
                 "tipo": "temporal_sin_cie10",
-                "confianza": "baja",
+                "confianza": "BAJA",
+                "asertividad": float(asert_temporal),
                 "brecha_dias": brecha,
-                "explicacion": f"Prórroga posible por proximidad temporal ({brecha}d), sin códigos CIE-10 para confirmar"
+                "explicacion": f"Prórroga posible por proximidad temporal ({brecha}d), sin códigos CIE-10 para confirmar. Asertividad {asert_temporal}%."
             }
         return resultado_base
     
-    # Correlación CIE-10
+    # Correlación CIE-10 con motor v2
     if codigo_anterior and codigo_nuevo:
-        correlacion = son_correlacionados(codigo_anterior, codigo_nuevo)
+        # Llamar al motor v2 con días_entre y dirección
+        correlacion = son_correlacionados(
+            codigo_anterior,
+            codigo_nuevo,
+            dias_entre=brecha,
+            codigo_anterior=codigo_anterior
+        )
+        
+        asertividad = correlacion.get("asertividad", 0.0)
+        confianza = correlacion.get("confianza", "NINGUNA")
         
         if correlacion["correlacionados"]:
-            # Combinar confianzas (temporal + diagnóstica)
-            conf_diagnostica = correlacion["confianza"]
-            confianza_final = _combinar_confianzas(confianza_temporal, conf_diagnostica)
+            # Determinar tipo según asertividad
+            if asertividad >= 60:
+                tipo = "correlacion_cie10"
+            else:
+                tipo = "correlacion_cie10_baja"
             
             return {
                 "es_prorroga": True,
-                "tipo": "correlacion_cie10",
-                "confianza": confianza_final,
+                "tipo": tipo,
+                "confianza": confianza,
+                "asertividad": asertividad,
                 "brecha_dias": brecha,
                 "grupos_correlacion": correlacion.get("grupos_comunes", []),
-                "explicacion": correlacion["explicacion"]
+                "explicacion": correlacion["explicacion"],
+                "detalles_calculo": correlacion.get("detalles_calculo", {}),
+                "requiere_validacion_medica": correlacion.get("requiere_validacion_medica", False),
+                "evidencia": correlacion.get("evidencia", "")
             }
         else:
             # No correlacionados pero muy cercanos temporalmente
@@ -300,35 +315,41 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
                 return {
                     "es_prorroga": True,
                     "tipo": "continuidad_directa",
-                    "confianza": "media",
+                    "confianza": "MEDIA",
+                    "asertividad": 50.0,
                     "brecha_dias": brecha,
-                    "explicacion": f"Continuidad directa ({brecha}d) aunque códigos {codigo_anterior}→{codigo_nuevo} no tienen correlación definida. Requiere revisión médica."
+                    "explicacion": f"Continuidad directa ({brecha}d) aunque códigos {codigo_anterior}→{codigo_nuevo} no tienen correlación definida (asertividad {asertividad}%). Requiere revisión médica."
                 }
     elif codigo_anterior or codigo_nuevo:
         # Solo uno tiene código
-        if confianza_temporal == "alta":
+        if brecha <= 15:
+            asert = max(30, 55 - brecha * 2)
             return {
                 "es_prorroga": True,
                 "tipo": "temporal_codigo_parcial",
-                "confianza": "media",
+                "confianza": "MEDIA" if asert >= 40 else "BAJA",
+                "asertividad": float(asert),
                 "brecha_dias": brecha,
-                "explicacion": f"Prórroga probable por proximidad ({brecha}d). Solo {'primera' if codigo_anterior else 'segunda'} incapacidad tiene código CIE-10."
+                "explicacion": f"Prórroga probable por proximidad ({brecha}d). Solo {'primera' if codigo_anterior else 'segunda'} incapacidad tiene código CIE-10. Asertividad {asert}%."
             }
     
     return resultado_base
 
 
 def _combinar_confianzas(temporal: str, diagnostica: str) -> str:
-    """Combina la confianza temporal y diagnóstica"""
-    niveles = {"alta": 3, "media": 2, "baja": 1, "ninguna": 0}
+    """Combina la confianza temporal y diagnóstica — compatibilidad v1"""
+    niveles = {"MUY_ALTA": 4, "ALTA": 3, "MEDIA": 2, "BAJA": 1, "NINGUNA": 0,
+               "alta": 3, "media": 2, "baja": 1, "ninguna": 0}
     promedio = (niveles.get(temporal, 0) + niveles.get(diagnostica, 0)) / 2
-    if promedio >= 2.5:
-        return "alta"
-    elif promedio >= 1.5:
-        return "media"
+    if promedio >= 3.0:
+        return "MUY_ALTA"
+    elif promedio >= 2.0:
+        return "ALTA"
+    elif promedio >= 1.0:
+        return "MEDIA"
     elif promedio >= 0.5:
-        return "baja"
-    return "ninguna"
+        return "BAJA"
+    return "NINGUNA"
 
 
 def _detectar_huecos_entre_cadenas(cadenas: List[dict], casos: List[Case]) -> List[dict]:

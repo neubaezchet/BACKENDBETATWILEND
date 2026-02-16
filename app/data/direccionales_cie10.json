@@ -1,0 +1,183 @@
+{
+  "version": "2026.2",
+  "descripcion": "Correlaciones direccionales CIE-10: Relaciones donde A→B es válido pero B→A NO, o tiene diferente asertividad",
+  "fuente": "Basado en evidencia clínica OMS/OPS, fisiopatología médica y GPC MinSalud Colombia",
+  "nota": "La dirección indica evolución clínica natural. codigo_origen es el diagnóstico inicial y codigo_destino es la complicación/evolución esperada.",
+
+  "direccionales": [
+    {
+      "codigo_origen": "A09",
+      "codigo_destino": "B15",
+      "asertividad_ida": 15,
+      "asertividad_vuelta": 5,
+      "razon": "Diarrea infecciosa (A09) NO evoluciona normalmente a hepatitis A (B15). Son transmisiones fecal-oral independientes. B15→A09 tampoco es una evolución típica.",
+      "evidencia": "Infectología: agentes etiológicos diferentes"
+    },
+    {
+      "codigo_origen": "J00",
+      "codigo_destino": "J18",
+      "asertividad_ida": 85,
+      "asertividad_vuelta": 50,
+      "razon": "Resfriado común (J00)→neumonía (J18) es una progresión clínica reconocida (descendente VAS→VAI). Neumonía (J18)→resfriado (J00) es mucho menos probable como evolución.",
+      "evidencia": "OMS: infección descendente del tracto respiratorio es fisiopatológicamente documentada"
+    },
+    {
+      "codigo_origen": "J02",
+      "codigo_destino": "J20",
+      "asertividad_ida": 80,
+      "asertividad_vuelta": 45,
+      "razon": "Faringitis (J02) puede descender a bronquitis (J20). La dirección inversa (bronquitis→faringitis) es menos frecuente.",
+      "evidencia": "Neumología: infección descendente documentada"
+    },
+    {
+      "codigo_origen": "N30",
+      "codigo_destino": "N10",
+      "asertividad_ida": 90,
+      "asertividad_vuelta": 40,
+      "razon": "Cistitis (N30)→pielonefritis (N10) es ascenso de IVU documentado. Pielonefritis NO evoluciona típicamente a cistitis aislada.",
+      "evidencia": "Urología/Nefrología: infección ascendente del tracto urinario"
+    },
+    {
+      "codigo_origen": "N39",
+      "codigo_destino": "N18",
+      "asertividad_ida": 70,
+      "asertividad_vuelta": 30,
+      "razon": "IVU recurrente (N39)→ERC (N18) es progresión documentada por daño renal acumulativo. ERC→IVU es comorbilidad, no evolución.",
+      "evidencia": "GPC ERC MinSalud: IVU recurrente es factor de riesgo para ERC"
+    },
+    {
+      "codigo_origen": "K02",
+      "codigo_destino": "K04",
+      "asertividad_ida": 95,
+      "asertividad_vuelta": 30,
+      "razon": "Caries (K02)→pulpitis/necrosis pulpar (K04) es la progresión natural de la caries dental. La dirección inversa no ocurre.",
+      "evidencia": "Odontología: progresión caries→pulpa es irreversible y unidireccional"
+    },
+    {
+      "codigo_origen": "K04",
+      "codigo_destino": "K08",
+      "asertividad_ida": 90,
+      "asertividad_vuelta": 20,
+      "razon": "Enfermedad pulpar (K04)→pérdida dentaria (K08) es consecuencia directa. La dirección inversa no tiene sentido clínico.",
+      "evidencia": "Odontología: complicación irreversible"
+    },
+    {
+      "codigo_origen": "E11",
+      "codigo_destino": "H36",
+      "asertividad_ida": 92,
+      "asertividad_vuelta": 70,
+      "razon": "DM2 (E11)→retinopatía diabética (H36) es complicación microangiopática bien documentada. La retinopatía diabética confirma DM preexistente pero no es su causa.",
+      "evidencia": "GPC DM2 MinSalud: retinopatía como complicación crónica"
+    },
+    {
+      "codigo_origen": "E11",
+      "codigo_destino": "N18",
+      "asertividad_ida": 90,
+      "asertividad_vuelta": 65,
+      "razon": "DM2 (E11)→ERC (N18) nefropatía diabética es la principal causa de ERC en Colombia. ERC→DM es comorbilidad conocida pero no causal.",
+      "evidencia": "Cuenta de Alto Costo Colombia: DM es primera causa de ERC"
+    },
+    {
+      "codigo_origen": "I10",
+      "codigo_destino": "I63",
+      "asertividad_ida": 88,
+      "asertividad_vuelta": 60,
+      "razon": "HTA (I10)→ACV isquémico (I63) es factor de riesgo principal documentado. ACV puede revelar HTA preexistente pero la dirección causal es HTA→ACV.",
+      "evidencia": "OMS: HTA es el factor de riesgo modificable #1 para ACV"
+    },
+    {
+      "codigo_origen": "I10",
+      "codigo_destino": "I50",
+      "asertividad_ida": 85,
+      "asertividad_vuelta": 75,
+      "razon": "HTA (I10)→IC (I50) es progresión documentada por remodelación cardíaca. IC diagnosticada confirma HTA previa en muchos casos.",
+      "evidencia": "GPC IC MinSalud: HTA es causa principal de IC"
+    },
+    {
+      "codigo_origen": "B20",
+      "codigo_destino": "A15",
+      "asertividad_ida": 95,
+      "asertividad_vuelta": 60,
+      "razon": "VIH (B20)→TB (A15) es infección oportunista principal en Colombia. TB en paciente sin VIH documentado no implica VIH como evolución.",
+      "evidencia": "OMS/MinSalud: TB es la principal causa de muerte en pacientes con VIH"
+    },
+    {
+      "codigo_origen": "B20",
+      "codigo_destino": "B37",
+      "asertividad_ida": 93,
+      "asertividad_vuelta": 25,
+      "razon": "VIH (B20)→candidiasis (B37) es oportunista frecuente. Candidiasis aislada NO implica VIH.",
+      "evidencia": "Infectología: candidiasis orofaríngea es marcador de inmunosupresión avanzada VIH"
+    },
+    {
+      "codigo_origen": "S06",
+      "codigo_destino": "G44",
+      "asertividad_ida": 94,
+      "asertividad_vuelta": 30,
+      "razon": "TCE (S06)→cefalea postraumática (G44) es secuela reconocida. Cefalea (G44) raramente revela TCE previo no documentado.",
+      "evidencia": "Neurología: cefalea postraumática es criterio diagnóstico que requiere TCE previo"
+    },
+    {
+      "codigo_origen": "S06",
+      "codigo_destino": "R42",
+      "asertividad_ida": 90,
+      "asertividad_vuelta": 25,
+      "razon": "TCE (S06)→vértigo postraumático (R42) es secuela vestibular documentada. Vértigo aislado no implica TCE.",
+      "evidencia": "ORL/Neurología: vértigo postraumático por disfunción vestibular secundaria a TCE"
+    },
+    {
+      "codigo_origen": "O14",
+      "codigo_destino": "O15",
+      "asertividad_ida": 98,
+      "asertividad_vuelta": 95,
+      "razon": "Preeclampsia (O14)→eclampsia (O15) es la progresión natural documentada. Eclampsia implica preeclampsia previa.",
+      "evidencia": "GPC Trastornos Hipertensivos del Embarazo MinSalud"
+    },
+    {
+      "codigo_origen": "A90",
+      "codigo_destino": "A97",
+      "asertividad_ida": 96,
+      "asertividad_vuelta": 90,
+      "razon": "Dengue (A90)→dengue grave (A97) es la progresión natural de la viremia. Dengue grave confirma dengue previo.",
+      "evidencia": "OMS Guías Dengue 2009 revisada. INS Colombia protocolos de vigilancia"
+    },
+    {
+      "codigo_origen": "A90",
+      "codigo_destino": "D65",
+      "asertividad_ida": 88,
+      "asertividad_vuelta": 30,
+      "razon": "Dengue (A90)→CID (D65) es complicación hemorrágica del dengue grave. CID aislada tiene múltiples etiologías.",
+      "evidencia": "INS Colombia: CID como complicación de dengue grave"
+    },
+    {
+      "codigo_origen": "K80",
+      "codigo_destino": "K85",
+      "asertividad_ida": 92,
+      "asertividad_vuelta": 50,
+      "razon": "Colelitiasis (K80)→pancreatitis aguda (K85) es la primera causa de pancreatitis en Colombia. Pancreatitis puede tener otras etiologías.",
+      "evidencia": "Gastroenterología: cálculo biliar es causa #1 de pancreatitis aguda"
+    },
+    {
+      "codigo_origen": "F43",
+      "codigo_destino": "F32",
+      "asertividad_ida": 85,
+      "asertividad_vuelta": 40,
+      "razon": "TEPT/trastorno adaptativo (F43)→episodio depresivo (F32) es comorbilidad documentada (40-50% de casos). Depresión no implica TEPT previo.",
+      "evidencia": "DSM-5-TR: comorbilidad TEPT-depresión ampliamente documentada"
+    },
+    {
+      "codigo_origen": "F43",
+      "codigo_destino": "F41",
+      "asertividad_ida": 88,
+      "asertividad_vuelta": 35,
+      "razon": "TEPT (F43)→ansiedad generalizada (F41) es evolución frecuente. Ansiedad no implica estrés postraumático.",
+      "evidencia": "DSM-5-TR: ansiedad como secuela de trauma psicológico"
+    }
+  ],
+
+  "reglas_aplicacion": {
+    "prioridad": "Las direccionales se aplican DESPUÉS de verificar grupo y ANTES de aplicar umbrales temporales",
+    "subcategorias": "Aplica al código base y todas sus subcategorías",
+    "nota": "asertividad_ida se usa cuando el diagnóstico ANTERIOR es codigo_origen. asertividad_vuelta cuando es codigo_destino el anterior."
+  }
+}
