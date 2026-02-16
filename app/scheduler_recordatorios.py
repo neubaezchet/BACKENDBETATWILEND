@@ -12,7 +12,7 @@ import os
 from app.n8n_notifier import enviar_a_n8n
 
 def send_html_email(to_email: str, subject: str, html_body: str, caso=None) -> bool:
-    """Envía email usando N8N"""
+    """Envía email usando N8N con copias a empresa y empleado BD"""
     tipo_map = {
         'Recordatorio': 'recordatorio',
         'Seguimiento': 'alerta_jefe'
@@ -24,10 +24,25 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None) -> b
             tipo_notificacion = value
             break
     
-    # Obtener correo BD si hay caso
+    # ✅ Obtener TODOS los emails de copia si hay caso
     correo_bd = None
-    if caso and hasattr(caso, 'empleado') and caso.empleado:
-        correo_bd = caso.empleado.correo
+    cc_email = None
+    whatsapp = None
+    
+    if caso:
+        # CC empleado BD
+        if hasattr(caso, 'empleado') and caso.empleado:
+            if hasattr(caso.empleado, 'correo') and caso.empleado.correo:
+                correo_bd = caso.empleado.correo
+        
+        # CC empresa
+        if hasattr(caso, 'empresa') and caso.empresa:
+            if hasattr(caso.empresa, 'email_copia') and caso.empresa.email_copia:
+                cc_email = caso.empresa.email_copia
+        
+        # WhatsApp
+        if hasattr(caso, 'telefono_form') and caso.telefono_form:
+            whatsapp = caso.telefono_form
     
     resultado = enviar_a_n8n(
         tipo_notificacion=tipo_notificacion,
@@ -35,16 +50,17 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None) -> b
         serial=caso.serial if caso else 'AUTO',
         subject=subject,
         html_content=html_body,
-        cc_email=None,
+        cc_email=cc_email,
         correo_bd=correo_bd,
+        whatsapp=whatsapp,
         adjuntos_base64=[]
     )
     
     if resultado:
-        print(f"✅ Email enviado a {to_email}")
+        print(f"✅ Email enviado a {to_email} (CC empresa: {cc_email or 'N/A'}, CC BD: {correo_bd or 'N/A'}, WhatsApp: {whatsapp or 'N/A'})")
         return True
     
-    print(f"❌ Error enviando email")
+    print(f"❌ Error enviando email a {to_email}")
     return False
 
 

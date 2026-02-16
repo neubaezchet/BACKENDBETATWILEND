@@ -1,0 +1,251 @@
+{
+  "name": "IncaNeurobaeza - Email SMTP + WhatsApp v6",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incapacidades",
+        "options": {}
+      },
+      "id": "3e50a616-5603-4575-ae0f-066f9a345c08",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -608,
+        96
+      ],
+      "webhookId": "incapacidades"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.body;\n\n// ========== LOGS DE DEBUG ==========\nconsole.log('🔍 Datos recibidos del webhook:');\nconsole.log('  - Email TO:', data.email);\nconsole.log('  - CC Empresa:', data.cc_email);\nconsole.log('  - CC BD:', data.correo_bd);\nconsole.log('  - WhatsApp números:', data.whatsapp);\nconsole.log('  - WhatsApp mensaje:', data.whatsapp_message ? 'Presente' : 'Ausente');\nconsole.log('  - Serial:', data.serial);\n\n// ========== PROCESAR EMAILS CC ==========\nlet cc_emails = [];\n\n// Agregar CC de empresa si existe\nif (data.cc_email && data.cc_email.trim()) {\n  const empresaCCs = data.cc_email\n    .split(',')\n    .map(e => e.trim())\n    .filter(e => e.includes('@') && e.length > 5);\n  cc_emails.push(...empresaCCs);\n  console.log('📧 CC empresa agregados:', empresaCCs);\n}\n\n// Agregar CC de BD si existe\nif (data.correo_bd && data.correo_bd.trim()) {\n  const bdCCs = data.correo_bd\n    .split(',')\n    .map(e => e.trim())\n    .filter(e => e.includes('@') && e.length > 5);\n  cc_emails.push(...bdCCs);\n  console.log('📧 CC BD agregados:', bdCCs);\n}\n\n// Eliminar duplicados (case-insensitive)\nconst uniqueEmails = new Set();\ncc_emails = cc_emails.filter(email => {\n  const lowerEmail = email.toLowerCase();\n  if (uniqueEmails.has(lowerEmail)) {\n    return false;\n  }\n  uniqueEmails.add(lowerEmail);\n  return true;\n});\n\n// Eliminar el TO de los CCs si está incluido\nif (data.email) {\n  const toLower = data.email.toLowerCase();\n  cc_emails = cc_emails.filter(e => e.toLowerCase() !== toLower);\n}\n\n// ========== PROCESAR TELÉFONOS WHATSAPP ==========\nlet whatsapp_numbers = [];\n\nif (data.whatsapp && data.whatsapp.trim()) {\n  whatsapp_numbers = data.whatsapp\n    .split(',')\n    .map(num => {\n      let clean = num.trim().replace(/[^0-9]/g, '');\n      if (clean.startsWith('57') && clean.length === 12) {\n        return clean;\n      }\n      if (clean.length === 10) {\n        return '57' + clean;\n      }\n      return clean;\n    })\n    .filter(num => num.length === 12);\n}\n\n// ========== CONVERTIR HTML A TEXTO PARA WHATSAPP ==========\nlet whatsapp_text = data.whatsapp_message || '';\n\nif (!data.whatsapp_message && data.html_content) {\n  whatsapp_text = data.html_content\n    .replace(/<style[^>]*>.*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>.*?<\\/script>/gi, '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n\\n')\n    .replace(/<\\/div>/gi, '\\n')\n    .replace(/<li>/gi, '• ')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .replace(/[ \\t]+/g, ' ')\n    .trim();\n  \n  if (whatsapp_text.length > 1500) {\n    whatsapp_text = whatsapp_text.substring(0, 1497) + '...';\n  }\n}\n\nif (data.serial && whatsapp_text) {\n  whatsapp_text = `📋 *Incapacidad ${data.serial}*\\n\\n${whatsapp_text}\\n\\n_Mensaje automático - IncaNeurobaeza_`;\n}\n\nconsole.log('\\n✅ Datos procesados:');\nconsole.log('📧 Email TO:', data.email);\nconsole.log('📧 Email CCs:', cc_emails);\nconsole.log('📧 CC count:', cc_emails.length);\nconsole.log('📱 WhatsApp números:', whatsapp_numbers);\nconsole.log('📋 Serial:', data.serial);\n\nreturn {\n  json: {\n    email: data.email,\n    subject: data.subject,\n    html_content: data.html_content,\n    cc_emails: cc_emails,\n    cc_emails_str: cc_emails.length > 0 ? cc_emails.join(', ') : '',\n    serial: data.serial,\n    tipo_notificacion: data.tipo_notificacion,\n    whatsapp_numbers: whatsapp_numbers,\n    whatsapp_text: whatsapp_text,\n    send_email: data.email && data.email.trim().length > 0,\n    send_whatsapp: whatsapp_numbers.length > 0\n  }\n};"
+      },
+      "id": "9893b250-2f0a-4d3d-b931-7aa756a3ada1",
+      "name": "Procesar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "incaneurobaeza@gmail.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html_content }}",
+        "options": {
+          "ccEmail": "={{ $json.cc_emails_str }}"
+        }
+      },
+      "id": "d758b490-ea69-40a8-9934-3160ff97c2cd",
+      "name": "Email SMTP",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -176,
+        16
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "CONFIGURAR_EN_N8N",
+          "name": "Gmail SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.send_whatsapp }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "096bd037-b433-4e85-b30f-d1e84f8046af",
+      "name": "¿Enviar WhatsApp?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "whatsapp_numbers",
+        "options": {}
+      },
+      "id": "3b247228-37d7-489c-975d-afb173da2522",
+      "name": "Split WhatsApp Numbers",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        48,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "Chatting",
+        "operation": "Send Text",
+        "session": "default",
+        "chatId": "={{ $json.whatsapp_numbers }}@c.us",
+        "text": "={{ $('Procesar Datos').first().json.whatsapp_text }}",
+        "requestOptions": {}
+      },
+      "type": "@devlikeapro/n8n-nodes-waha.WAHA",
+      "typeVersion": 202502,
+      "position": [
+        272,
+        176
+      ],
+      "id": "761331b6-2034-44ce-83f8-b34c3c80655f",
+      "name": "WAHA - Enviar WhatsApp",
+      "credentials": {
+        "wahaApi": {
+          "id": "tMnhLVSvNzTCiDPV",
+          "name": "WAHA account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allInputs = $input.all();\nconst originalData = $('Procesar Datos').first().json;\n\nconst emailResults = allInputs.filter(item => \n  item.json.accepted || item.json.messageId || item.json.response ||\n  (item.json.id && typeof item.json.id === 'string' && item.json.id.length > 10)\n);\n\nconst whatsappResults = allInputs.filter(item => \n  item.json.id && item.json.timestamp && item.json.from\n);\n\nlet response = {\n  status: 'success',\n  serial: originalData.serial || 'N/A',\n  timestamp: new Date().toISOString(),\n  channels: {}\n};\n\nif (emailResults.length > 0) {\n  response.channels.email = {\n    sent: true,\n    to: originalData.email,\n    cc: originalData.cc_emails || [],\n    message_id: emailResults[0].json.messageId || emailResults[0].json.id || 'smtp-ok'\n  };\n} else if (originalData.send_email) {\n  response.channels.email = {\n    sent: false,\n    error: 'Email no enviado',\n    to: originalData.email\n  };\n}\n\nif (whatsappResults.length > 0) {\n  const successCount = whatsappResults.filter(r => r.json.id).length;\n  response.channels.whatsapp = {\n    sent: true,\n    total_numbers: originalData.whatsapp_numbers ? originalData.whatsapp_numbers.length : 0,\n    successful: successCount,\n    numbers: originalData.whatsapp_numbers || []\n  };\n} else if (originalData.send_whatsapp) {\n  response.channels.whatsapp = {\n    sent: false,\n    error: 'WhatsApp no enviado',\n    numbers: originalData.whatsapp_numbers || []\n  };\n}\n\nconsole.log('📊 Respuesta final:', JSON.stringify(response, null, 2));\n\nreturn { json: response };"
+      },
+      "id": "734a59d8-62f7-4319-82a0-9c7a2f8684fd",
+      "name": "Preparar Respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "ab834d1f-c9cf-40d5-8587-9cec7d202ce8",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        688,
+        96
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Procesar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar Datos": {
+      "main": [
+        [
+          {
+            "node": "Email SMTP",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "¿Enviar WhatsApp?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email SMTP": {
+      "main": [
+        [
+          {
+            "node": "Preparar Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Enviar WhatsApp?": {
+      "main": [
+        [
+          {
+            "node": "Split WhatsApp Numbers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split WhatsApp Numbers": {
+      "main": [
+        [
+          {
+            "node": "WAHA - Enviar WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WAHA - Enviar WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Preparar Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Respuesta": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
