@@ -344,16 +344,12 @@ def sincronizar_excel_completo():
                         
                         cedula_case = str(int(cedula_raw))
                         
-                        # Fechas del Excel Kactus (pueden ser ajustadas por traslapo)
+                        # Fechas del Excel = fechas de KACTUS (las del portal ya están en BD)
                         fecha_inicio_raw = row.get("fecha_inicio")
                         fecha_fin_raw = row.get("fecha_fin")
-                        fecha_inicio_kactus_raw = row.get("fecha_inicio_kactus")
-                        fecha_fin_kactus_raw = row.get("fecha_fin_kactus")
                         
-                        fecha_inicio_case = pd.to_datetime(fecha_inicio_raw) if pd.notna(fecha_inicio_raw) else None
-                        fecha_fin_case = pd.to_datetime(fecha_fin_raw) if pd.notna(fecha_fin_raw) else None
-                        fecha_inicio_kactus = pd.to_datetime(fecha_inicio_kactus_raw) if pd.notna(fecha_inicio_kactus_raw) else None
-                        fecha_fin_kactus = pd.to_datetime(fecha_fin_kactus_raw) if pd.notna(fecha_fin_kactus_raw) else None
+                        fecha_inicio_kactus = pd.to_datetime(fecha_inicio_raw) if pd.notna(fecha_inicio_raw) else None
+                        fecha_fin_kactus = pd.to_datetime(fecha_fin_raw) if pd.notna(fecha_fin_raw) else None
                         
                         num_incap = str(row["numero_incapacidad"]).strip() if pd.notna(row.get("numero_incapacidad")) else None
                         
@@ -370,47 +366,45 @@ def sincronizar_excel_completo():
                             if caso:
                                 match_method = "numero_incapacidad"
                         
-                        # 2) Por cedula + fecha_inicio exacta
-                        if caso is None and fecha_inicio_case:
+                        # 2) Por cedula + fecha_inicio Kactus ≈ fecha_inicio portal
+                        if caso is None and fecha_inicio_kactus:
                             caso = db.query(Case).filter(
                                 Case.cedula == cedula_case,
-                                func.date(Case.fecha_inicio) == fecha_inicio_case.date()
+                                func.date(Case.fecha_inicio) == fecha_inicio_kactus.date()
                             ).first()
                             if caso:
                                 match_method = "fecha_inicio_exacta"
                         
-                        # 3) Por cedula + fecha_fin exacta
-                        if caso is None and fecha_fin_case:
+                        # 3) Por cedula + fecha_fin Kactus ≈ fecha_fin portal
+                        if caso is None and fecha_fin_kactus:
                             caso = db.query(Case).filter(
                                 Case.cedula == cedula_case,
-                                func.date(Case.fecha_fin) == fecha_fin_case.date()
+                                func.date(Case.fecha_fin) == fecha_fin_kactus.date()
                             ).first()
                             if caso:
                                 match_method = "fecha_fin_exacta"
                         
                         # 4) Por rango de fechas con superposición (±3 días tolerancia por traslapos)
-                        if caso is None and fecha_inicio_case:
+                        if caso is None and fecha_inicio_kactus:
                             tolerancia = timedelta(days=3)
                             candidatos = db.query(Case).filter(
                                 Case.cedula == cedula_case,
                                 Case.fecha_inicio != None,
                                 Case.fecha_fin != None,
                                 or_(
-                                    # fecha_inicio_case cae dentro del rango del caso
                                     and_(
-                                        Case.fecha_inicio <= fecha_inicio_case + tolerancia,
-                                        Case.fecha_fin >= fecha_inicio_case - tolerancia
+                                        Case.fecha_inicio <= fecha_inicio_kactus + tolerancia,
+                                        Case.fecha_fin >= fecha_inicio_kactus - tolerancia
                                     ),
-                                    # fecha_fin_case cae dentro del rango del caso
                                     and_(
-                                        fecha_fin_case is not None,
-                                        Case.fecha_inicio <= (fecha_fin_case or fecha_inicio_case) + tolerancia,
-                                        Case.fecha_fin >= fecha_inicio_case - tolerancia
+                                        fecha_fin_kactus is not None,
+                                        Case.fecha_inicio <= (fecha_fin_kactus or fecha_inicio_kactus) + tolerancia,
+                                        Case.fecha_fin >= fecha_inicio_kactus - tolerancia
                                     )
                                 ),
-                                Case.kactus_sync_at == None  # Solo los que no se han sincronizado aún
+                                Case.kactus_sync_at == None
                             ).order_by(
-                                func.abs(func.extract('epoch', Case.fecha_inicio - fecha_inicio_case))
+                                func.abs(func.extract('epoch', Case.fecha_inicio - fecha_inicio_kactus))
                             ).first()
                             if candidatos:
                                 caso = candidatos
@@ -422,24 +416,24 @@ def sincronizar_excel_completo():
                             continue
                         
                         # ═══ ACTUALIZAR CAMPOS KACTUS ═══
+                        # Solo 3 campos vienen del Excel: numero_incapacidad, codigo_cie10, fechas
                         if num_incap:
                             caso.numero_incapacidad = num_incap
                         if pd.notna(row.get("codigo_cie10")):
-                            caso.codigo_cie10 = str(row["codigo_cie10"]).strip()
-                        if pd.notna(row.get("diagnostico")):
-                            caso.diagnostico_kactus = str(row["diagnostico"]).strip()
-                            # Si no tiene diagnóstico propio, copiar el de Kactus
-                            if not caso.diagnostico:
-                                caso.diagnostico = caso.diagnostico_kactus
-                        if pd.notna(row.get("es_prorroga")):
-                            val = str(row["es_prorroga"]).strip().upper()
-                            caso.es_prorroga = val in ("SI", "SÍ", "YES", "TRUE", "1")
-                        if pd.notna(row.get("medico_tratante")):
-                            caso.medico_tratante = str(row["medico_tratante"]).strip()
-                        if pd.notna(row.get("institucion_origen")):
-                            caso.institucion_origen = str(row["institucion_origen"]).strip()
+                            codigo = str(row["codigo_cie10"]).strip()
+                            caso.codigo_cie10 = codigo
+                            # Auto-resolver diagnóstico desde CIE-10
+                            try:
+                                from app.services.cie10_service import buscar_codigo
+                                info_cie = buscar_codigo(codigo)
+                                if info_cie and info_cie.get("encontrado"):
+                                    caso.diagnostico_kactus = info_cie["descripcion"]
+                                    if not caso.diagnostico:
+                                        caso.diagnostico = info_cie["descripcion"]
+                            except Exception:
+                                pass
                         
-                        # ═══ FECHAS KACTUS (ajustadas por traslapo) ═══
+                        # ═══ FECHAS KACTUS ═══
                         if fecha_inicio_kactus:
                             caso.fecha_inicio_kactus = fecha_inicio_kactus
                         if fecha_fin_kactus:
