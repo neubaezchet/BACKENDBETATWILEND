@@ -10,7 +10,7 @@ from datetime import datetime
 from app.database import SessionLocal, Employee, Company, Case, CorreoNotificacion
 from io import BytesIO
 
-GOOGLE_DRIVE_FILE_ID = "1POt2ytSN61XbSpXUSUPyHdOVy2g7CRas"
+GOOGLE_DRIVE_FILE_ID = os.environ.get("GOOGLE_DRIVE_FILE_ID", "1POt2ytSN61XbSpXUSUPyHdOVy2g7CRas")
 EXCEL_DOWNLOAD_URL = f"https://docs.google.com/spreadsheets/d/{GOOGLE_DRIVE_FILE_ID}/export?format=xlsx"
 LOCAL_CACHE_PATH = "/tmp/base_empleados_cache.xlsx"
 
