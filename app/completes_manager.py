@@ -63,16 +63,13 @@ class CompletesManager:
             if not caso.drive_link:
                 print(f"⚠️ Caso {caso.serial} sin drive_link, no se copia")
                 return None
-            
             # Extraer file_id del link
             file_id = self._extract_file_id(caso.drive_link)
             if not file_id:
                 print(f"❌ No se pudo extraer file_id de {caso.drive_link}")
                 return None
-            
             # Inicializar estructura
             self._init_completes_structure()
-            
             # Crear/obtener carpeta de empresa en Completes
             empresa_nombre = caso.empresa.nombre if caso.empresa else "OTRA_EMPRESA"
             empresa_folder_id = create_folder_if_not_exists(
@@ -80,20 +77,25 @@ class CompletesManager:
                 empresa_nombre.encode(),
                 self.completes_root_id
             )
-            
             # Copiar archivo
             copied_file = self.service.files().copy(
                 fileId=file_id,
                 body={'parents': [empresa_folder_id]}
             ).execute()
-            
             copied_file_id = copied_file.get('id')
             copied_link = f"https://drive.google.com/file/d/{copied_file_id}/view"
-            
+            # Eliminar archivo de incompletas si existe
+            try:
+                from app.drive_manager import DriveFileManager
+                drive_manager = DriveFileManager()
+                incompletas_folder_id = drive_manager.get_or_create_folder_structure(empresa_nombre, 'INCOMPLETA')
+                incompleta_file_id = drive_manager.get_file_id_by_name(caso.serial + ".pdf", incompletas_folder_id)
+                if incompleta_file_id:
+                    drive_manager.eliminar_version_incompleta(incompleta_file_id)
+            except Exception as e:
+                print(f"⚠️ Error eliminando incompleta: {e}")
             print(f"✅ Caso {caso.serial} copiado a Completes/{empresa_nombre}/")
-            
             return copied_link
-            
         except Exception as e:
             print(f"❌ Error copiando caso {caso.serial} a Completes: {e}")
             return None
