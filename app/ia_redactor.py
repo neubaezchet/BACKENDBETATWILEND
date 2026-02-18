@@ -385,3 +385,16 @@ Responde ÚNICAMENTE con el contenido."""
         
     except Exception as e:
         return mensaje_libre
+
+def redactar_mensaje_completo(nombre: str, serial: str, tipo: str) -> str:
+    """Email cuando incapacidad es VALIDADA"""
+    try:
+        message = client.messages.create(
+            model="claude-3-opus-20240229", max_tokens=400,
+            messages=[{"role": "user", "content": 
+                f"Email positivo para {nombre}: incapacidad {serial} ({tipo}) VALIDADA. "
+                "Pasa a radicación. Agradecer. Máx 150 palabras."}]
+        )
+        return message.content[0].text.strip()
+    except:
+        return f"¡Excelentes noticias {nombre}! Tu incapacidad **{serial}** fue VALIDADA. Pasa a radicación."

@@ -714,6 +714,106 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
                                             {archivos_html}
                                         </td>
                                     </tr>
+        archivos_html = ""
+        if archivos_nombres:
+            for archivo in archivos_nombres:
+                archivos_html += f"""
+                <tr>
+                    <td style="padding: 8px 12px; background-color: #F3F2F1; border-left: 3px solid #0078D4;">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td width="24" style="color: #0078D4; font-size: 16px;">&#128196;</td>
+                                <td style="padding-left: 8px; color: #323130; font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif;">{archivo}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr><td height="8"></td></tr>
+                """
+        return f"""
+    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+    <html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <!--[if mso]><style>body, table, td {{font-family: Arial, sans-serif !important;}}</style><![endif]-->
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #F3F2F1;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #F3F2F1; padding: 20px 0;">
+            <tr><td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #FFFFFF; max-width: 600px;">
+                    <tr>
+                        <td style="background-color: #0078D4; padding: 32px 24px; text-align: center;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr><td align="center">
+                                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto 16px;">
+                                        <tr><td style="width: 56px; height: 56px; background-color: #FFFFFF; border-radius: 28px; text-align: center; line-height: 56px; font-size: 32px;">&#9989;</td></tr>
+                                    </table>
+                                </td></tr>
+                                <tr><td align="center" style="color: #FFFFFF; font-size: 24px; font-weight: 600; font-family: 'Segoe UI', Arial, sans-serif;">Incapacidad Recibida</td></tr>
+                                <tr><td align="center" style="color: #FFFFFF; font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; padding-top: 8px;">IncaNeurobaeza</td></tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 32px 24px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr><td style="color: #323130; font-size: 16px; font-family: 'Segoe UI', Arial, sans-serif; padding-bottom: 16px;">Hola <strong style="color: #0078D4;">{nombre}</strong></td></tr>
+                                <tr><td style="background-color: #EFF6FC; border-left: 4px solid #0078D4; padding: 16px;">
+                                    <strong style="color: #004578; font-size: 15px;">&#10004; Confirmo recibido</strong><br/><br/>
+                                    <span style="color: #004578; font-size: 14px;">Se validará que cumpla con los requisitos para <strong>{tipo_incapacidad}</strong>.</span>
+                                </td></tr>
+                                <tr><td height="24"></td></tr>
+                                <tr><td>
+                                    <table width="100%" cellpadding="12" cellspacing="0" border="0" style="background-color: #FAF9F8;">
+                                        <tr><td style="color: #323130; font-size: 15px; font-weight: 600; border-bottom: 1px solid #EDEBE9; padding-bottom: 12px;">Información del Registro</td></tr>
+                                        <tr><td height="8"></td></tr>
+                                        <tr><td>
+                                            <table width="100%" cellpadding="6" cellspacing="0">
+                                                <tr>
+                                                    <td width="100" style="color: #605E5C; font-size: 13px;">Serial:</td>
+                                                    <td style="color: #323130; font-weight: 600; font-size: 13px;"><span style="background-color: #FFF4CE; padding: 4px 10px; color: #8A6A00;">{serial}</span></td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="color: #605E5C; font-size: 13px;">Empresa:</td>
+                                                    <td style="color: #323130; font-size: 13px;">{empresa}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="color: #605E5C; font-size: 13px;">Tipo:</td>
+                                                    <td style="color: #323130; font-size: 13px;">{tipo_incapacidad}</td>
+                                                </tr>
+                                            </table>
+                                        </td></tr>
+                                    </table>
+                                </td></tr>
+                                <tr><td height="24"></td></tr>
+                                {f'''
+                                <tr><td style="color: #323130; font-size: 15px; font-weight: 600; padding-bottom: 12px;">Documentos Recibidos</td></tr>
+                                <tr><td><table width="100%" cellpadding="0" cellspacing="0">{archivos_html}</table></td></tr>
+                                <tr><td height="24"></td></tr>
+                                ''' if archivos_html else ''}
+                                <tr><td align="center" style="padding: 24px 0;">
+                                    <table cellpadding="0" cellspacing="0"><tr><td style="background-color: #0078D4; border-radius: 4px;">
+                                        <a href="{link_drive}" style="display: block; padding: 14px 32px; color: #FFFFFF; text-decoration: none; font-size: 15px; font-weight: 600;">Ver en Drive</a>
+                                    </td></tr></table>
+                                </td></tr>
+                                <tr><td style="background-color: #FFF4CE; border: 2px solid #FFB900; padding: 16px; text-align: center;">
+                                    <strong style="color: #8A6A00; font-size: 14px;">&#9888; IMPORTANTE</strong><br/>
+                                    <span style="color: #8A6A00; font-size: 13px;">Estar pendiente vía WhatsApp y correo</span>
+                                </td></tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr><td style="background-color: #F3F2F1; padding: 24px; text-align: center;">
+                        <strong style="color: #0078D4; font-size: 17px;">IncaNeurobaeza</strong><br/>
+                        <span style="color: #605E5C; font-size: 13px; font-style: italic;">Trabajando para ayudarte</span>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body>
+    </html>
+        """
                                     ''' if archivos_html else ''}
                                     
                                     <!-- Botón Ver Drive -->
@@ -809,84 +909,27 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
 
 def get_alert_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
     """Wrapper para emails de alerta (incompleta/ilegible)"""
-    return get_email_template_universal(
-        tipo_email='incompleta',
-        nombre=nombre,
-        serial=serial,
-        empresa=empresa,
-        tipo_incapacidad=tipo_incapacidad,
-        telefono=telefono,
-        email=email,
-        link_drive=link_drive,
-        checks_seleccionados=checks_seleccionados or []
-    )
+    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados)
 
 def get_ilegible_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
     """Template para documentos ilegibles"""
-    return get_email_template_universal(
-        tipo_email='ilegible',
-        nombre=nombre,
-        serial=serial,
-        empresa=empresa,
-        tipo_incapacidad=tipo_incapacidad,
-        telefono=telefono,
-        email=email,
-        link_drive=link_drive,
-        checks_seleccionados=checks_seleccionados or []
-    )
+    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados)
 
 def get_eps_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
     """Template para casos que requieren transcripción en EPS"""
-    return get_email_template_universal(
-        tipo_email='eps',
-        nombre=nombre,
-        serial=serial,
-        empresa=empresa,
-        tipo_incapacidad=tipo_incapacidad,
-        telefono=telefono,
-        email=email,
-        link_drive=link_drive
-    )
+    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive)
 
 def get_completa_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
     """Template para casos validados completos"""
-    return get_email_template_universal(
-        tipo_email='completa',
-        nombre=nombre,
-        serial=serial,
-        empresa=empresa,
-        tipo_incapacidad=tipo_incapacidad,
-        telefono=telefono,
-        email=email,
-        link_drive=link_drive
-    )
+    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive)
 
 def get_tthh_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
     """Template para alertas a Talento Humano"""
-    return get_email_template_universal(
-        tipo_email='tthh',
-        nombre=nombre,
-        serial=serial,
-        empresa=empresa,
-        tipo_incapacidad=tipo_incapacidad,
-        telefono=telefono,
-        email=email,
-        link_drive=link_drive,
-        checks_seleccionados=checks_seleccionados or []
-    )
+    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados)
 
 def get_falsa_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
     """Template para confirmación falsa (caso especial)"""
-    return get_email_template_universal(
-        tipo_email='falsa',
-        nombre=nombre,
-        serial=serial,
-        empresa=empresa,
-        tipo_incapacidad=tipo_incapacidad,
-        telefono=telefono,
-        email=email,
-        link_drive=link_drive
-    ) # ==================== AL FINAL DEL ARCHIVO email_templates.py ====================
+    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive)
 
 def get_email_template_universal_con_ia(
     tipo_email,  # 'confirmacion', 'incompleta', 'ilegible', 'eps', 'tthh', 'completa', 'falsa', 'recordatorio', 'alerta_jefe'

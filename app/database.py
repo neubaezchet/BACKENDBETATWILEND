@@ -92,7 +92,7 @@ class Employee(Base):
     centro_costo = Column(String(100))
     fecha_ingreso = Column(DateTime, nullable=True)
     tipo_contrato = Column(String(50))
-    dias_kactus = Column(Integer, nullable=True)
+    # dias_kactus eliminado: ya no se usa en empleados
     ciudad = Column(String(100))
     
     created_at = Column(DateTime, default=get_utc_now)
