@@ -610,110 +610,106 @@ def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefon
     
     return f"""
     <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <title>Confirmación - {serial}</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background-color: #f4f4f4;">
-        
-        <!-- Wrapper Table -->
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4; padding: 20px 0;">
+    archivos_html = ""
+    if archivos_nombres:
+        for archivo in archivos_nombres:
+            archivos_html += f"""
             <tr>
-                <td align="center">
-                    
-                    <!-- Main Container -->
-                    <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 10px; overflow: hidden;">
-                        
-                        <!-- Header -->
+                <td style="padding: 8px 12px; background-color: #F3F2F1; border-left: 3px solid #0078D4;">
+                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
                         <tr>
-                            <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px 20px; text-align: center;">
-                                <table width="100%" cellpadding="0" cellspacing="0">
-                                    <tr>
-                                        <td align="center">
-                                            <div style="background: white; width: 70px; height: 70px; border-radius: 50%; margin: 0 auto 15px; line-height: 70px; text-align: center;">
-                                                <span style="font-size: 35px;">&#9989;</span>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td align="center">
-                                            <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 700;">Incapacidades</h1>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </td>
+                            <td width="24" style="color: #0078D4; font-size: 16px;">&#128196;</td>
+                            <td style="padding-left: 8px; color: #323130; font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif;">{archivo}</td>
                         </tr>
-                        
-                        <!-- Content -->
-                        <tr>
-                            <td style="padding: 30px 20px;">
-                                <table width="100%" cellpadding="0" cellspacing="0">
-                                    
-                                    <!-- Saludo -->
-                                    <tr>
-                                        <td style="padding-bottom: 20px;">
-                                            <p style="font-size: 16px; color: #1e293b; margin: 0; font-weight: 600;">
-                                                Hola <span style="color: #667eea;">{nombre}</span>
-                                            </p>
-                                        </td>
-                                    </tr>
-                                    
-                                    <!-- Mensaje Principal -->
-                                    <tr>
-                                        <td style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
-                                            <p style="margin: 0; color: #1e40af; font-size: 14px; line-height: 1.5;">
-                                                <strong>Confirmo recibido de la documentación</strong><br>
-                                                Se procederá a realizar la revisión para validar que cumpla con los requisitos establecidos para <strong>{tipo_incapacidad}</strong>.
-                                            </p>
-                                        </td>
-                                    </tr>
-                                    
-                                    <!-- Detalles del Caso -->
-                                    <tr>
-                                        <td style="padding-top: 20px;">
-                                            <table width="100%" cellpadding="8" cellspacing="0" style="background: #f8fafc; border-radius: 12px; padding: 10px;">
-                                                <tr>
-                                                    <td colspan="2" style="padding-bottom: 10px;">
-                                                        <h3 style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Información del Registro</h3>
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td style="color: #64748b; font-size: 13px; padding: 5px 0; width: 30%;">Serial:</td>
-                                                    <td style="color: #0f172a; font-weight: 600; font-size: 13px; padding: 5px 0;">
-                                                        <span style="background: #fef3c7; padding: 3px 10px; border-radius: 6px; color: #92400e;">{serial}</span>
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td style="color: #64748b; font-size: 13px; padding: 5px 0;">Empresa:</td>
-                                                    <td style="color: #0f172a; font-weight: 500; font-size: 13px; padding: 5px 0;">{empresa}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td style="color: #64748b; font-size: 13px; padding: 5px 0;">Tipo:</td>
-                                                    <td style="color: #0f172a; font-weight: 500; font-size: 13px; padding: 5px 0;">{tipo_incapacidad}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td style="color: #64748b; font-size: 13px; padding: 5px 0;">Teléfono:</td>
-                                                    <td style="color: #0f172a; font-weight: 500; font-size: 13px; padding: 5px 0;">{telefono}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td style="color: #64748b; font-size: 13px; padding: 5px 0;">Email:</td>
-                                                    <td style="color: #0f172a; font-weight: 500; font-size: 13px; padding: 5px 0;">{email}</td>
-                                                </tr>
-                                            </table>
-                                        </td>
-                                    </tr>
-                                    
-                                    <!-- Documentos Recibidos -->
-                                    {f'''
-                                    <tr>
-                                        <td style="padding-top: 20px;">
-                                            <h3 style="margin: 0 0 10px; color: #0f172a; font-size: 15px; font-weight: 600;">Documentos Recibidos</h3>
-                                            {archivos_html}
-                                        </td>
-                                    </tr>
+                    </table>
+                </td>
+            </tr>
+            <tr><td height="8"></td></tr>
+            """
+    return f"""
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <!--[if mso]><style>body, table, td {{font-family: Arial, sans-serif !important;}}</style><![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #F3F2F1;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #F3F2F1; padding: 20px 0;">
+        <tr><td align="center">
+            <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #FFFFFF; max-width: 600px;">
+                <tr>
+                    <td style="background-color: #0078D4; padding: 32px 24px; text-align: center;">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr><td align="center">
+                                <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto 16px;">
+                                    <tr><td style="width: 56px; height: 56px; background-color: #FFFFFF; border-radius: 28px; text-align: center; line-height: 56px; font-size: 32px;">&#9989;</td></tr>
+                                </table>
+                            </td></tr>
+                            <tr><td align="center" style="color: #FFFFFF; font-size: 24px; font-weight: 600; font-family: 'Segoe UI', Arial, sans-serif;">Incapacidad Recibida</td></tr>
+                            <tr><td align="center" style="color: #FFFFFF; font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; padding-top: 8px;">IncaNeurobaeza</td></tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 32px 24px;">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr><td style="color: #323130; font-size: 16px; font-family: 'Segoe UI', Arial, sans-serif; padding-bottom: 16px;">Hola <strong style="color: #0078D4;">{nombre}</strong></td></tr>
+                            <tr><td style="background-color: #EFF6FC; border-left: 4px solid #0078D4; padding: 16px;">
+                                <strong style="color: #004578; font-size: 15px;">&#10004; Confirmo recibido</strong><br/><br/>
+                                <span style="color: #004578; font-size: 14px;">Se validará que cumpla con los requisitos para <strong>{tipo_incapacidad}</strong>.</span>
+                            </td></tr>
+                            <tr><td height="24"></td></tr>
+                            <tr><td>
+                                <table width="100%" cellpadding="12" cellspacing="0" border="0" style="background-color: #FAF9F8;">
+                                    <tr><td style="color: #323130; font-size: 15px; font-weight: 600; border-bottom: 1px solid #EDEBE9; padding-bottom: 12px;">Información del Registro</td></tr>
+                                    <tr><td height="8"></td></tr>
+                                    <tr><td>
+                                        <table width="100%" cellpadding="6" cellspacing="0">
+                                            <tr>
+                                                <td width="100" style="color: #605E5C; font-size: 13px;">Serial:</td>
+                                                <td style="color: #323130; font-weight: 600; font-size: 13px;"><span style="background-color: #FFF4CE; padding: 4px 10px; color: #8A6A00;">{serial}</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td style="color: #605E5C; font-size: 13px;">Empresa:</td>
+                                                <td style="color: #323130; font-size: 13px;">{empresa}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="color: #605E5C; font-size: 13px;">Tipo:</td>
+                                                <td style="color: #323130; font-size: 13px;">{tipo_incapacidad}</td>
+                                            </tr>
+                                        </table>
+                                    </td></tr>
+                                </table>
+                            </td></tr>
+                            <tr><td height="24"></td></tr>
+                            {f'''
+                            <tr><td style="color: #323130; font-size: 15px; font-weight: 600; padding-bottom: 12px;">Documentos Recibidos</td></tr>
+                            <tr><td><table width="100%" cellpadding="0" cellspacing="0">{archivos_html}</table></td></tr>
+                            <tr><td height="24"></td></tr>
+                            ''' if archivos_html else ''}
+                            <tr><td align="center" style="padding: 24px 0;">
+                                <table cellpadding="0" cellspacing="0"><tr><td style="background-color: #0078D4; border-radius: 4px;">
+                                    <a href="{link_drive}" style="display: block; padding: 14px 32px; color: #FFFFFF; text-decoration: none; font-size: 15px; font-weight: 600;">Ver en Drive</a>
+                                </td></tr></table>
+                            </td></tr>
+                            <tr><td style="background-color: #FFF4CE; border: 2px solid #FFB900; padding: 16px; text-align: center;">
+                                <strong style="color: #8A6A00; font-size: 14px;">&#9888; IMPORTANTE</strong><br/>
+                                <span style="color: #8A6A00; font-size: 13px;">Estar pendiente vía WhatsApp y correo</span>
+                            </td></tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr><td style="background-color: #F3F2F1; padding: 24px; text-align: center;">
+                    <strong style="color: #0078D4; font-size: 17px;">IncaNeurobaeza</strong><br/>
+                    <span style="color: #605E5C; font-size: 13px; font-style: italic;">Trabajando para ayudarte</span>
+                </td></tr>
+            </table>
+        </td></tr>
+    </table>
+</body>
+</html>
+    """
         archivos_html = ""
         if archivos_nombres:
             for archivo in archivos_nombres:
