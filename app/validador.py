@@ -490,6 +490,31 @@ async def cambiar_estado(
         caso.bloquea_nueva = True
     
     db.commit()
+    # ✅ EMAIL COMPLETA
+    if nuevo_estado == "COMPLETA":
+        try:
+            from app.ia_redactor import redactar_mensaje_completa
+            from app.email_templates import get_email_template_universal
+            from app.n8n_notifier import enviar_a_n8n
+            if caso.empleado and caso.email_form:
+                contenido = redactar_mensaje_completa(
+                    caso.empleado.nombre, caso.serial,
+                    caso.tipo.value if caso.tipo else 'General'
+                )
+                html = get_email_template_universal(
+                    'completa', caso.empleado.nombre, caso.serial,
+                    caso.empresa.nombre if caso.empresa else 'N/A',
+                    caso.tipo.value if caso.tipo else 'General',
+                    caso.telefono_form or 'N/A', caso.email_form,
+                    caso.drive_link, contenido_ia=contenido
+                )
+                enviar_a_n8n('completa', caso.email_form, caso.serial,
+                    f"✅ Validada - {caso.serial}", html,
+                    caso.empresa.email_copia if caso.empresa else None,
+                    caso.empleado.correo if caso.empleado else None,
+                    caso.telefono_form, None, [])
+        except Exception as e:
+            print(f"⚠️ Email COMPLETA error: {e}")
     
     return {
         "status": "ok",

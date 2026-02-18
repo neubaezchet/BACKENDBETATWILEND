@@ -89,7 +89,6 @@ def sincronizar_empleado_desde_excel(cedula: str):
             centro_costo=row.get("centro_costo", None) if pd.notna(row.get("centro_costo", None)) else None,
             fecha_ingreso=pd.to_datetime(row.get("fecha_ingreso")) if pd.notna(row.get("fecha_ingreso", None)) else None,
             tipo_contrato=row.get("tipo_contrato", None) if pd.notna(row.get("tipo_contrato", None)) else None,
-            dias_kactus=int(row.get("dias_kactus")) if pd.notna(row.get("dias_kactus", None)) else None,
             ciudad=row.get("ciudad", None) if pd.notna(row.get("ciudad", None)) else None,
             activo=True
         )
@@ -234,8 +233,7 @@ def sincronizar_excel_completo():
                     except Exception:
                         fecha_ingreso = None
                 tipo_contrato = row.get("tipo_contrato", None) if pd.notna(row.get("tipo_contrato", None)) else None
-                dias_kactus_raw = row.get("dias_kactus", None)
-                dias_kactus_emp = int(dias_kactus_raw) if pd.notna(dias_kactus_raw) else None
+                # dias_kactus eliminado: ya no se usa en empleados
                 ciudad = row.get("ciudad", None) if pd.notna(row.get("ciudad", None)) else None
                 
                 # Buscar o crear empresa
@@ -269,7 +267,7 @@ def sincronizar_excel_completo():
                     empleado.centro_costo = centro_costo
                     empleado.fecha_ingreso = fecha_ingreso
                     empleado.tipo_contrato = tipo_contrato
-                    empleado.dias_kactus = dias_kactus_emp
+                    # empleado.dias_kactus eliminado
                     empleado.ciudad = ciudad
                     empleado.activo = True
                     empleado.updated_at = datetime.now()
@@ -292,7 +290,7 @@ def sincronizar_excel_completo():
                         centro_costo=centro_costo,
                         fecha_ingreso=fecha_ingreso,
                         tipo_contrato=tipo_contrato,
-                        dias_kactus=dias_kactus_emp,
+                        # dias_kactus eliminado,
                         ciudad=ciudad,
                         activo=True
                     )
