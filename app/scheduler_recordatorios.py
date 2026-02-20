@@ -109,100 +109,90 @@ def verificar_casos_pendientes():
         for caso in casos_pendientes:
             try:
                 empleado = caso.empleado
-                
                 if not empleado:
                     print(f"⚠️ Caso {caso.serial} sin empleado asignado, omitiendo...")
                     continue
-                
                 print(f"\n📧 Procesando caso {caso.serial}:")
                 print(f"   • Empleado: {empleado.nombre}")
-                for caso in casos_pendientes:
-                    try:
-                        empleado = caso.empleado
-                        if not empleado:
-                            print(f"⚠️ Caso {caso.serial} sin empleado asignado, omitiendo...")
-                            continue
-                        print(f"\n📧 Procesando caso {caso.serial}:")
-                        print(f"   • Empleado: {empleado.nombre}")
-                        print(f"   • Estado: {caso.estado.value}")
-                        print(f"   • Días sin respuesta: {(datetime.now() - caso.updated_at).days}")
+                print(f"   • Estado: {caso.estado.value}")
+                print(f"   • Días sin respuesta: {(datetime.now() - caso.updated_at).days}")
 
-                        # Determinar si es 3 días (empleado) o 5 días (jefe)
-                        es_3dias = caso in casos_3dias
-                        es_5dias = caso in casos_5dias
+                # Determinar si es 3 días (empleado) o 5 días (jefe)
+                es_3dias = caso in casos_3dias
+                es_5dias = caso in casos_5dias
 
-                        # EMAIL AL EMPLEADO (3 días)
-                        if es_3dias and caso.email_form:
-                            print(f"   • Generando recordatorio con IA (3 días)...")
-                            contenido_ia = redactar_recordatorio_7dias(
-                                empleado.nombre,
-                                caso.serial,
-                                caso.estado.value
-                            )
-                            html_email = get_email_template_universal(
-                                tipo_email='recordatorio',
-                                nombre=empleado.nombre,
-                                serial=caso.serial,
-                                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-                                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-                                telefono=caso.telefono_form,
-                                email=caso.email_form,
-                                link_drive=caso.drive_link,
-                                contenido_ia=contenido_ia
-                            )
-                            if send_html_email(
-                                caso.email_form,
-                                f"Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
-                                html_email,
-                                caso=caso
-                            ):
-                                recordatorios_enviados += 1
-                                print(f"   ✅ Recordatorio enviado a empleada")
-                            else:
-                                print(f"   ❌ Error enviando recordatorio")
+                # EMAIL AL EMPLEADO (3 días)
+                if es_3dias and caso.email_form:
+                    print(f"   • Generando recordatorio con IA (3 días)...")
+                    contenido_ia = redactar_recordatorio_7dias(
+                        empleado.nombre,
+                        caso.serial,
+                        caso.estado.value
+                    )
+                    html_email = get_email_template_universal(
+                        tipo_email='recordatorio',
+                        nombre=empleado.nombre,
+                        serial=caso.serial,
+                        empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                        tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                        telefono=caso.telefono_form,
+                        email=caso.email_form,
+                        link_drive=caso.drive_link,
+                        contenido_ia=contenido_ia
+                    )
+                    if send_html_email(
+                        caso.email_form,
+                        f"Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
+                        html_email,
+                        caso=caso
+                    ):
+                        recordatorios_enviados += 1
+                        print(f"   ✅ Recordatorio enviado a empleado")
+                    else:
+                        print(f"   ❌ Error enviando recordatorio")
 
-                        # EMAIL AL JEFE (5 días)
-                        if es_5dias and empleado.jefe_email:
-                            print(f"   • Generando alerta para jefe (5 días) {empleado.jefe_nombre}...")
-                            contenido_jefe = redactar_alerta_jefe_7dias(
-                                empleado.jefe_nombre,
-                                empleado.nombre,
-                                caso.serial,
-                                caso.empresa.nombre if caso.empresa else 'N/A'
-                            )
-                            html_jefe = get_email_template_universal(
-                                tipo_email='alerta_jefe',
-                                nombre=empleado.jefe_nombre,
-                                serial=caso.serial,
-                                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-                                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-                                telefono=caso.telefono_form,
-                                email=caso.email_form,
-                                link_drive=caso.drive_link,
-                                contenido_ia=contenido_jefe,
-                                empleado_nombre=empleado.nombre
-                            )
-                            if send_html_email(
-                                empleado.jefe_email,
-                                f"📊 Seguimiento - Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
-                                html_jefe,
-                                caso=None
-                            ):
-                                alertas_jefe_enviadas += 1
-                                print(f"   ✅ Alerta enviada a jefe")
-                            else:
-                                print(f"   ❌ Error enviando alerta al jefe")
-                        else:
-                            print(f"   ⚠️ Sin datos de jefe en el sistema o no corresponde a 5 días")
+                # EMAIL AL JEFE (5 días)
+                if es_5dias and empleado.jefe_email:
+                    print(f"   • Generando alerta para jefe (5 días) {empleado.jefe_nombre}...")
+                    contenido_jefe = redactar_alerta_jefe_7dias(
+                        empleado.jefe_nombre,
+                        empleado.nombre,
+                        caso.serial,
+                        caso.empresa.nombre if caso.empresa else 'N/A'
+                    )
+                    html_jefe = get_email_template_universal(
+                        tipo_email='alerta_jefe',
+                        nombre=empleado.jefe_nombre,
+                        serial=caso.serial,
+                        empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                        tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                        telefono=caso.telefono_form,
+                        email=caso.email_form,
+                        link_drive=caso.drive_link,
+                        contenido_ia=contenido_jefe,
+                        empleado_nombre=empleado.nombre
+                    )
+                    if send_html_email(
+                        empleado.jefe_email,
+                        f"📊 Seguimiento - Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
+                        html_jefe,
+                        caso=None
+                    ):
+                        alertas_jefe_enviadas += 1
+                        print(f"   ✅ Alerta enviada a jefe")
+                    else:
+                        print(f"   ❌ Error enviando alerta al jefe")
+                else:
+                    print(f"   ⚠️ Sin datos de jefe en el sistema o no corresponde a 5 días")
 
-                        # Marcar como enviado
-                        caso.recordatorio_enviado = True
-                        caso.fecha_recordatorio = datetime.now()
-                        db.commit()
-                        print(f"   ✅ Caso {caso.serial} marcado como recordatorio enviado")
-                    except Exception as e:
-                        print(f"   ❌ Error procesando caso {caso.serial}: {e}")
-                        db.rollback()
+                # Marcar como enviado
+                caso.recordatorio_enviado = True
+                caso.fecha_recordatorio = datetime.now()
+                db.commit()
+                print(f"   ✅ Caso {caso.serial} marcado como recordatorio enviado")
+            except Exception as e:
+                print(f"   ❌ Error procesando caso {caso.serial}: {e}")
+                db.rollback()
         
     except Exception as e:
         print(f"❌ Error general en verificación: {e}")
