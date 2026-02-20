@@ -1265,18 +1265,18 @@ Gracias por usar IncaNeurobaeza.
             )
             asunto = f"Incapacidad {consecutivo} - {nombre} - {empresa_reg}"
             
-            # ✅ Mensaje para WhatsApp (versión de texto del HTML)
-            mensaje_whatsapp = f"""
-Hola,
+            # ✅ Mensaje para WhatsApp (bien formateado)
+            mensaje_whatsapp = f"""📋 *IncaNeurobaeza — Incapacidad Recibida*
+Serial: *{consecutivo}*
 
-Confirmo recibido de tu documentación de incapacidad.
-Serial: {consecutivo}
-Empresa: {empresa_reg}
+Hemos recibido su documentación de incapacidad.
 
-Tu solicitud está siendo revisada.
+*Empresa:* {empresa_reg}
+*Archivos:* {len(original_filenames)}
 
-Gracias por usar IncaNeurobaeza.
-            """.strip()
+Su caso está siendo revisado por el equipo de validación. Nos comunicaremos con usted si se requiere algún paso adicional.
+
+_Mensaje automático — IncaNeurobaeza_""".strip()
         
         # ✅ ENVIAR VIA N8N con COPIAS Y WHATSAPP
         from app.n8n_notifier import enviar_a_n8n
@@ -1298,9 +1298,10 @@ Gracias por usar IncaNeurobaeza.
                 html_content=html_empleado,
                 cc_email=cc_empresa,
                 correo_bd=correo_empleado,
-                whatsapp=telefono,  # ✅ NUEVO: Enviar teléfono (parámetro correcto)
-                whatsapp_message=mensaje_whatsapp,  # ✅ NUEVO: Enviar mensaje
-                adjuntos_base64=[]
+                whatsapp=telefono,
+                whatsapp_message=mensaje_whatsapp,
+                adjuntos_base64=[],
+                drive_link=link_pdf
             )
             if resultado:
                 emails_enviados.append(correo_empleado)

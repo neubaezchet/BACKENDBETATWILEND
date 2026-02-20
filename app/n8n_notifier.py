@@ -21,7 +21,8 @@ def enviar_a_n8n(
     correo_bd: Optional[str] = None,
     whatsapp: Optional[str] = None,
     whatsapp_message: Optional[str] = None,
-    adjuntos_base64: List[Dict] = []
+    adjuntos_base64: List[Dict] = [],
+    drive_link: Optional[str] = None
 ) -> bool:
     """
     Envía notificación a n8n con manejo robusto de errores
@@ -39,7 +40,7 @@ def enviar_a_n8n(
     # ✅ GENERAR MENSAJE WHATSAPP AUTOMÁTICO SI NO EXISTE
     if not whatsapp_message and whatsapp:
         whatsapp_message = generar_mensaje_whatsapp(
-            tipo_notificacion, serial, subject, html_content
+            tipo_notificacion, serial, subject, html_content, drive_link
         )
         print(f"📱 Mensaje WhatsApp auto-generado (preview): {whatsapp_message[:100]}...")
     
@@ -218,37 +219,147 @@ def verificar_salud_n8n() -> bool:
         return False
 
 
-# ✅ GENERADOR AUTOMÁTICO DE MENSAJES WHATSAPP
-def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, html_content: str) -> str:
+# ✅ GENERADOR AUTOMÁTICO DE MENSAJES WHATSAPP (FORMATO MEJORADO)
+def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, html_content: str, drive_link: str = None) -> str:
     """
-    Convierte el HTML a texto limpio para WhatsApp
-    Mantiene la información esencial en < 1000 caracteres
+    Genera mensaje WhatsApp bien formateado a partir del HTML del email.
+    Usa formato WhatsApp: *bold*, _italic_, ~strikethrough~
+    Estructura clara con saltos de línea y secciones.
+    Máximo ~1000 caracteres para evitar spam.
     """
     import re
     
-    # Extraer texto del HTML
-    texto = re.sub(r'<[^>]+>', '', html_content)
-    texto = re.sub(r'\s+', ' ', texto)
-    texto = texto.replace('&nbsp;', ' ').replace('&amp;', '&')
-    texto = texto.strip()
+    # ===== CONFIGURACIÓN POR TIPO =====
+    config = {
+        'confirmacion': {
+            'emoji': '📋',
+            'titulo': 'Incapacidad Recibida',
+            'tono': 'positivo'
+        },
+        'incompleta': {
+            'emoji': '⚠️',
+            'titulo': 'Documentación Incompleta',
+            'tono': 'accion'
+        },
+        'ilegible': {
+            'emoji': '⚠️',
+            'titulo': 'Documento Ilegible',
+            'tono': 'accion'
+        },
+        'completa': {
+            'emoji': '✅',
+            'titulo': 'Incapacidad Validada',
+            'tono': 'positivo'
+        },
+        'eps': {
+            'emoji': '📋',
+            'titulo': 'Notificación EPS',
+            'tono': 'neutro'
+        },
+        'tthh': {
+            'emoji': '🔔',
+            'titulo': 'Alerta Talento Humano',
+            'tono': 'neutro'
+        },
+        'extra': {
+            'emoji': '📢',
+            'titulo': 'Notificación',
+            'tono': 'neutro'
+        },
+        'recordatorio': {
+            'emoji': '🔔',
+            'titulo': 'Recordatorio Pendiente',
+            'tono': 'accion'
+        },
+        'alerta_jefe': {
+            'emoji': '🔔',
+            'titulo': 'Caso Pendiente',
+            'tono': 'neutro'
+        }
+    }
+    
+    cfg = config.get(tipo_notificacion, {'emoji': '📄', 'titulo': 'Notificación', 'tono': 'neutro'})
+    
+    # ===== EXTRAER CONTENIDO INTELIGENTE DEL HTML =====
+    # 1. Extraer items de lista (motivos, checks, soportes)
+    li_items = re.findall(r'<li[^>]*>(.*?)</li>', html_content, re.DOTALL)
+    items_limpios = []
+    for li in li_items:
+        texto_li = re.sub(r'<[^>]+>', '', li).strip()
+        texto_li = re.sub(r'\s+', ' ', texto_li)
+        if texto_li and len(texto_li) > 3:
+            items_limpios.append(texto_li)
+    
+    # 2. Extraer párrafos principales (sin tags)
+    parrafos = re.findall(r'<p[^>]*>(.*?)</p>', html_content, re.DOTALL)
+    parrafos_limpios = []
+    for p in parrafos:
+        texto_p = re.sub(r'<strong>(.*?)</strong>', r'*\1*', p)  # bold → WhatsApp bold
+        texto_p = re.sub(r'<[^>]+>', '', texto_p).strip()
+        texto_p = re.sub(r'\s+', ' ', texto_p)
+        texto_p = texto_p.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        if texto_p and len(texto_p) > 10 and 'IncaNeurobaeza' not in texto_p and 'automático' not in texto_p.lower():
+            parrafos_limpios.append(texto_p)
+    
+    # ===== CONSTRUIR MENSAJE ESTRUCTURADO =====
+    lineas = []
+    
+    # Encabezado
+    lineas.append(f"{cfg['emoji']} *IncaNeurobaeza — {cfg['titulo']}*")
+    lineas.append(f"Serial: *{serial}*")
+    lineas.append("")  # línea vacía
+    
+    # Contenido principal (máx 3 párrafos más relevantes)
+    parrafos_usados = 0
+    for p in parrafos_limpios:
+        if parrafos_usados >= 3:
+            break
+        # Saltar párrafos genéricos/repetitivos
+        if any(skip in p.lower() for skip in ['mensaje automático', 'footer', 'copyright', 'derechos reservados']):
+            continue
+        lineas.append(p)
+        lineas.append("")
+        parrafos_usados += 1
+    
+    # Si hay items de lista (motivos, checks), agregar como bullets
+    if items_limpios:
+        # Máximo 5 items para no saturar
+        for item in items_limpios[:5]:
+            lineas.append(f"  • {item}")
+        if len(items_limpios) > 5:
+            lineas.append(f"  _...y {len(items_limpios) - 5} más_")
+        lineas.append("")
+    
+    # Acción según tipo
+    if cfg['tono'] == 'accion':
+        lineas.append("📎 *Formato:* PDF escaneado, completo y legible.")
+        lineas.append("")
+        lineas.append("Si no cuenta con algún soporte, diríjase al punto de atención más cercano de su EPS y solicítelo.")
+        lineas.append("")
+    
+    # Link de Drive (si existe)
+    if drive_link:
+        lineas.append(f"📂 *Ver documentos:*")
+        lineas.append(drive_link)
+        lineas.append("")
+    
+    # Cierre
+    if cfg['tono'] == 'accion':
+        lineas.append("Comuníquese si tiene alguna duda.")
+    elif cfg['tono'] == 'positivo':
+        lineas.append("Nos comunicaremos con usted si se requiere algún paso adicional.")
+    
+    lineas.append("")
+    lineas.append("_Mensaje automático — IncaNeurobaeza_")
+    
+    # Unir con saltos de línea
+    mensaje = "\n".join(lineas)
     
     # Limitar a 1000 caracteres (WhatsApp recomienda 1024 max)
-    if len(texto) > 1000:
-        texto = texto[:997] + "..."
+    if len(mensaje) > 1000:
+        mensaje = mensaje[:997] + "..."
     
-    # Emojis según tipo de notificación
-    emojis = {
-        'confirmacion': '✅', 
-        'incompleta': '❌', 
-        'ilegible': '⚠️',
-        'completa': '✅', 
-        'eps': '📋', 
-        'tthh': '🚨', 
-        'extra': '📢'
-    }
-    emoji = emojis.get(tipo_notificacion, '📄')
-    
-    return f"{emoji} *IncaNeurobaeza*\n\n{texto}\n\n_Serial: {serial}_\n_Mensaje automático_"
+    return mensaje
 
 
 # ✅ FUNCIÓN AUXILIAR: Obtener estadísticas del rate limiter

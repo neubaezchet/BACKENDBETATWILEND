@@ -157,6 +157,9 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
     # ✅ El mensaje WhatsApp se genera automáticamente
     whatsapp_message = None
     
+    # Obtener drive_link si hay caso
+    drive_link = caso.drive_link if caso and hasattr(caso, 'drive_link') else None
+    
     # Enviar a n8n
     resultado = enviar_a_n8n(
         tipo_notificacion=tipo_notificacion,
@@ -167,8 +170,9 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
         cc_email=cc_empresa,
         correo_bd=correo_bd,
         whatsapp=whatsapp,
-        whatsapp_message=whatsapp_message,  # ✅ ACTUALIZADO: Enviar mensaje de WhatsApp
-        adjuntos_base64=adjuntos_base64
+        whatsapp_message=whatsapp_message,
+        adjuntos_base64=adjuntos_base64,
+        drive_link=drive_link
     )
     
     if resultado:
@@ -247,6 +251,9 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
     # ✅ El mensaje WhatsApp se genera automáticamente
     whatsapp_message = None
     
+    # Obtener drive_link si hay caso
+    drive_link = caso.drive_link if caso and hasattr(caso, 'drive_link') else None
+    
     # Enviar a n8n
     resultado = enviar_a_n8n(
         tipo_notificacion=tipo_notificacion,
@@ -257,8 +264,9 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
         cc_email=cc_empresa,
         correo_bd=correo_bd,
         whatsapp=whatsapp,
-        whatsapp_message=whatsapp_message,  # ✅ ACTUALIZADO: Enviar mensaje de WhatsApp
-        adjuntos_base64=adjuntos_base64
+        whatsapp_message=whatsapp_message,
+        adjuntos_base64=adjuntos_base64,
+        drive_link=drive_link
     )
     
     if resultado:
@@ -512,7 +520,8 @@ async def cambiar_estado(
                     f"✅ Validada - {caso.serial}", html,
                     caso.empresa.email_copia if caso.empresa else None,
                     caso.empleado.correo if caso.empleado else None,
-                    caso.telefono_form, None, [])
+                    caso.telefono_form, None, [],
+                    drive_link=caso.drive_link)
         except Exception as e:
             print(f"⚠️ Email COMPLETA error: {e}")
     
@@ -1706,7 +1715,8 @@ async def validar_caso_con_checks(
             
             # Enviar con formato de asunto actualizado
             estado_label = 'Incompleta' if accion == 'incompleta' else 'Ilegible'
-            asunto = f"CC {caso.cedula} - {serial} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto = f"CC {caso.cedula} - {serial}{fechas_str} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             enviar_email_con_adjuntos(
                 caso.email_form,
                 asunto,
@@ -1744,7 +1754,8 @@ async def validar_caso_con_checks(
                 empleado_nombre=empleado.nombre if empleado else 'Colaborador/a'
             )
             
-            asunto_tthh = f"CC {caso.cedula} - {serial} - TTHH - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            fechas_str_tthh = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto_tthh = f"CC {caso.cedula} - {serial}{fechas_str_tthh} - TTHH - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             enviar_email_con_adjuntos(
                 email_tthh_destinatario,
                 asunto_tthh,
@@ -1765,7 +1776,8 @@ async def validar_caso_con_checks(
                 link_drive=caso.drive_link
             )
             
-            asunto_confirmacion = f"CC {caso.cedula} - {serial} - Confirmación - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            fechas_str_conf = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto_confirmacion = f"CC {caso.cedula} - {serial}{fechas_str_conf} - Confirmación - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             send_html_email(
                 caso.email_form,
                 asunto_confirmacion,
@@ -1794,7 +1806,8 @@ async def validar_caso_con_checks(
                 'falsa': 'Confirmación'
             }
             estado_label = estado_map_asunto.get(accion, 'Actualización')
-            asunto = f"CC {caso.cedula} - {serial} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto = f"CC {caso.cedula} - {serial}{fechas_str} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             send_html_email(
                 caso.email_form,
                 asunto,
@@ -1905,7 +1918,8 @@ async def notificar_libre_con_ia(
     )
     
     # Enviar con formato de asunto actualizado
-    asunto = f"CC {caso.cedula} - {serial} - Extra - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+    fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+    asunto = f"CC {caso.cedula} - {serial}{fechas_str} - Extra - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
     enviar_email_con_adjuntos(
         caso.email_form,
         asunto,
