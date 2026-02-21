@@ -666,6 +666,8 @@ def _generar_resumen(cadenas: List[dict], alertas: List[dict], dias_total: int, 
                 "dias_hueco": h["dias_hueco"],
                 "dias_potenciales": h["dias_potenciales_sin_corte"],
                 "fecha_corte": h["fecha_fin_cadena_antes"],
+                "fecha_desde": h["fecha_fin_cadena_antes"],
+                "fecha_hasta": h["fecha_inicio_cadena_despues"],
             }
             for h in huecos
         ],
