@@ -382,7 +382,42 @@ def sincronizar_excel_completo():
                             if caso:
                                 match_method = "fecha_fin_exacta"
                         
-                        # 4) Por rango de fechas con superposición (±3 días tolerancia por traslapos)
+                        # 4) TRASLAPO INVERSO: Kactus recortó la incapacidad por traslapo con la anterior.
+                        #    Buscar la incapacidad anterior ya sincronizada y buscar el caso
+                        #    del portal cuyo rango original cubría la fecha de Kactus.
+                        #    Ej: Portal B = 01/02→03/02, Kactus B = 03/02→03/02 (1d)
+                        #        → Portal A (ya sync) terminó el 02/02
+                        #        → Buscar caso NO sync cuyo fecha_inicio <= 02/02 y fecha_fin >= 03/02
+                        if caso is None and fecha_inicio_kactus:
+                            # Buscar el caso anterior ya sincronizado del mismo empleado
+                            caso_anterior_sync = db.query(Case).filter(
+                                Case.cedula == cedula_case,
+                                Case.kactus_sync_at != None,
+                                Case.fecha_fin != None,
+                                Case.fecha_fin < fecha_inicio_kactus + timedelta(days=5),
+                            ).order_by(Case.fecha_fin.desc()).first()
+                            
+                            if caso_anterior_sync and caso_anterior_sync.fecha_fin:
+                                # Buscar caso no sincronizado cuyo rango del portal
+                                # cubra la fecha de fin del caso anterior (= el traslapo)
+                                caso_candidato = db.query(Case).filter(
+                                    Case.cedula == cedula_case,
+                                    Case.kactus_sync_at == None,
+                                    Case.fecha_inicio != None,
+                                    Case.fecha_fin != None,
+                                    # El caso del portal inició ANTES o el mismo día que terminó el anterior
+                                    func.date(Case.fecha_inicio) <= caso_anterior_sync.fecha_fin.date(),
+                                    # Y el caso del portal termina en o después de la fecha de Kactus  
+                                    func.date(Case.fecha_fin) >= fecha_inicio_kactus.date() - timedelta(days=1),
+                                ).order_by(
+                                    func.abs(func.extract('epoch', Case.fecha_fin - (fecha_fin_kactus or fecha_inicio_kactus)))
+                                ).first()
+                                
+                                if caso_candidato:
+                                    caso = caso_candidato
+                                    match_method = "traslapo_inverso"
+                        
+                        # 5) Por rango de fechas con superposición (±3 días tolerancia genérica)
                         if caso is None and fecha_inicio_kactus:
                             tolerancia = timedelta(days=3)
                             candidatos = db.query(Case).filter(
