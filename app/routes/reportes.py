@@ -24,6 +24,7 @@ from app.services.reporte_service import ReporteService
 from app.utils.excel_formatter import ExcelFormatter
 from app.services.prorroga_detector import auto_detectar_prorroga_caso, analizar_historial_empleado
 from app.services.cie10_service import buscar_codigo, validar_dias
+from app.checks_disponibles import CHECKS_DISPONIBLES
 
 logger = logging.getLogger(__name__)
 
@@ -364,11 +365,31 @@ async def get_dashboard_completo(
             
             # Obtener último motivo/observación de eventos
             ultimo_motivo = None
+            observacion_detalle = None
             if c.eventos:
                 evt_con_motivo = [e for e in c.eventos if e.motivo]
                 if evt_con_motivo:
                     ultimo_evt = sorted(evt_con_motivo, key=lambda e: e.created_at or datetime.min, reverse=True)[0]
                     ultimo_motivo = ultimo_evt.motivo
+            
+            # ⭐ ENRIQUECER OBSERVACIÓN con checks seleccionados (motivo exacto)
+            checks_guardados = []
+            if c.metadata_form and isinstance(c.metadata_form, dict):
+                checks_guardados = c.metadata_form.get('checks_seleccionados', [])
+            
+            if checks_guardados:
+                labels = []
+                for ck in checks_guardados:
+                    if ck in CHECKS_DISPONIBLES:
+                        labels.append(CHECKS_DISPONIBLES[ck]['label'])
+                    else:
+                        labels.append(ck.replace('_', ' ').title())
+                observacion_detalle = ' | '.join(labels)
+                if not ultimo_motivo:
+                    ultimo_motivo = observacion_detalle
+            
+            # ⭐ CROSS-VALIDACIÓN: ¿Subida en Kactus?
+            subido_kactus = c.kactus_sync_at is not None
             
             # Documentos faltantes
             docs_faltantes = []
@@ -411,9 +432,10 @@ async def get_dashboard_completo(
                 "tipo": c.tipo.value if c.tipo else "N/A",
                 "subtipo": c.subtipo,
                 "estado": c.estado.value if c.estado else "NUEVO",
-                "diagnostico": c.diagnostico,
-                "codigo_cie10": c.codigo_cie10,
-                "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else None,
+                "diagnostico": c.diagnostico if c.diagnostico else ("En Proceso" if not subido_kactus else None),
+                "diagnostico_kactus": c.diagnostico_kactus,
+                "codigo_cie10": c.codigo_cie10 if c.codigo_cie10 else ("En Proceso" if not subido_kactus else None),
+                "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else ("En Proceso" if not subido_kactus else None),
                 "cie10_grupo": cie10_info.get("grupo") if cie10_info else None,
                 "dias_incapacidad": c.dias_incapacidad,
                 "dias_kactus": c.dias_kactus,
@@ -424,17 +446,22 @@ async def get_dashboard_completo(
                 "prorroga_confianza": prorroga_auto.get("confianza"),
                 "prorroga_explicacion": prorroga_auto.get("explicacion"),
                 "prorroga_caso_original": prorroga_auto.get("caso_original_serial"),
-                "numero_incapacidad": c.numero_incapacidad,
-                "medico_tratante": c.medico_tratante,
-                "institucion_origen": c.institucion_origen,
+                "numero_incapacidad": c.numero_incapacidad if c.numero_incapacidad else ("En Proceso" if not subido_kactus else None),
+                "medico_tratante": c.medico_tratante if c.medico_tratante else ("En Proceso" if not subido_kactus else None),
+                "institucion_origen": c.institucion_origen if c.institucion_origen else ("En Proceso" if not subido_kactus else None),
                 "fecha_inicio": c.fecha_inicio.isoformat() if c.fecha_inicio else None,
                 "fecha_fin": c.fecha_fin.isoformat() if c.fecha_fin else None,
                 "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
                 "dias_en_portal": dias_en_portal,
                 "observacion": ultimo_motivo,
+                "observacion_detalle": observacion_detalle,
                 "docs_faltantes": docs_faltantes,
                 "docs_ilegibles": docs_ilegibles,
                 "drive_link": c.drive_link,
+                "subido_kactus": subido_kactus,
+                "kactus_sync_at": c.kactus_sync_at.isoformat() if c.kactus_sync_at else None,
+                "dias_traslapo": c.dias_traslapo or 0,
+                "traslapo_con_serial": c.traslapo_con_serial,
             })
         
         # ═══ 3. INCOMPLETAS / OBSERVACIÓN ═══
@@ -451,12 +478,14 @@ async def get_dashboard_completo(
                     "tipo": row["tipo"],
                     "estado": row["estado"],
                     "observacion": row["observacion"],
+                    "observacion_detalle": row.get("observacion_detalle"),
                     "docs_faltantes": row["docs_faltantes"],
                     "docs_ilegibles": row["docs_ilegibles"],
                     "dias_en_portal": row["dias_en_portal"],
                     "fecha_radicacion": row["fecha_radicacion"],
                     "diagnostico": row.get("diagnostico"),
                     "codigo_cie10": row.get("codigo_cie10"),
+                    "subido_kactus": row.get("subido_kactus"),
                 })
         
         # ═══ 4. FRECUENCIA POR EMPLEADO (reincidencia) ═══
