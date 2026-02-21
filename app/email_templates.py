@@ -1,815 +1,670 @@
+# -*- coding: utf-8 -*-
 """
-Sistema de Templates de Email Unificado con Checklists DinÃ¡micos
-IncaBaeza - 2024
+Sistema de Templates de Email - Compatible con TODOS los clientes de correo
+IncaNeurobaeza - 2026
+
+Compatibilidad: Gmail, Outlook (Desktop/Web/Mobile), Yahoo, Apple Mail, Thunderbird
+Principios:
+  - Table-based layout (600px) - NO div/flexbox/grid
+  - Inline CSS en cada elemento
+  - HTML entities para iconos (&#9989; &#10060; etc) - NO emojis UTF-8 raw
+  - bgcolor en <td> para fondos - NO background-color CSS solo
+  - MSO conditional comments para Outlook
+  - Fuentes seguras: Segoe UI, Arial, sans-serif
+  - Estilo Microsoft 365 2026
 """
 
-# ==================== PLANTILLA BASE ÃšNICA ====================
 
-def get_email_template_universal(
-    tipo_email,  # 'confirmacion', 'incompleta', 'ilegible', 'eps', 'tthh', 'completa', 'falsa'
-    nombre,
-    serial,
-    empresa,
-    tipo_incapacidad,
-    telefono,
-    email,
-    link_drive,
-    checks_seleccionados=[],
-    archivos_nombres=None,
-    quinzena=None
-):
+# =====================================================================
+# PLANTILLA BASE - ESTRUCTURA TABLE-BASED UNIVERSAL
+# =====================================================================
+
+def _base_template(titulo, color_header, contenido_body, serial="", telefono="", email_contacto="", link_drive=""):
     """
-    PLANTILLA UNIVERSAL - Solo cambia contenido segÃºn tipo
+    Plantilla base table-based compatible con TODOS los clientes.
+    Estructura: wrapper > container 600px > header + body + footer
     """
-    
-    # ========== CONFIGURACIÃ“N SEGÃšN TIPO ==========
-    configs = {
-        'confirmacion': {
-            'color_principal': '#667eea',
-            'color_secundario': '#764ba2',
-            'icono': 'âœ…',
-            'titulo': 'Recibido Confirmado',
-            'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': False,
-            'mostrar_plazo': False,
-        },
-        'incompleta': {
-            'color_principal': '#ef4444',
-            'color_secundario': '#dc2626',
-            'icono': 'âŒ',
-            'titulo': 'DocumentaciÃ³n Incompleta',
-            'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': True,
-            'mostrar_plazo': True,
-        },
-        'ilegible': {
-            'color_principal': '#f59e0b',
-            'color_secundario': '#d97706',
-            'icono': 'âš ï¸',
-            'titulo': 'Documento Ilegible',
-            'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': True,
-            'mostrar_plazo': True,
-        },
-        'eps': {
-            'color_principal': '#ca8a04',
-            'color_secundario': '#a16207',
-            'icono': 'ðŸ“‹',
-            'titulo': 'TranscripciÃ³n en EPS Requerida',
-            'mostrar_requisitos': False,
-            'mostrar_boton_reenvio': True,
-            'mostrar_plazo': False,
-        },
-        'completa': {
-            'color_principal': '#16a34a',
-            'color_secundario': '#15803d',
-            'icono': 'âœ…',
-            'titulo': 'Incapacidad Validada',
-            'mostrar_requisitos': False,
-            'mostrar_boton_reenvio': False,
-            'mostrar_plazo': False,
-        },
-        'tthh': {
-            'color_principal': '#dc2626',
-            'color_secundario': '#991b1b',
-            'icono': 'ðŸš¨',
-            'titulo': 'ALERTA - Presunto Fraude',
-            'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': False,
-            'mostrar_plazo': False,
-        },
-        'falsa': {
-            'color_principal': '#991b1b',
-            'color_secundario': '#7f1d1d',
-            'icono': 'ðŸš«',
-            'titulo': 'Recibido Confirmado',
-            'mostrar_requisitos': False,
-            'mostrar_boton_reenvio': False,
-            'mostrar_plazo': False,
-        },
-    }
-    
-    config = configs[tipo_email]
-    
-    # ========== GENERAR MENSAJE PRINCIPAL DINÃMICO ==========
-    mensaje_principal = generar_mensaje_segun_tipo(tipo_email, checks_seleccionados, tipo_incapacidad, serial, quinzena, archivos_nombres)
-    
-    # ========== GENERAR LISTA DE REQUISITOS ==========
-    requisitos_html = ''
-    if config['mostrar_requisitos']:
-        requisitos_html = generar_checklist_requisitos(tipo_incapacidad, checks_seleccionados, tipo_email)
-    
-    # ========== GENERAR SECCIONES ADICIONALES ==========
-    seccion_ilegibilidad = generar_seccion_ilegibilidad() if 'ilegible' in tipo_email or any('ilegible' in c or 'recortada' in c or 'borrosa' in c for c in checks_seleccionados) else ''
-    
-    seccion_instrucciones = generar_instrucciones(tipo_email) if tipo_email in ['incompleta', 'ilegible'] else ''
-    
-    boton_reenvio = f'''
-        <div style="text-align: center; margin: 30px 0;">
-            <a href="https://repogemin.vercel.app/" 
-               style="display: inline-block; background: linear-gradient(135deg, {config['color_principal']} 0%, {config['color_secundario']} 100%); 
-                      color: white; padding: 16px 40px; text-decoration: none; border-radius: 25px; 
-                      font-weight: bold; font-size: 16px; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
-                ðŸ“„ Subir Documentos Corregidos
-            </a>
-        </div>
-    ''' if config['mostrar_boton_reenvio'] else ''
-    
-    plazo_html = '''
-        <div style="background: #fff3cd; border: 2px solid #ffc107; padding: 15px; border-radius: 8px; margin: 25px 0; text-align: center;">
-            <p style="margin: 0; color: #856404; font-weight: bold;">
-                â° Por favor, envÃ­a la documentaciÃ³n corregida lo antes posible
-            </p>
-        </div>
-    ''' if config['mostrar_plazo'] else ''
-    
-    # ========== PLANTILLA HTML COMPLETA ==========
+    contacto_html = ""
+    if telefono or email_contacto:
+        contacto_html = f"""
+                <!-- CONTACTO -->
+                <tr>
+                    <td bgcolor="#F3F2F1" style="background-color:#F3F2F1; padding:16px 24px; text-align:center; font-family:'Segoe UI',Arial,sans-serif; font-size:13px; color:#605E5C;">
+                        &#128222; <strong>{telefono}</strong> &nbsp;&nbsp;|&nbsp;&nbsp; &#9993; <strong>{email_contacto}</strong>
+                    </td>
+                </tr>"""
+
+    drive_html = ""
+    if link_drive:
+        drive_html = f"""
+                <!-- LINK DRIVE -->
+                <tr>
+                    <td align="center" style="padding:16px 24px;">
+                        <table cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td bgcolor="#F3F2F1" style="background-color:#F3F2F1; padding:12px 28px;">
+                                    <a href="{link_drive}" style="color:#0078D4; text-decoration:underline; font-family:'Segoe UI',Arial,sans-serif; font-size:14px; font-weight:600;">&#128196; Ver documentos en Drive</a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>"""
+
+    return f"""<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>{titulo} - {serial}</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td, p, a, span {{font-family: Arial, sans-serif !important;}}
+        table {{border-collapse: collapse;}}
+    </style>
+    <![endif]-->
+</head>
+<body style="margin:0; padding:0; background-color:#F3F2F1; font-family:'Segoe UI',Arial,sans-serif; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+
+    <!-- WRAPPER -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F3F2F1;">
+        <tr>
+            <td align="center" style="padding:20px 10px;">
+
+                <!--[if mso]><table width="600" cellpadding="0" cellspacing="0" border="0" align="center"><tr><td><![endif]-->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; background-color:#FFFFFF;">
+
+                    <!-- HEADER -->
+                    <tr>
+                        <td bgcolor="{color_header}" style="background-color:{color_header}; padding:32px 24px; text-align:center;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td align="center" style="padding-bottom:12px;">
+                                        <table cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td width="48" height="48" bgcolor="#FFFFFF" style="background-color:#FFFFFF; text-align:center; font-size:24px; line-height:48px; color:{color_header};">
+                                                    <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" style="height:48px;v-text-anchor:middle;width:48px;" arcsize="50%" fillcolor="#FFFFFF" stroke="f"><v:textbox><center style="color:{color_header};font-size:24px;">&#9679;</center></v:textbox></v:roundrect><![endif]-->
+                                                    <!--[if !mso]>-->&#9679;<!--<![endif]-->
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="color:#FFFFFF; font-size:22px; font-weight:700; font-family:'Segoe UI',Arial,sans-serif; line-height:1.3;">
+                                        {titulo}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="color:#FFFFFF; font-size:13px; font-family:'Segoe UI',Arial,sans-serif; padding-top:6px; font-style:italic; opacity:0.9;">
+                                        IncaNeurobaeza
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- BARRA DECORATIVA -->
+                    <tr>
+                        <td height="4" bgcolor="{color_header}" style="background-color:{color_header}; font-size:1px; line-height:1px; opacity:0.6;">&nbsp;</td>
+                    </tr>
+
+                    <!-- BODY -->
+                    <tr>
+                        <td style="padding:28px 24px; font-family:'Segoe UI',Arial,sans-serif; font-size:15px; color:#323130; line-height:1.6;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+{contenido_body}
+                            </table>
+                        </td>
+                    </tr>
+{drive_html}
+{contacto_html}
+
+                    <!-- FOOTER -->
+                    <tr>
+                        <td bgcolor="#F3F2F1" style="background-color:#F3F2F1; padding:24px; text-align:center; border-top:2px solid #EDEBE9;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td align="center" style="padding-bottom:6px;">
+                                        <strong style="color:#0078D4; font-size:17px; font-family:'Segoe UI',Arial,sans-serif;">IncaNeurobaeza</strong>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center">
+                                        <span style="color:#605E5C; font-size:12px; font-family:'Segoe UI',Arial,sans-serif; font-style:italic;">"Trabajando para ayudarte"</span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                </table>
+                <!--[if mso]></td></tr></table><![endif]-->
+
+            </td>
+        </tr>
+    </table>
+
+</body>
+</html>"""
+
+
+# =====================================================================
+# BLOQUES REUTILIZABLES (Table-based, Outlook-safe)
+# =====================================================================
+
+def _bloque_mensaje(bgcolor, border_color, texto_titulo, texto_cuerpo):
+    """Bloque de mensaje con borde izquierdo - estilo Microsoft 365"""
+    titulo_html = ""
+    if texto_titulo:
+        titulo_html = f'<strong style="font-size:15px; color:#323130; font-family:\'Segoe UI\',Arial,sans-serif; display:block; padding-bottom:6px;">{texto_titulo}</strong>'
     return f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <title>{config['titulo']} - {serial}</title>
-    </head>
-    <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px;">
-        <div style="max-width: 650px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.15);">
-            
-            <!-- Header -->
-            <div style="background: linear-gradient(135deg, {config['color_principal']} 0%, {config['color_secundario']} 100%); color: white; padding: 30px; text-align: center;">
-                <h1 style="margin: 0; font-size: 26px;">{config['icono']} {config['titulo']}</h1>
-                <p style="margin: 5px 0 0 0; font-style: italic;">IncaNeurobaeza</p>
-            </div>
-            
-            <!-- Content -->
-            <div style="padding: 30px;">
-                <p style="font-size: 16px; color: #333;">
-                    {'Estimado equipo de <strong>Talento Humano</strong>,' if tipo_email == 'tthh' else f'Hola <strong>{nombre}</strong>,'}
-                </p>
-                
-                <!-- Mensaje Principal DinÃ¡mico -->
-                {mensaje_principal}
-                
-                <!-- Detalles del Caso (Solo para TTHH) -->
-                {generar_detalles_caso(serial, nombre, empresa, tipo_incapacidad, telefono, email) if tipo_email == 'tthh' else ''}
-                
-                <!-- Checklist de Requisitos -->
-                {requisitos_html}
-                
-                <!-- SecciÃ³n de Ilegibilidad -->
-                {seccion_ilegibilidad}
-                
-                <!-- Instrucciones -->
-                {seccion_instrucciones}
-                
-                <!-- BotÃ³n de ReenvÃ­o -->
-                {boton_reenvio}
-                
-                <!-- Plazo -->
-                {plazo_html}
-                
-                <!-- Link a Drive -->
-                <div style="text-align: center; margin: 20px 0;">
-                    <a href="{link_drive}" style="color: #3b82f6; text-decoration: underline; font-size: 14px;">
-                        ðŸ“„ Ver documentos en Drive
-                    </a>
-                </div>
-                
-                <!-- Aviso WhatsApp (Solo confirmaciÃ³n e incompleta) -->
-                {generar_aviso_wasap() if tipo_email in ['confirmacion', 'incompleta', 'ilegible'] else ''}
-                
-                <!-- Contacto -->
-                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <p style="margin: 0; color: #4b5563; font-size: 13px; text-align: center;">
-                        ðŸ“ž <strong>{telefono}</strong> &nbsp;|&nbsp; ðŸ“§ <strong>{email}</strong>
-                    </p>
-                </div>
-            </div>
-            
-            <!-- Footer -->
-            <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #e9ecef;">
-                <strong style="color: #667eea; font-size: 16px;">IncaNeurobaeza</strong>
-                <div style="color: #6c757d; font-style: italic; margin-top: 5px; font-size: 14px;">
-                    "Trabajando para ayudarte"
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
+                                <tr>
+                                    <td style="padding:8px 0;">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td width="4" bgcolor="{border_color}" style="background-color:{border_color};">&nbsp;</td>
+                                                <td bgcolor="{bgcolor}" style="background-color:{bgcolor}; padding:18px 20px;">
+                                                    {titulo_html}
+                                                    <span style="font-size:14px; color:#323130; font-family:'Segoe UI',Arial,sans-serif; line-height:1.6;">{texto_cuerpo}</span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+"""
 
-# ==================== FUNCIONES MODULARES ====================
 
-def generar_mensaje_segun_tipo(tipo_email, checks, tipo_incapacidad, serial, quinzena=None, archivos_nombres=None):
-    """Genera el mensaje principal segÃºn el tipo de email y checks"""
-    
-    if tipo_email == 'confirmacion':
-        archivos_list = "<br>".join([f"â€¢ {archivo}" for archivo in (archivos_nombres or [])])
-        return f'''
-        <div style="background: #e3f2fd; border-left: 4px solid #2196f3; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0;">
-            <p style="margin: 0; color: #1565c0; font-weight: bold; font-size: 15px;">
-                âœ… Confirmo recibido de la documentaciÃ³n
-            </p>
-            <p style="margin: 10px 0 0 0; color: #1976d2; line-height: 1.6;">
-                Se procederÃ¡ a realizar la revisiÃ³n para validar que cumpla con los requisitos establecidos 
-                para <strong>{tipo_incapacidad}</strong>.
-            </p>
-        </div>
-        
-        <div style="margin: 20px 0;">
-            <h4 style="color: #333; margin-bottom: 10px;">ðŸ”Ž Documentos recibidos:</h4>
-            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; font-size: 14px;">
-                {archivos_list if archivos_list else '<em>No especificado</em>'}
-            </div>
-        </div>
-        '''
-    
-    elif tipo_email == 'incompleta':
-        explicacion = generar_explicacion_checks(checks)
-        # Obtener soportes requeridos según tipo
-        soportes_html = generar_lista_soportes_requeridos(tipo_incapacidad)
-        return f'''
-        <div style="background: #fee2e2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0;">
-            <p style="margin: 0; color: #991b1b; font-weight: bold; font-size: 15px;">
-                ❌ Incapacidad {serial} - Documentación Incompleta
-            </p>
-            <p style="margin: 10px 0 0 0; color: #b91c1c; line-height: 1.6; font-size: 15px;">
-                <strong>Motivo:</strong> {explicacion}
-            </p>
-        </div>
-        
-        {soportes_html}
-        
-        <div style="background: #e0f2fe; border: 2px solid #0284c7; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0; color: #0c4a6e; font-size: 14px;">
-                <strong>📄 Formato:</strong> Enviar en <strong>PDF escaneado</strong>. Asegúrese de que el documento esté completo y legible.
-            </p>
-        </div>
-        
-        <div style="background: #fef3c7; border: 2px solid #f59e0b; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0; color: #92400e; font-size: 14px;">
-                Si no cuenta con algún soporte, <strong>diríjase al punto de atención más cercano de su EPS y solicítelo</strong>.
-            </p>
-        </div>
-        
-        <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center;">
-            <p style="margin: 0; color: #374151; font-size: 14px;">
-                Comuníquese si tiene alguna duda.
-            </p>
-        </div>
-        '''
-    
-    elif tipo_email == 'ilegible':
-        explicacion = generar_explicacion_checks(checks)
-        return f'''
-        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0;">
-            <p style="margin: 0; color: #92400e; font-weight: bold; font-size: 15px;">
-                ⚠️ Incapacidad {serial} - Documento Ilegible
-            </p>
-            <p style="margin: 10px 0 0 0; color: #78350f; line-height: 1.6; font-size: 15px;">
-                <strong>Motivo:</strong> {explicacion}
-            </p>
-        </div>
-        
-        <div style="background: #e0f2fe; border: 2px solid #0284c7; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0; color: #0c4a6e; font-size: 14px;">
-                <strong>📄 Formato:</strong> Enviar en <strong>PDF escaneado</strong>. Asegúrese de que el documento esté completo, sin recortes y con buena resolución.
-            </p>
-        </div>
-        
-        <div style="background: #fef3c7; border: 2px solid #f59e0b; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0; color: #92400e; font-size: 14px;">
-                Si no cuenta con algún soporte, <strong>diríjase al punto de atención más cercano de su EPS y solicítelo</strong>.
-            </p>
-        </div>
-        
-        <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center;">
-            <p style="margin: 0; color: #374151; font-size: 14px;">
-                Comuníquese si tiene alguna duda.
-            </p>
-        </div>
-        '''
-    
-    elif tipo_email == 'eps':
-        return f'''
-        <div style="background: #fef3c7; border-left: 4px solid #ca8a04; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0;">
-            <p style="margin: 0; color: #92400e; font-weight: bold; font-size: 15px;">
-                ðŸ“‹ TranscripciÃ³n en EPS requerida
-            </p>
-            <p style="margin: 10px 0 0 0; color: #78350f; line-height: 1.6;">
-                Tu incapacidad requiere <strong>transcripciÃ³n fÃ­sica en tu EPS</strong>. 
-                Por favor, dirÃ­gete a tu EPS con tu documento de identidad y solicita la 
-                transcripciÃ³n de esta incapacidad. Una vez tengas el documento transcrito, 
-                sÃºbelo nuevamente al sistema.
-            </p>
-        </div>
-        '''
-    
-    elif tipo_email == 'completa':
-        return f'''
-        <div style="background: #d1fae5; border: 2px solid #10b981; padding: 20px; margin: 20px 0; border-radius: 8px;">
-            <p style="margin: 0; color: #065f46; font-weight: bold; font-size: 15px;">
-                âœ… Tu incapacidad ha sido validada exitosamente
-            </p>
-            <p style="margin: 10px 0 0 0; color: #047857; line-height: 1.6;">
-                Tu caso ha sido subido al sistema exitosamente para el proceso de validación. 
-                Nos comunicaremos contigo cuando el proceso esté completo.
-            </p>
-            <div style="text-align: center; margin: 20px 0; font-size: 24px;">
-                📌 ➜ 🟢 ➜ ⚪
-            </div>
-            <p style="margin: 0; text-align: center; color: #059669; font-size: 12px;">
-                Recepción → <strong>Validación</strong> → Subida al sistema
-            </p>
-        </div>
-        '''
-    
-    elif tipo_email == 'tthh':
-        return f'''
-        <div style="background: #fee2e2; border: 3px solid #ef4444; padding: 25px; margin: 20px 0; border-radius: 8px;">
-            <h3 style="margin: 0 0 15px 0; color: #991b1b;">
-                âš ï¸ Incapacidad en RevisiÃ³n por Presunto Fraude
-            </h3>
-            <p style="margin: 0; color: #b91c1c; font-size: 15px; line-height: 1.6;">
-                La siguiente incapacidad presenta inconsistencias que requieren 
-                <strong>validaciÃ³n adicional</strong> con la colaboradora.
-            </p>
-        </div>
-        '''
-    
-    elif tipo_email == 'falsa':
-        return f'''
-        <div style="background: #e3f2fd; border-left: 4px solid #2196f3; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0;">
-            <p style="margin: 0; color: #1565c0; font-weight: bold; font-size: 15px;">
-                âœ… Confirmo recibido de la documentaciÃ³n
-            </p>
-            <p style="margin: 10px 0 0 0; color: #1976d2; line-height: 1.6;">
-                Se procederÃ¡ a realizar la revisiÃ³n correspondiente.
-            </p>
-        </div>
-        '''
-    
-    return ""
+def _bloque_alerta(bgcolor, texto, border_color="#EDEBE9"):
+    """Bloque de alerta centrado con borde superior"""
+    return f"""
+                                <tr>
+                                    <td style="padding:8px 0;">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:2px solid {border_color}; border-bottom:2px solid {border_color};">
+                                            <tr>
+                                                <td bgcolor="{bgcolor}" style="background-color:{bgcolor}; padding:14px 20px; text-align:center;">
+                                                    <span style="font-size:14px; color:#323130; font-family:'Segoe UI',Arial,sans-serif; line-height:1.5;">{texto}</span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+"""
+
+
+def _bloque_boton(url, texto, color_bg):
+    """Boton CTA estilo Microsoft 365 - table-based, Outlook compatible"""
+    return f"""
+                                <tr>
+                                    <td align="center" style="padding:20px 0;">
+                                        <table cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <!--[if mso]>
+                                                <td bgcolor="{color_bg}" style="background-color:{color_bg}; padding:14px 36px;">
+                                                    <a href="{url}" style="color:#FFFFFF; text-decoration:none; font-size:15px; font-weight:700; font-family:Arial,sans-serif;">{texto}</a>
+                                                </td>
+                                                <![endif]-->
+                                                <!--[if !mso]>-->
+                                                <td bgcolor="{color_bg}" style="background-color:{color_bg}; padding:14px 36px; border-radius:4px;">
+                                                    <a href="{url}" style="display:block; color:#FFFFFF; text-decoration:none; font-size:15px; font-weight:700; font-family:'Segoe UI',Arial,sans-serif;">{texto}</a>
+                                                </td>
+                                                <!--<![endif]-->
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+"""
+
+
+def _bloque_tabla_info(filas):
+    """Tabla de datos key-value estilo Fluent UI / Microsoft 365"""
+    rows = ""
+    for i, (label, valor) in enumerate(filas):
+        bg = "#FAF9F8" if i % 2 == 0 else "#FFFFFF"
+        rows += f"""
+                                                    <tr>
+                                                        <td bgcolor="{bg}" style="background-color:{bg}; padding:10px 14px; color:#605E5C; font-size:13px; font-family:'Segoe UI',Arial,sans-serif; width:140px; vertical-align:top; border-bottom:1px solid #EDEBE9;">{label}</td>
+                                                        <td bgcolor="{bg}" style="background-color:{bg}; padding:10px 14px; color:#323130; font-size:13px; font-family:'Segoe UI',Arial,sans-serif; font-weight:600; border-bottom:1px solid #EDEBE9;">{valor}</td>
+                                                    </tr>"""
+    return f"""
+                                <tr>
+                                    <td style="padding:10px 0;">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #EDEBE9;">
+                                            <tr>
+                                                <td>
+                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+{rows}
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+"""
+
+
+def _bloque_lista(titulo, items, bgcolor="#EFF6FC", color_titulo="#004578"):
+    """Lista con bullets - table-based, compatible Outlook"""
+    items_html = ""
+    for item in items:
+        items_html += f"""
+                                                        <tr>
+                                                            <td width="24" style="vertical-align:top; padding:5px 0; font-size:14px; color:#605E5C;">&#8226;</td>
+                                                            <td style="padding:5px 0; font-size:14px; color:#323130; font-family:'Segoe UI',Arial,sans-serif; line-height:1.5;">{item}</td>
+                                                        </tr>"""
+    return f"""
+                                <tr>
+                                    <td style="padding:8px 0;">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #D2E3FC;">
+                                            <tr>
+                                                <td bgcolor="{bgcolor}" style="background-color:{bgcolor}; padding:18px 20px;">
+                                                    <strong style="font-size:14px; color:{color_titulo}; font-family:'Segoe UI',Arial,sans-serif; display:block; padding-bottom:10px;">{titulo}</strong>
+                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+{items_html}
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+"""
+
+
+def _bloque_checklist(titulo, items_ok, items_fail):
+    """Checklist visual con OK/FAIL estilo Teams/Planner"""
+    rows = ""
+    for item_name, item_desc in items_fail:
+        rows += f"""
+                                                    <tr>
+                                                        <td bgcolor="#FDE8E8" style="background-color:#FDE8E8; padding:12px 14px; border-bottom:2px solid #FFFFFF;">
+                                                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                                <tr>
+                                                                    <td width="30" style="vertical-align:top; color:#DC2626; font-size:16px; font-family:Arial,sans-serif;">&#10060;</td>
+                                                                    <td style="font-family:'Segoe UI',Arial,sans-serif;">
+                                                                        <strong style="color:#991B1B; font-size:14px;">{item_name}</strong><br/>
+                                                                        <span style="color:#B91C1C; font-size:12px;">{item_desc}</span>
+                                                                    </td>
+                                                                </tr>
+                                                            </table>
+                                                        </td>
+                                                    </tr>"""
+    for item_name, item_desc in items_ok:
+        rows += f"""
+                                                    <tr>
+                                                        <td bgcolor="#F0FDF4" style="background-color:#F0FDF4; padding:12px 14px; border-bottom:2px solid #FFFFFF;">
+                                                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                                <tr>
+                                                                    <td width="30" style="vertical-align:top; color:#16A34A; font-size:16px; font-family:Arial,sans-serif;">&#9989;</td>
+                                                                    <td style="font-family:'Segoe UI',Arial,sans-serif;">
+                                                                        <strong style="color:#166534; font-size:14px;">{item_name}</strong><br/>
+                                                                        <span style="color:#15803D; font-size:12px;">{item_desc}</span>
+                                                                    </td>
+                                                                </tr>
+                                                            </table>
+                                                        </td>
+                                                    </tr>"""
+    return f"""
+                                <tr>
+                                    <td style="padding:10px 0;">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E5E7EB;">
+                                            <tr>
+                                                <td bgcolor="#F9FAFB" style="background-color:#F9FAFB; padding:14px 18px; border-bottom:2px solid #E5E7EB;">
+                                                    <strong style="font-size:15px; color:#374151; font-family:'Segoe UI',Arial,sans-serif;">&#128203; {titulo}</strong>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding:0;">
+                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+{rows}
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+"""
+
+
+# =====================================================================
+# FUNCIONES DE CONTENIDO
+# =====================================================================
+
+def generar_explicacion_checks(checks):
+    """Convierte checks en explicacion en lenguaje natural"""
+    from app.checks_disponibles import CHECKS_DISPONIBLES
+
+    mensajes = []
+    for check_key in checks:
+        if check_key in CHECKS_DISPONIBLES:
+            mensajes.append(CHECKS_DISPONIBLES[check_key]['descripcion'])
+
+    if not mensajes:
+        return "Se encontraron observaciones que requieren correccion."
+    elif len(mensajes) == 1:
+        return mensajes[0]
+    else:
+        return "<br/>".join([f"&#8226; {msg}" for msg in mensajes])
+
 
 def generar_lista_soportes_requeridos(tipo_incapacidad):
-    """Genera lista HTML de soportes requeridos según origen común o laboral"""
-    
+    """Genera lista de soportes requeridos segun tipo"""
+
     soportes = {
         'Enfermedad General': {
-            'origen': 'Origen Común',
+            'origen': 'Origen Comun',
             'docs': [
-                'Incapacidad médica (emitida por la EPS)',
-                'Epicrisis o resumen de atención (todas las páginas)'
+                'Incapacidad medica (emitida por la EPS)',
+                'Epicrisis o resumen de atencion (todas las paginas)'
             ]
         },
         'Enfermedad Laboral': {
             'origen': 'Origen Laboral',
             'docs': [
-                'Incapacidad médica (emitida por la ARL)',
-                'Epicrisis o resumen de atención (todas las páginas)'
+                'Incapacidad medica (emitida por la ARL)',
+                'Epicrisis o resumen de atencion (todas las paginas)'
             ]
         },
         'Maternidad': {
-            'origen': 'Origen Común',
+            'origen': 'Origen Comun',
             'docs': [
                 'Licencia de maternidad (emitida por la EPS)',
-                'Epicrisis o resumen de atención (todas las páginas)',
+                'Epicrisis o resumen de atencion (todas las paginas)',
                 'Certificado de nacido vivo',
-                'Registro civil del bebé'
+                'Registro civil del bebe'
             ]
         },
         'Paternidad': {
-            'origen': 'Origen Común',
+            'origen': 'Origen Comun',
             'docs': [
                 'Incapacidad de paternidad (emitida por la EPS)',
-                'Epicrisis o resumen de atención de la madre (todas las páginas)',
-                'Cédula del padre (ambas caras)',
+                'Epicrisis o resumen de atencion de la madre (todas las paginas)',
+                'Cedula del padre (ambas caras)',
                 'Certificado de nacido vivo',
-                'Registro civil del bebé',
+                'Registro civil del bebe',
                 'Licencia de maternidad de la madre (si trabaja)'
             ]
         },
-        'Accidente de Tránsito': {
-            'origen': 'Origen Común',
+        'Accidente de Transito': {
+            'origen': 'Origen Comun',
             'docs': [
-                'Incapacidad médica (emitida por la EPS)',
-                'Epicrisis o resumen de atención (todas las páginas)',
-                'FURIPS (Formato Único de Reporte)',
-                'SOAT del vehículo (si fue identificado)'
+                'Incapacidad medica (emitida por la EPS)',
+                'Epicrisis o resumen de atencion (todas las paginas)',
+                'FURIPS (Formato Unico de Reporte)',
+                'SOAT del vehiculo (si fue identificado)'
             ]
         }
     }
-    
+
     info = soportes.get(tipo_incapacidad)
     if not info:
         return ''
-    
-    items_html = ''
-    for doc in info['docs']:
-        items_html += f'<li style="margin: 6px 0; color: #1e3a8a; font-size: 14px;">{doc}</li>\n'
-    
-    return f'''
-    <div style="background: #dbeafe; border: 2px solid #3b82f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-        <h4 style="margin-top: 0; color: #1e40af; font-size: 15px;">
-            📋 Soportes requeridos para incapacidad de {info['origen']}:
-        </h4>
-        <ol style="line-height: 1.8; margin: 10px 0; padding-left: 20px;">
-            {items_html}
-        </ol>
-    </div>
-    '''
 
-def generar_explicacion_checks(checks):
-    """Convierte los checks en explicaciÃ³n en lenguaje natural usando las descripciones actualizadas"""
-    from app.checks_disponibles import CHECKS_DISPONIBLES
-    
-    mensajes = []
-    for check_key in checks:
-        if check_key in CHECKS_DISPONIBLES:
-            mensajes.append(CHECKS_DISPONIBLES[check_key]['descripcion'])
-    
-    if not mensajes:
-        return "Se encontrÃ³ incompleta y requiere correcciÃ³n."
-    elif len(mensajes) == 1:
-        return mensajes[0]
-    else:
-        # Unir con saltos de lÃ­nea para mejor legibilidad
-        return "<br><br>".join([f"â€¢ {msg}" for msg in mensajes])
+    return _bloque_lista(
+        f"&#128203; Soportes requeridos para {info['origen']}:",
+        info['docs'],
+        bgcolor="#EFF6FC",
+        color_titulo="#004578"
+    )
+
 
 def generar_checklist_requisitos(tipo_incapacidad, checks_faltantes, tipo_email):
-    """Genera la checklist visual de requisitos"""
-    
-    # Definir requisitos completos por tipo
+    """Genera checklist visual estilo Teams/Planner"""
+
     requisitos_completos = {
         'Maternidad': [
-            ('incapacidad', 'Incapacidad o licencia de maternidad', 'Documento oficial emitido por EPS con todas las pÃ¡ginas'),
-            ('epicrisis', 'Epicrisis o resumen de atenciÃ³n', 'Documento completo con todas las pÃ¡ginas, sin recortes'),
+            ('incapacidad', 'Incapacidad o licencia de maternidad', 'Documento oficial emitido por EPS con todas las paginas'),
+            ('epicrisis', 'Epicrisis o resumen de atencion', 'Documento completo con todas las paginas, sin recortes'),
             ('nacido_vivo', 'Certificado de nacido vivo', 'Original legible y sin recortes'),
-            ('registro_civil', 'Registro civil del bebÃ©', 'Completo y legible'),
+            ('registro_civil', 'Registro civil del bebe', 'Completo y legible'),
         ],
         'Paternidad': [
             ('incapacidad', 'Incapacidad de paternidad', 'Documento oficial emitido por EPS'),
-            ('epicrisis', 'Epicrisis o resumen de atenciÃ³n de la madre', 'Documento completo con todas las pÃ¡ginas'),
-            ('cedula_padre', 'CÃ©dula del padre', 'Ambas caras legibles'),
+            ('epicrisis', 'Epicrisis o resumen de atencion de la madre', 'Documento completo con todas las paginas'),
+            ('cedula_padre', 'Cedula del padre', 'Ambas caras legibles'),
             ('nacido_vivo', 'Certificado de nacido vivo', 'Original legible'),
-            ('registro_civil', 'Registro civil del bebÃ©', 'Completo y legible'),
-            ('licencia_maternidad', 'Licencia de maternidad de la madre (si trabaja)', 'Solo si la madre estÃ¡ activa laboralmente'),
+            ('registro_civil', 'Registro civil del bebe', 'Completo y legible'),
+            ('licencia_maternidad', 'Licencia de maternidad de la madre (si trabaja)', 'Solo si la madre esta activa laboralmente'),
         ],
-        'Accidente de TrÃ¡nsito': [
-            ('incapacidad', 'Incapacidad mÃ©dica', 'Documento oficial emitido por EPS con todas las pÃ¡ginas'),
-            ('epicrisis', 'Epicrisis o resumen de atenciÃ³n', 'Documento completo, sin recortes'),
-            ('furips', 'FURIPS (Formato Ãšnico de Reporte)', 'Completo y legible'),
-            ('soat', 'SOAT del vehÃ­culo', 'Solo si el vehÃ­culo es identificado (no fantasma)'),
+        'Accidente de Transito': [
+            ('incapacidad', 'Incapacidad medica', 'Documento oficial emitido por EPS con todas las paginas'),
+            ('epicrisis', 'Epicrisis o resumen de atencion', 'Documento completo, sin recortes'),
+            ('furips', 'FURIPS (Formato Unico de Reporte)', 'Completo y legible'),
+            ('soat', 'SOAT del vehiculo', 'Solo si el vehiculo fue identificado'),
         ],
         'Enfermedad General': [
-            ('incapacidad', 'Incapacidad mÃ©dica', 'Documento oficial emitido por EPS con todas las pÃ¡ginas'),
-            ('epicrisis', 'Epicrisis o resumen de atenciÃ³n', 'Requerido para incapacidades de 3 o mÃ¡s dÃ­as'),
+            ('incapacidad', 'Incapacidad medica', 'Documento oficial emitido por EPS con todas las paginas'),
+            ('epicrisis', 'Epicrisis o resumen de atencion', 'Requerido para incapacidades de 3 o mas dias'),
         ],
         'Enfermedad Laboral': [
-            ('incapacidad', 'Incapacidad mÃ©dica', 'Documento oficial emitido por ARL con todas las pÃ¡ginas'),
-            ('epicrisis', 'Epicrisis o resumen de atenciÃ³n', 'Requerido para incapacidades de 3 o mÃ¡s dÃ­as'),
+            ('incapacidad', 'Incapacidad medica', 'Documento oficial emitido por ARL con todas las paginas'),
+            ('epicrisis', 'Epicrisis o resumen de atencion', 'Requerido para incapacidades de 3 o mas dias'),
         ],
     }
-    
+
     requisitos = requisitos_completos.get(tipo_incapacidad, [])
     if not requisitos:
         return ''
-    
-    # Determinar el color del borde
-    color_borde = '#fecaca' if tipo_email in ['incompleta', 'ilegible'] else '#e0f2fe'
-    
-    html = f'''
-    <div style="background: white; border: 2px solid {color_borde}; padding: 25px; border-radius: 8px; margin: 25px 0;">
-        <h3 style="margin-top: 0; color: #374151; border-bottom: 2px solid #d1d5db; padding-bottom: 10px;">
-            ðŸ“‹ Requisitos para {tipo_incapacidad}
-        </h3>
-        <div style="font-size: 14px; line-height: 2;">
-    '''
-    
-    for codigo, nombre, descripcion in requisitos:
-        # Verificar si estÃ¡ en la lista de faltantes
+
+    items_ok = []
+    items_fail = []
+    for codigo, nombre_r, descripcion in requisitos:
         faltante = any(codigo in check for check in checks_faltantes)
-        
         if faltante:
-            # âŒ FALTANTE
-            html += f'''
-            <div style="display: flex; align-items: start; margin-bottom: 12px; background: #fee2e2; padding: 12px; border-radius: 6px;">
-                <span style="color: #dc2626; font-size: 20px; margin-right: 10px;">âŒ</span>
-                <div style="flex: 1;">
-                    <strong style="color: #991b1b;">{nombre}</strong>
-                    <div style="color: #b91c1c; font-size: 12px; margin-top: 4px;">
-                        ({descripcion})
-                    </div>
-                </div>
-            </div>
-            '''
+            items_fail.append((nombre_r, descripcion))
         else:
-            # âœ… OK
-            html += f'''
-            <div style="display: flex; align-items: start; margin-bottom: 12px; background: #f0fdf4; padding: 12px; border-radius: 6px; opacity: 0.7;">
-                <span style="color: #16a34a; font-size: 20px; margin-right: 10px;">âœ…</span>
-                <div style="flex: 1;">
-                    <strong style="color: #166534;">{nombre}</strong>
-                    <div style="color: #15803d; font-size: 12px; margin-top: 4px;">
-                        ({descripcion})
-                    </div>
-                </div>
-            </div>
-            '''
-    
-    html += '</div></div>'
-    return html
+            items_ok.append((nombre_r, descripcion))
 
-def generar_seccion_ilegibilidad():
-    """Genera indicación de PDF escaneado"""
-    return '''
-    <div style="background: #e0f2fe; border: 2px solid #0284c7; padding: 20px; border-radius: 8px; margin: 25px 0;">
-        <h4 style="margin-top: 0; color: #0c4a6e;">
-            📄 Formato de envío:
-        </h4>
-        <p style="color: #0c4a6e; line-height: 1.8; margin: 10px 0; font-size: 14px;">
-            Enviar los documentos en <strong>PDF escaneado</strong>. Asegúrese de que estén completos, legibles y sin recortes.
-        </p>
-        <p style="color: #92400e; margin: 10px 0; font-size: 14px;">
-            Si no cuenta con algún soporte, <strong>diríjase al punto de atención más cercano de su EPS y solicítelo</strong>.
-        </p>
-    </div>
-    '''
+    return _bloque_checklist(f"Requisitos para {tipo_incapacidad}", items_ok, items_fail)
 
-def generar_instrucciones(tipo_email):
-    """Genera instrucciones claras para corrección"""
-    return '''
-    <div style="background: #dbeafe; border: 2px solid #3b82f6; padding: 20px; border-radius: 8px; margin: 25px 0;">
-        <h4 style="margin-top: 0; color: #1e40af;">📝 Qué debes hacer:</h4>
-        <ol style="color: #1e3a8a; line-height: 1.8; margin: 10px 0; padding-left: 20px;">
-            <li>Adjunta nuevamente los soportes en <strong>PDF escaneado</strong></li>
-            <li>Verifica que los documentos estén <strong>completos y legibles</strong></li>
-            <li>Incluye <strong>TODOS</strong> los soportes marcados como faltantes</li>
-        </ol>
-        <p style="color: #92400e; margin: 15px 0 0 0; font-size: 14px; border-top: 1px solid #93c5fd; padding-top: 12px;">
-            Si no cuenta con algún soporte, <strong>diríjase al punto de atención más cercano de su EPS y solicítelo</strong>.
-        </p>
-    </div>
-    <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 15px 0; text-align: center;">
-        <p style="margin: 0; color: #374151; font-size: 14px;">Comuníquese si tiene alguna duda.</p>
-    </div>
-    '''
 
-def generar_aviso_wasap():
-    """Genera aviso de estar pendiente primero por WhatsApp"""
-    return '''
-    <div style="background: #fff3cd; border: 2px solid #ffc107; padding: 20px; border-radius: 8px; margin: 25px 0;">
-        <p style="margin: 0; color: #856404; font-weight: bold; text-align: center; font-size: 15px;">
-            ⚠️ IMPORTANTE: Estar pendiente
-        </p>
-        <p style="margin: 10px 0 0 0; color: #856404; text-align: center;">
-            <strong>📱 Primero vía WhatsApp</strong> y luego por <strong>📧 correo electrónico</strong>
-        </p>
-        <p style="margin: 10px 0 0 0; color: #856404; text-align: center; font-size: 13px;">
-            Comuníquese si tiene alguna duda.
-        </p>
-    </div>
-    '''
+def generar_mensaje_segun_tipo(tipo_email, checks, tipo_incapacidad, serial, quinzena=None, archivos_nombres=None):
+    """Genera contenido principal segun tipo de notificacion"""
 
-def generar_detalles_caso(serial, nombre, empresa, tipo_incapacidad, telefono, email):
-    """Genera tabla de detalles del caso (para TTHH)"""
-    return f'''
-    <div style="background: #f8f9fa; border: 2px solid #dee2e6; padding: 20px; border-radius: 8px; margin: 25px 0;">
-        <h4 style="margin-top: 0; color: #495057; border-bottom: 2px solid #6c757d; padding-bottom: 10px;">
-            ðŸ“‹ InformaciÃ³n del Caso
-        </h4>
-        <table style="width: 100%; font-size: 14px;">
-            <tr>
-                <td style="padding: 8px 0; color: #666; font-weight: bold; width: 180px;">Serial:</td>
-                <td style="padding: 8px 0; color: #333;"><strong style="color: #dc2626;">{serial}</strong></td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 0; color: #666; font-weight: bold;">Colaboradora:</td>
-                <td style="padding: 8px 0; color: #333;">{nombre}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 0; color: #666; font-weight: bold;">Empresa:</td>
-                <td style="padding: 8px 0; color: #333;">{empresa}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 0; color: #666; font-weight: bold;">Tipo:</td>
-                <td style="padding: 8px 0; color: #333;">{tipo_incapacidad}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 0; color: #666; font-weight: bold;">TelÃ©fono:</td>
-                <td style="padding: 8px 0; color: #333;">{telefono}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 0; color: #666; font-weight: bold;">Email:</td>
-                <td style="padding: 8px 0; color: #333;">{email}</td>
-            </tr>
-        </table>
-    </div>
-    '''
-def enviar_email_cambio_tipo(email: str, nombre: str, serial: str, tipo_anterior: str, tipo_nuevo: str, docs_requeridos: list):
-    """
-    EnvÃ­a email informando del cambio de tipo de incapacidad
-    """
-    # Mapeo de tipos a nombres legibles
-    tipos_nombres = {
-        'maternity': 'Maternidad',
-        'paternity': 'Paternidad',
-        'general': 'Enfermedad General',
-        'traffic': 'Accidente de TrÃ¡nsito',
-        'labor': 'Accidente Laboral'
-    }
-    
-    tipo_ant_nombre = tipos_nombres.get(tipo_anterior, tipo_anterior)
-    tipo_nuevo_nombre = tipos_nombres.get(tipo_nuevo, tipo_nuevo)
-    
-    # Generar lista de documentos
-    docs_html = "<ul style='margin: 10px 0; padding-left: 20px;'>"
-    for doc in docs_requeridos:
-        docs_html += f"<li style='margin: 5px 0;'>{doc}</li>"
-    docs_html += "</ul>"
-    
-    asunto = f"ðŸ”„ Cambio de Tipo de Incapacidad - {serial}"
-    
-    cuerpo = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-        <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            <h2 style="color: #f59e0b;">ðŸ”„ ActualizaciÃ³n de Tipo de Incapacidad</h2>
-            
-            <p>Hola <strong>{nombre}</strong>,</p>
-            
-            <p>Hemos actualizado el tipo de tu incapacidad <strong>{serial}</strong>:</p>
-            
-            <div style="background-color: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <p style="margin: 0;">
-                    <strong>Tipo anterior:</strong> {tipo_ant_nombre}<br>
-                    <strong>Nuevo tipo:</strong> {tipo_nuevo_nombre}
-                </p>
-            </div>
-            
-            <p>Debido a este cambio, los documentos requeridos son:</p>
-            
-            {docs_html}
-            
-            <div style="background-color: #dbeafe; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <h3 style="margin-top: 0; color: #1e40af;">ðŸ“ QuÃ© debes hacer:</h3>
-                <ol style="margin: 10px 0; padding-left: 20px;">
-                    <li style="margin: 5px 0;">Revisa la nueva lista de documentos</li>
-                    <li style="margin: 5px 0;">Prepara TODOS los documentos solicitados</li>
-                    <li style="margin: 5px 0;">Ingresa al portal con tu cÃ©dula</li>
-                    <li style="margin: 5px 0;">Completa la incapacidad subiendo los documentos</li>
-                </ol>
-            </div>
-            
-            <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
-                Este es un correo automÃ¡tico del sistema de gestiÃ³n de incapacidades.<br>
-                No respondas a este mensaje.
-            </p>
-        </div>
-    </body>
-    </html>
-    """
-    
-    # Enviar usando la funciÃ³n existente
-    from app.main import send_html_email
-    send_html_email(email, asunto, cuerpo)
+    if tipo_email == 'confirmacion':
+        archivos_html = ""
+        if archivos_nombres:
+            for archivo in archivos_nombres:
+                archivos_html += f"""
+                                                        <tr>
+                                                            <td bgcolor="#EFF6FC" style="background-color:#EFF6FC; padding:10px 14px; border-bottom:2px solid #FFFFFF; border-left:4px solid #0078D4;">
+                                                                <span style="font-size:14px; color:#004578; font-family:'Segoe UI',Arial,sans-serif;">&#128196; {archivo}</span>
+                                                            </td>
+                                                        </tr>"""
 
-# ==================== FUNCIONES DE COMPATIBILIDAD (LEGACY) ====================
+        resultado = _bloque_mensaje(
+            "#EFF6FC", "#0078D4",
+            "&#9989; Confirmo recibido de la documentacion",
+            f"Se procedera a realizar la revision para validar que cumpla con los requisitos establecidos para <strong>{tipo_incapacidad}</strong>."
+        )
 
-def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, archivos_nombres=None):
-    """
-    âœ… TEMPLATE ULTRA-COMPATIBLE - Outlook + Gmail + iPhone
-    """
-    
-    # Lista de archivos recibidos
-    archivos_html = ""
-    if archivos_nombres:
-        archivos_html = """
-        <table width="100%" cellpadding="0" cellspacing="0" style="margin: 15px 0;">
-            <tr><td>
-        """
-        for archivo in archivos_nombres:
-            archivos_html += f"""
-                <div style="background: #e0f2fe; padding: 12px; margin: 8px 0; border-radius: 8px; border-left: 4px solid #0369a1;">
-                    <span style="font-size: 18px;">&#128196;</span>
-                    <span style="color: #0369a1; font-weight: 500; font-size: 14px; margin-left: 8px;">{archivo}</span>
-                </div>
-            """
-        archivos_html += """
-            </td></tr>
-        </table>
-        """
-    
-    return f"""
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head>
-    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <!--[if mso]><style>body, table, td {{font-family: Arial, sans-serif !important;}}</style><![endif]-->
-</head>
-<body style="margin: 0; padding: 0; background-color: #F3F2F1;">
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #F3F2F1; padding: 20px 0;">
-        <tr><td align="center">
-            <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #FFFFFF; max-width: 600px;">
-                <tr>
-                    <td style="background-color: #0078D4; padding: 32px 24px; text-align: center;">
-                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                            <tr><td align="center">
-                                <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto 16px;">
-                                    <tr><td style="width: 56px; height: 56px; background-color: #FFFFFF; border-radius: 28px; text-align: center; line-height: 56px; font-size: 32px;">&#9989;</td></tr>
-                                </table>
-                            </td></tr>
-                            <tr><td align="center" style="color: #FFFFFF; font-size: 24px; font-weight: 600; font-family: 'Segoe UI', Arial, sans-serif;">Incapacidad Recibida</td></tr>
-                            <tr><td align="center" style="color: #FFFFFF; font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; padding-top: 8px;">IncaNeurobaeza</td></tr>
-                        </table>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 32px 24px;">
-                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                            <tr><td style="color: #323130; font-size: 16px; font-family: 'Segoe UI', Arial, sans-serif; padding-bottom: 16px;">Hola <strong style="color: #0078D4;">{nombre}</strong></td></tr>
-                            <tr><td style="background-color: #EFF6FC; border-left: 4px solid #0078D4; padding: 16px;">
-                                <strong style="color: #004578; font-size: 15px;">&#10004; Confirmo recibido</strong><br/><br/>
-                                <span style="color: #004578; font-size: 14px;">Se validarÃ¡ que cumpla con los requisitos para <strong>{tipo_incapacidad}</strong>.</span>
-                            </td></tr>
-                            <tr><td height="24"></td></tr>
-                            <tr><td>
-                                <table width="100%" cellpadding="12" cellspacing="0" border="0" style="background-color: #FAF9F8;">
-                                    <tr><td style="color: #323130; font-size: 15px; font-weight: 600; border-bottom: 1px solid #EDEBE9; padding-bottom: 12px;">InformaciÃ³n del Registro</td></tr>
-                                    <tr><td height="8"></td></tr>
-                                    <tr><td>
-                                        <table width="100%" cellpadding="6" cellspacing="0">
+        if archivos_html:
+            resultado += f"""
+                                <tr>
+                                    <td style="padding:8px 0;">
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                             <tr>
-                                                <td width="100" style="color: #605E5C; font-size: 13px;">Serial:</td>
-                                                <td style="color: #323130; font-weight: 600; font-size: 13px;"><span style="background-color: #FFF4CE; padding: 4px 10px; color: #8A6A00;">{serial}</span></td>
+                                                <td style="padding-bottom:8px;">
+                                                    <strong style="font-size:14px; color:#323130; font-family:'Segoe UI',Arial,sans-serif;">&#128270; Documentos recibidos:</strong>
+                                                </td>
                                             </tr>
                                             <tr>
-                                                <td style="color: #605E5C; font-size: 13px;">Empresa:</td>
-                                                <td style="color: #323130; font-size: 13px;">{empresa}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="color: #605E5C; font-size: 13px;">Tipo:</td>
-                                                <td style="color: #323130; font-size: 13px;">{tipo_incapacidad}</td>
+                                                <td>
+                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+{archivos_html}
+                                                    </table>
+                                                </td>
                                             </tr>
                                         </table>
-                                    </td></tr>
-                                </table>
-                            </td></tr>
-                            <tr><td height="24"></td></tr>
-                            {f'''
-                            <tr><td style="color: #323130; font-size: 15px; font-weight: 600; padding-bottom: 12px;">Documentos Recibidos</td></tr>
-                            <tr><td><table width="100%" cellpadding="0" cellspacing="0">{archivos_html}</table></td></tr>
-                            <tr><td height="24"></td></tr>
-                            ''' if archivos_html else ''}
-                            <tr><td align="center" style="padding: 24px 0;">
-                                <table cellpadding="0" cellspacing="0"><tr><td style="background-color: #0078D4; border-radius: 4px;">
-                                    <a href="{link_drive}" style="display: block; padding: 14px 32px; color: #FFFFFF; text-decoration: none; font-size: 15px; font-weight: 600;">Ver en Drive</a>
-                                </td></tr></table>
-                            </td></tr>
-                            <tr><td style="background-color: #FFF4CE; border: 2px solid #FFB900; padding: 16px; text-align: center;">
-                                <strong style="color: #8A6A00; font-size: 14px;">&#9888; IMPORTANTE</strong><br/>
-                                <span style="color: #8A6A00; font-size: 13px;">Estar pendiente vÃ­a WhatsApp y correo</span>
-                            </td></tr>
-                        </table>
-                    </td>
-                </tr>
-                <tr><td style="background-color: #F3F2F1; padding: 24px; text-align: center;">
-                    <strong style="color: #0078D4; font-size: 17px;">IncaNeurobaeza</strong><br/>
-                    <span style="color: #605E5C; font-size: 13px; font-style: italic;">Trabajando para ayudarte</span>
-                </td></tr>
-            </table>
-        </td></tr>
-    </table>
-</body>
-</html>
-    """
+                                    </td>
+                                </tr>
+"""
+        return resultado
 
-def get_alert_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
-    """Wrapper para emails de alerta (incompleta/ilegible)"""
-    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados)
+    elif tipo_email == 'incompleta':
+        explicacion = generar_explicacion_checks(checks)
+        soportes_html = generar_lista_soportes_requeridos(tipo_incapacidad)
+        return (
+            _bloque_mensaje(
+                "#FDE8E8", "#DC2626",
+                f"&#10060; Incapacidad {serial} - Documentacion Incompleta",
+                f"<strong>Motivo:</strong><br/>{explicacion}"
+            )
+            + soportes_html
+            + _bloque_alerta(
+                "#EFF6FC",
+                "&#128196; <strong>Formato:</strong> Enviar en <strong>PDF escaneado</strong>. Asegurese de que el documento este completo y legible.",
+                "#D2E3FC"
+            )
+            + _bloque_alerta(
+                "#FFF4CE",
+                "Si no cuenta con algun soporte, <strong>dirijase al punto de atencion mas cercano de su EPS y solicitelo</strong>.",
+                "#FFE066"
+            )
+            + _bloque_alerta(
+                "#F3F2F1",
+                "Comuniquese si tiene alguna duda.",
+                "#EDEBE9"
+            )
+        )
 
-def get_ilegible_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
-    """Template para documentos ilegibles"""
-    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados)
+    elif tipo_email == 'ilegible':
+        explicacion = generar_explicacion_checks(checks)
+        return (
+            _bloque_mensaje(
+                "#FFF4CE", "#D97706",
+                f"&#9888; Incapacidad {serial} - Documento Ilegible",
+                f"<strong>Motivo:</strong><br/>{explicacion}"
+            )
+            + _bloque_alerta(
+                "#EFF6FC",
+                "&#128196; <strong>Formato:</strong> Enviar en <strong>PDF escaneado</strong>. Asegurese de que el documento este completo, sin recortes y con buena resolucion.",
+                "#D2E3FC"
+            )
+            + _bloque_alerta(
+                "#FFF4CE",
+                "Si no cuenta con algun soporte, <strong>dirijase al punto de atencion mas cercano de su EPS y solicitelo</strong>.",
+                "#FFE066"
+            )
+            + _bloque_alerta(
+                "#F3F2F1",
+                "Comuniquese si tiene alguna duda.",
+                "#EDEBE9"
+            )
+        )
 
-def get_eps_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
-    """Template para casos que requieren transcripciÃ³n en EPS"""
-    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive)
+    elif tipo_email == 'eps':
+        return _bloque_mensaje(
+            "#FFF4CE", "#CA8A04",
+            "&#128203; Transcripcion en EPS requerida",
+            "Tu incapacidad requiere <strong>transcripcion fisica en tu EPS</strong>. "
+            "Por favor, dirigete a tu EPS con tu documento de identidad y solicita la "
+            "transcripcion de esta incapacidad. Una vez tengas el documento transcrito, "
+            "subelo nuevamente al sistema."
+        )
 
-def get_completa_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
-    """Template para casos validados completos"""
-    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive)
+    elif tipo_email == 'completa':
+        return (
+            _bloque_mensaje(
+                "#D1FAE5", "#16A34A",
+                "&#9989; Tu incapacidad ha sido validada exitosamente",
+                "Tu caso ha sido subido al sistema exitosamente para el proceso de validacion. "
+                "Nos comunicaremos contigo cuando el proceso este completo."
+            )
+            + _bloque_alerta(
+                "#F3F2F1",
+                "&#128204; Recepcion &rarr; <strong>Validacion</strong> &rarr; Subida al sistema",
+                "#EDEBE9"
+            )
+        )
 
-def get_tthh_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
-    """Template para alertas a Talento Humano"""
-    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados)
+    elif tipo_email == 'tthh':
+        return _bloque_mensaje(
+            "#FDE8E8", "#DC2626",
+            "&#9888; Incapacidad en Revision por Presunto Fraude",
+            "La siguiente incapacidad presenta inconsistencias que requieren "
+            "<strong>validacion adicional</strong> con la colaboradora."
+        )
 
-def get_falsa_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
-    """Template para confirmaciÃ³n falsa (caso especial)"""
-    return get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive)
+    elif tipo_email == 'falsa':
+        return _bloque_mensaje(
+            "#EFF6FC", "#0078D4",
+            "&#9989; Confirmo recibido de la documentacion",
+            "Se procedera a realizar la revision correspondiente."
+        )
+
+    return ""
+
+
+def generar_seccion_ilegibilidad():
+    """Seccion de formato PDF escaneado"""
+    return (
+        _bloque_alerta(
+            "#EFF6FC",
+            "&#128196; <strong>Formato de envio:</strong> Enviar los documentos en <strong>PDF escaneado</strong>. Asegurese de que esten completos, legibles y sin recortes.",
+            "#D2E3FC"
+        )
+        + _bloque_alerta(
+            "#FFF4CE",
+            "Si no cuenta con algun soporte, <strong>dirijase al punto de atencion mas cercano de su EPS y solicitelo</strong>.",
+            "#FFE066"
+        )
+    )
+
+
+def generar_instrucciones(tipo_email):
+    """Instrucciones para correccion"""
+    return (
+        _bloque_lista(
+            "&#128221; Que debes hacer:",
+            [
+                "Adjunta nuevamente los soportes en <strong>PDF escaneado</strong>",
+                "Verifica que los documentos esten <strong>completos y legibles</strong>",
+                "Incluye <strong>TODOS</strong> los soportes marcados como faltantes"
+            ],
+            bgcolor="#EFF6FC",
+            color_titulo="#004578"
+        )
+        + _bloque_alerta(
+            "#FFF4CE",
+            "Si no cuenta con algun soporte, <strong>dirijase al punto de atencion mas cercano de su EPS y solicitelo</strong>.",
+            "#FFE066"
+        )
+        + _bloque_alerta(
+            "#F3F2F1",
+            "Comuniquese si tiene alguna duda.",
+            "#EDEBE9"
+        )
+    )
+
+
+def generar_aviso_wasap():
+    """Aviso WhatsApp estilo Microsoft 365"""
+    return _bloque_alerta(
+        "#FFF4CE",
+        "&#9888; <strong>IMPORTANTE:</strong> Estar pendiente<br/>"
+        "&#128241; Primero via <strong>WhatsApp</strong> y luego por &#9993; <strong>correo electronico</strong><br/>"
+        "<span style='font-size:12px;'>Comuniquese si tiene alguna duda.</span>",
+        "#FFE066"
+    )
+
+
+def generar_detalles_caso(serial, nombre, empresa, tipo_incapacidad, telefono, email_contacto):
+    """Tabla de detalles del caso (para TTHH)"""
+    return _bloque_tabla_info([
+        ("Serial:", f'<strong style="color:#DC2626;">{serial}</strong>'),
+        ("Colaborador/a:", nombre),
+        ("Empresa:", empresa),
+        ("Tipo:", tipo_incapacidad),
+        ("Telefono:", telefono),
+        ("Email:", email_contacto),
+    ])
+
+
+# =====================================================================
+# FUNCION PRINCIPAL
+# =====================================================================
 
 def get_email_template_universal_con_ia(
-    tipo_email,  # 'confirmacion', 'incompleta', 'ilegible', 'eps', 'tthh', 'completa', 'falsa', 'recordatorio', 'alerta_jefe'
+    tipo_email,
     nombre,
     serial,
     empresa,
@@ -820,220 +675,321 @@ def get_email_template_universal_con_ia(
     checks_seleccionados=[],
     archivos_nombres=None,
     quinzena=None,
-    contenido_ia=None,  # âœ… NUEVO: Contenido generado por IA
-    empleado_nombre=None  # âœ… NUEVO: Para emails a jefes
+    contenido_ia=None,
+    empleado_nombre=None
 ):
     """
-    PLANTILLA UNIVERSAL CON SOPORTE PARA CONTENIDO IA
+    PLANTILLA UNIVERSAL 2026 - Compatible con TODOS los clientes de correo.
+    Table-based, HTML entities, bgcolor, MSO conditionals.
+    Estilo Microsoft 365 / Fluent UI.
     """
-    
+
     configs = {
         'confirmacion': {
-            'color_principal': '#667eea',
-            'color_secundario': '#764ba2',
-            'icono': 'âœ…',
-            'titulo': 'Recibido Confirmado',
+            'color': '#0078D4',
+            'titulo': '&#9989; Incapacidad Recibida',
             'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': False,
+            'mostrar_boton': False,
             'mostrar_plazo': False,
         },
         'incompleta': {
-            'color_principal': '#ef4444',
-            'color_secundario': '#dc2626',
-            'icono': 'âŒ',
-            'titulo': 'DocumentaciÃ³n Incompleta',
+            'color': '#DC2626',
+            'titulo': '&#10060; Documentacion Incompleta',
             'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': True,
+            'mostrar_boton': True,
             'mostrar_plazo': True,
         },
         'ilegible': {
-            'color_principal': '#f59e0b',
-            'color_secundario': '#d97706',
-            'icono': 'âš ï¸',
-            'titulo': 'Documento Ilegible',
+            'color': '#D97706',
+            'titulo': '&#9888; Documento Ilegible',
             'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': True,
+            'mostrar_boton': True,
             'mostrar_plazo': True,
+        },
+        'eps': {
+            'color': '#CA8A04',
+            'titulo': '&#128203; Transcripcion en EPS Requerida',
+            'mostrar_requisitos': False,
+            'mostrar_boton': True,
+            'mostrar_plazo': False,
+        },
+        'completa': {
+            'color': '#16A34A',
+            'titulo': '&#9989; Incapacidad Validada',
+            'mostrar_requisitos': False,
+            'mostrar_boton': False,
+            'mostrar_plazo': False,
         },
         'tthh': {
-            'color_principal': '#dc2626',
-            'color_secundario': '#991b1b',
-            'icono': 'ðŸš¨',
-            'titulo': 'ALERTA - Presunto Fraude',
+            'color': '#DC2626',
+            'titulo': '&#9888; ALERTA - Presunto Fraude',
             'mostrar_requisitos': True,
-            'mostrar_boton_reenvio': False,
+            'mostrar_boton': False,
             'mostrar_plazo': False,
         },
-        'recordatorio': {  # âœ… NUEVO
-            'color_principal': '#f59e0b',
-            'color_secundario': '#d97706',
-            'icono': 'â°',
-            'titulo': 'Recordatorio - DocumentaciÃ³n Pendiente',
+        'falsa': {
+            'color': '#0078D4',
+            'titulo': '&#9989; Recibido Confirmado',
             'mostrar_requisitos': False,
-            'mostrar_boton_reenvio': True,
+            'mostrar_boton': False,
+            'mostrar_plazo': False,
+        },
+        'recordatorio': {
+            'color': '#D97706',
+            'titulo': '&#9200; Recordatorio - Documentacion Pendiente',
+            'mostrar_requisitos': False,
+            'mostrar_boton': True,
             'mostrar_plazo': True,
         },
-        'alerta_jefe': {  # âœ… NUEVO
-            'color_principal': '#3b82f6',
-            'color_secundario': '#2563eb',
-            'icono': 'ðŸ“Š',
-            'titulo': 'Seguimiento - Incapacidad Pendiente',
+        'alerta_jefe': {
+            'color': '#2563EB',
+            'titulo': '&#128202; Seguimiento - Incapacidad Pendiente',
             'mostrar_requisitos': False,
-            'mostrar_boton_reenvio': False,
+            'mostrar_boton': False,
             'mostrar_plazo': False,
         },
-        # ... resto de configs existentes
     }
-    
+
     config = configs.get(tipo_email, configs['confirmacion'])
-    
-    # âœ… GENERAR MENSAJE PRINCIPAL
-    if contenido_ia:
-        # Si hay contenido generado por IA, usarlo
-        mensaje_principal = f'''
-        <div style="background: #f8f9fa; border-left: 4px solid {config['color_principal']}; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0;">
-            <div style="color: #333; line-height: 1.6; white-space: pre-wrap;">
-                {contenido_ia}
-            </div>
-        </div>
-        '''
+
+    # ========== SALUDO ==========
+    body = ''
+
+    if tipo_email == 'tthh':
+        body += f"""
+                                <tr>
+                                    <td style="padding:0 0 14px 0;">
+                                        <p style="margin:0; font-size:15px; color:#323130; font-family:'Segoe UI',Arial,sans-serif;">Estimado equipo de <strong>Talento Humano</strong>,</p>
+                                    </td>
+                                </tr>
+"""
     else:
-        # Usar generador estÃ¡tico original
-        mensaje_principal = generar_mensaje_segun_tipo(tipo_email, checks_seleccionados, tipo_incapacidad, serial, quinzena, archivos_nombres)
-    
-    # âœ… GENERAR LISTA DE REQUISITOS
-    requisitos_html = ''
+        body += f"""
+                                <tr>
+                                    <td style="padding:0 0 14px 0;">
+                                        <p style="margin:0; font-size:15px; color:#323130; font-family:'Segoe UI',Arial,sans-serif;">Hola <strong style="color:#0078D4;">{nombre}</strong>,</p>
+                                    </td>
+                                </tr>
+"""
+
+    # ========== MENSAJE PRINCIPAL ==========
+    if contenido_ia:
+        body += _bloque_mensaje(
+            "#FAF9F8", config['color'],
+            "",
+            contenido_ia
+        )
+    else:
+        body += generar_mensaje_segun_tipo(tipo_email, checks_seleccionados, tipo_incapacidad, serial, quinzena, archivos_nombres)
+
+    # ========== DETALLES CASO (TTHH) ==========
+    if tipo_email == 'tthh':
+        body += generar_detalles_caso(serial, nombre, empresa, tipo_incapacidad, telefono, email)
+
+    # ========== CHECKLIST REQUISITOS ==========
     if config['mostrar_requisitos']:
-        requisitos_html = generar_checklist_requisitos(tipo_incapacidad, checks_seleccionados, tipo_email)
-    
-    # âœ… BOTÃ“N DE REENVÃO
-    boton_reenvio = ''
-    if config['mostrar_boton_reenvio']:
-        boton_reenvio = f'''
-        <div style="text-align: center; margin: 30px 0;">
-            <a href="https://repogemin.vercel.app/" 
-               style="display: inline-block; background: linear-gradient(135deg, {config['color_principal']} 0%, {config['color_secundario']} 100%); 
-                      color: white; padding: 16px 40px; text-decoration: none; border-radius: 25px; 
-                      font-weight: bold; font-size: 16px; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
-                ðŸ“„ Subir Documentos Corregidos
-            </a>
-        </div>
-        '''
-    
-    # âœ… PLAZO
-    plazo_html = ''
-    if config['mostrar_plazo']:
-        plazo_html = '''
-        <div style="background: #fff3cd; border: 2px solid #ffc107; padding: 15px; border-radius: 8px; margin: 25px 0; text-align: center;">
-            <p style="margin: 0; color: #856404; font-weight: bold;">
-                â° Por favor, envÃ­a la documentaciÃ³n corregida lo antes posible
-            </p>
-        </div>
-        '''
-    
-    # âœ… SECCIÃ“N ESPECIAL PARA EMAILS A JEFES
-    seccion_jefe = ''
+        body += generar_checklist_requisitos(tipo_incapacidad, checks_seleccionados, tipo_email)
+
+    # ========== SECCION ILEGIBILIDAD ==========
+    if 'ilegible' in tipo_email or any('ilegible' in c or 'recortada' in c or 'borrosa' in c for c in checks_seleccionados):
+        body += generar_seccion_ilegibilidad()
+
+    # ========== INSTRUCCIONES ==========
+    if tipo_email in ['incompleta', 'ilegible']:
+        body += generar_instrucciones(tipo_email)
+
+    # ========== SECCION JEFE ==========
     if tipo_email == 'alerta_jefe' and empleado_nombre:
-        seccion_jefe = f'''
-        <div style="background: #e0f2fe; border: 2px solid #0ea5e9; padding: 20px; border-radius: 8px; margin: 25px 0;">
-            <h4 style="margin-top: 0; color: #0369a1;">
-                ðŸ‘¤ InformaciÃ³n del Colaborador/a
-            </h4>
-            <table style="width: 100%; font-size: 14px;">
-                <tr>
-                    <td style="padding: 8px 0; color: #666; font-weight: bold; width: 150px;">Nombre:</td>
-                    <td style="padding: 8px 0; color: #333;">{empleado_nombre}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666; font-weight: bold;">Serial:</td>
-                    <td style="padding: 8px 0; color: #333;"><strong style="color: #dc2626;">{serial}</strong></td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666; font-weight: bold;">Empresa:</td>
-                    <td style="padding: 8px 0; color: #333;">{empresa}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #666; font-weight: bold;">Contacto:</td>
-                    <td style="padding: 8px 0; color: #333;">{telefono} â€¢ {email}</td>
-                </tr>
-            </table>
-        </div>
-        '''
-    
-    # âœ… PLANTILLA HTML COMPLETA
-    return f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <title>{config['titulo']} - {serial}</title>
-    </head>
-    <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px;">
-        <div style="max-width: 650px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.15);">
-            
-            <!-- Header -->
-            <div style="background: linear-gradient(135deg, {config['color_principal']} 0%, {config['color_secundario']} 100%); color: white; padding: 30px; text-align: center;">
-                <h1 style="margin: 0; font-size: 26px;">{config['icono']} {config['titulo']}</h1>
-                <p style="margin: 5px 0 0 0; font-style: italic;">IncaNeurobaeza</p>
-            </div>
-            
-            <!-- Content -->
-            <div style="padding: 30px;">
-                <p style="font-size: 16px; color: #333;">
-                    {'Estimado/a <strong>' + nombre + '</strong>,' if tipo_email != 'alerta_jefe' else 'Estimado/a <strong>' + nombre + '</strong>,'}
-                </p>
-                
-                <!-- Mensaje Principal (IA o EstÃ¡tico) -->
-                {mensaje_principal}
-                
-                <!-- SecciÃ³n Jefe (solo para alerta_jefe) -->
-                {seccion_jefe}
-                
-                <!-- Checklist de Requisitos -->
-                {requisitos_html}
-                
-                <!-- BotÃ³n de ReenvÃ­o -->
-                {boton_reenvio}
-                
-                <!-- Plazo -->
-                {plazo_html}
-                
-                <!-- Link a Drive -->
-                <div style="text-align: center; margin: 20px 0;">
-                    <a href="{link_drive}" style="color: #3b82f6; text-decoration: underline; font-size: 14px;">
-                        ðŸ“„ Ver documentos en Drive
-                    </a>
-                </div>
-                
-                <!-- Contacto -->
-                <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                    <p style="margin: 0; color: #4b5563; font-size: 13px; text-align: center;">
-                        ðŸ“ž <strong>{telefono}</strong> &nbsp;|&nbsp; ðŸ“§ <strong>{email}</strong>
-                    </p>
-                </div>
-            </div>
-            
-            <!-- Footer -->
-            <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #e9ecef;">
-                <strong style="color: #667eea; font-size: 16px;">IncaNeurobaeza</strong>
-                <div style="color: #6c757d; font-style: italic; margin-top: 5px; font-size: 14px;">
-                    "Trabajando para ayudarte"
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
+        body += _bloque_tabla_info([
+            ("Colaborador/a:", empleado_nombre),
+            ("Serial:", f'<strong style="color:#DC2626;">{serial}</strong>'),
+            ("Empresa:", empresa),
+            ("Contacto:", f"{telefono} &bull; {email}"),
+        ])
+
+    # ========== BOTON REENVIO ==========
+    if config['mostrar_boton']:
+        body += _bloque_boton(
+            "https://repogemin.vercel.app/",
+            "&#128260; Subir Documentos Corregidos",
+            config['color']
+        )
+
+    # ========== PLAZO ==========
+    if config['mostrar_plazo']:
+        body += _bloque_alerta(
+            "#FFF4CE",
+            "&#9200; Por favor, envia la documentacion corregida lo antes posible",
+            "#FFE066"
+        )
+
+    # ========== AVISO WHATSAPP ==========
+    if tipo_email in ['confirmacion', 'incompleta', 'ilegible']:
+        body += generar_aviso_wasap()
+
+    # ========== HTML FINAL ==========
+    return _base_template(
+        titulo=config['titulo'],
+        color_header=config['color'],
+        contenido_body=body,
+        serial=serial,
+        telefono=telefono,
+        email_contacto=email,
+        link_drive=link_drive
+    )
 
 
-# âœ… WRAPPER para mantener compatibilidad
-def get_email_template_universal(tipo_email, nombre, serial, empresa, tipo_incapacidad, 
-                                 telefono, email, link_drive, checks_seleccionados=[], 
-                                 archivos_nombres=None, quinzena=None, contenido_ia=None, 
+# =====================================================================
+# WRAPPER PRINCIPAL (mantiene compatibilidad con todos los callers)
+# =====================================================================
+
+def get_email_template_universal(tipo_email, nombre, serial, empresa, tipo_incapacidad,
+                                 telefono, email, link_drive, checks_seleccionados=[],
+                                 archivos_nombres=None, quinzena=None, contenido_ia=None,
                                  empleado_nombre=None):
-    """Wrapper para usar la nueva funciÃ³n con IA"""
+    """Wrapper principal - mantiene compatibilidad con todos los callers"""
     return get_email_template_universal_con_ia(
         tipo_email, nombre, serial, empresa, tipo_incapacidad,
         telefono, email, link_drive, checks_seleccionados,
         archivos_nombres, quinzena, contenido_ia, empleado_nombre
     )
+
+
+# =====================================================================
+# TEMPLATES LEGACY (compatibilidad con imports existentes)
+# =====================================================================
+
+def get_confirmation_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, archivos_nombres=None):
+    """Template de confirmacion"""
+    return get_email_template_universal(
+        tipo_email='confirmacion', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive,
+        archivos_nombres=archivos_nombres
+    )
+
+
+def get_alert_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
+    """Template para alertas incompleta/ilegible"""
+    return get_email_template_universal(
+        tipo_email='incompleta', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive,
+        checks_seleccionados=checks_seleccionados or []
+    )
+
+
+def get_ilegible_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
+    """Template para documentos ilegibles"""
+    return get_email_template_universal(
+        tipo_email='ilegible', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive,
+        checks_seleccionados=checks_seleccionados or []
+    )
+
+
+def get_eps_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
+    """Template para transcripcion en EPS"""
+    return get_email_template_universal(
+        tipo_email='eps', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive
+    )
+
+
+def get_completa_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
+    """Template para caso validado completo"""
+    return get_email_template_universal(
+        tipo_email='completa', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive
+    )
+
+
+def get_tthh_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive, checks_seleccionados=None):
+    """Template para alertas a Talento Humano"""
+    return get_email_template_universal(
+        tipo_email='tthh', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive,
+        checks_seleccionados=checks_seleccionados or []
+    )
+
+
+def get_falsa_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
+    """Template para confirmacion falsa"""
+    return get_email_template_universal(
+        tipo_email='falsa', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive
+    )
+
+
+# =====================================================================
+# EMAIL CAMBIO DE TIPO
+# =====================================================================
+
+def enviar_email_cambio_tipo(email_to, nombre, serial, tipo_anterior, tipo_nuevo, docs_requeridos):
+    """Envia email informando cambio de tipo de incapacidad"""
+    tipos_nombres = {
+        'maternity': 'Maternidad',
+        'paternity': 'Paternidad',
+        'general': 'Enfermedad General',
+        'traffic': 'Accidente de Transito',
+        'labor': 'Accidente Laboral'
+    }
+
+    tipo_ant_nombre = tipos_nombres.get(tipo_anterior, tipo_anterior)
+    tipo_nuevo_nombre = tipos_nombres.get(tipo_nuevo, tipo_nuevo)
+
+    body = f"""
+                                <tr>
+                                    <td style="padding:0 0 14px 0;">
+                                        <p style="margin:0; font-size:15px; color:#323130; font-family:'Segoe UI',Arial,sans-serif;">Hola <strong style="color:#0078D4;">{nombre}</strong>,</p>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:0 0 10px 0;">
+                                        <p style="margin:0; font-size:14px; color:#323130; font-family:'Segoe UI',Arial,sans-serif;">Hemos actualizado el tipo de tu incapacidad <strong>{serial}</strong>:</p>
+                                    </td>
+                                </tr>
+"""
+    body += _bloque_tabla_info([
+        ("Tipo anterior:", tipo_ant_nombre),
+        ("Nuevo tipo:", f"<strong>{tipo_nuevo_nombre}</strong>"),
+    ])
+    body += _bloque_lista(
+        "&#128221; Documentos requeridos:",
+        docs_requeridos,
+        bgcolor="#EFF6FC",
+        color_titulo="#004578"
+    )
+    body += _bloque_lista(
+        "&#128270; Que debes hacer:",
+        [
+            "Revisa la nueva lista de documentos",
+            "Prepara TODOS los documentos solicitados",
+            "Ingresa al portal con tu cedula",
+            "Completa la incapacidad subiendo los documentos"
+        ],
+        bgcolor="#EFF6FC",
+        color_titulo="#004578"
+    )
+    body += _bloque_boton(
+        "https://repogemin.vercel.app/",
+        "&#128260; Subir Documentos",
+        "#D97706"
+    )
+
+    html = _base_template(
+        titulo="&#128260; Actualizacion de Tipo de Incapacidad",
+        color_header="#D97706",
+        contenido_body=body,
+        serial=serial
+    )
+
+    asunto = f"Cambio de Tipo de Incapacidad - {serial}"
+
+    from app.main import send_html_email
+    send_html_email(email_to, asunto, html)
