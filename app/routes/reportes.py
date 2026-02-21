@@ -357,7 +357,6 @@ async def get_dashboard_completo(
             emp_centro_costo = emp.centro_costo if emp else None
             emp_fecha_ingreso = emp.fecha_ingreso.isoformat() if emp and emp.fecha_ingreso else None
             emp_tipo_contrato = emp.tipo_contrato if emp else None
-            emp_dias_kactus = emp.dias_kactus if emp else None
             emp_ciudad = emp.ciudad if emp else None
             
             # Calcular días en portal (desde creación hasta ahora o hasta estado final)
@@ -433,13 +432,10 @@ async def get_dashboard_completo(
                 "subtipo": c.subtipo,
                 "estado": c.estado.value if c.estado else "NUEVO",
                 "diagnostico": c.diagnostico if c.diagnostico else ("En Proceso" if not subido_kactus else None),
-                "diagnostico_kactus": c.diagnostico_kactus,
                 "codigo_cie10": c.codigo_cie10 if c.codigo_cie10 else ("En Proceso" if not subido_kactus else None),
                 "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else ("En Proceso" if not subido_kactus else None),
                 "cie10_grupo": cie10_info.get("grupo") if cie10_info else None,
                 "dias_incapacidad": c.dias_incapacidad,
-                "dias_kactus": c.dias_kactus,
-                "dias_kactus_empleado": emp_dias_kactus,
                 "dias_validacion": dias_validacion,
                 "es_prorroga": prorroga_auto.get("es_prorroga", c.es_prorroga),
                 "es_prorroga_db": c.es_prorroga,
@@ -447,8 +443,6 @@ async def get_dashboard_completo(
                 "prorroga_explicacion": prorroga_auto.get("explicacion"),
                 "prorroga_caso_original": prorroga_auto.get("caso_original_serial"),
                 "numero_incapacidad": c.numero_incapacidad if c.numero_incapacidad else ("En Proceso" if not subido_kactus else None),
-                "medico_tratante": c.medico_tratante if c.medico_tratante else ("En Proceso" if not subido_kactus else None),
-                "institucion_origen": c.institucion_origen if c.institucion_origen else ("En Proceso" if not subido_kactus else None),
                 "fecha_inicio": c.fecha_inicio.isoformat() if c.fecha_inicio else None,
                 "fecha_fin": c.fecha_fin.isoformat() if c.fecha_fin else None,
                 "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
@@ -513,7 +507,13 @@ async def get_dashboard_completo(
             empresa_n = primer_caso.empresa.nombre if primer_caso.empresa else "N/A"
             
             total_dias_persona = sum(c.dias_incapacidad or 0 for c in casos_persona) - sum(c.dias_traslapo or 0 for c in casos_persona)
-            total_dias_kactus = sum(c.dias_kactus or 0 for c in casos_persona)
+            # Días Kactus = dias de fechas kactus si las tiene, sino dias_incapacidad
+            total_dias_kactus = 0
+            for c in casos_persona:
+                if c.fecha_inicio_kactus and c.fecha_fin_kactus:
+                    total_dias_kactus += (c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1
+                else:
+                    total_dias_kactus += c.dias_incapacidad or 0
             diagnosticos = list(set(c.diagnostico for c in casos_persona if c.diagnostico))
             codigos_cie10 = list(set(c.codigo_cie10 for c in casos_persona if c.codigo_cie10))
             prorrogas = sum(1 for c in casos_persona if c.es_prorroga)
@@ -681,8 +681,6 @@ async def powerbi_analisis_persona(
                 "eps": c.eps or "",
                 "es_prorroga": c.es_prorroga or False,
                 "numero_incapacidad": c.numero_incapacidad or "",
-                "medico_tratante": c.medico_tratante or "",
-                "institucion_origen": c.institucion_origen or "",
                 "drive_link": c.drive_link or "",
                 "created_at": c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
             })
@@ -1112,12 +1110,10 @@ async def get_traslapos(
                 "fecha_inicio_kactus": str(caso.fecha_inicio_kactus.date()) if caso.fecha_inicio_kactus else None,
                 "fecha_fin_kactus": str(caso.fecha_fin_kactus.date()) if caso.fecha_fin_kactus else None,
                 "dias_incapacidad_original": caso.dias_incapacidad,
-                "dias_kactus": caso.dias_kactus,
                 "dias_traslapo": caso.dias_traslapo,
                 "traslapo_con_serial": caso.traslapo_con_serial,
                 "diagnostico": caso.diagnostico,
                 "codigo_cie10": caso.codigo_cie10,
-                "diagnostico_kactus": caso.diagnostico_kactus,
                 "estado": caso.estado.value if caso.estado else None,
                 "kactus_sync_at": str(caso.kactus_sync_at) if caso.kactus_sync_at else None,
             })
