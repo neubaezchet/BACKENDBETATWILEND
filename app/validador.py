@@ -366,7 +366,13 @@ async def listar_casos(
             "tipo": caso.tipo.value if caso.tipo else None,
             "estado": caso.estado.value,
             "created_at": caso.created_at.isoformat(),
-            "bloquea_nueva": caso.bloquea_nueva
+            "bloquea_nueva": caso.bloquea_nueva,
+            "telefono_form": caso.telefono_form,
+            "email_form": caso.email_form,
+            "dias_incapacidad": caso.dias_incapacidad,
+            "eps": caso.eps,
+            "fecha_inicio": caso.fecha_inicio.isoformat() if caso.fecha_inicio else None,
+            "fecha_fin": caso.fecha_fin.isoformat() if caso.fecha_fin else None
         })
     
     return {
