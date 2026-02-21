@@ -30,6 +30,11 @@ python-multipart==0.0.6
 python-dotenv==1.0.0
 requests==2.31.0
 
+# Auth admin
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
 # PDF editing - VERSIONES COMPATIBLES
 opencv-python-headless==4.9.0.80
 scikit-image==0.22.0

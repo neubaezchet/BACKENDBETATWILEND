@@ -296,6 +296,30 @@ class AlertaEmail(Base):
     empresa = relationship("Company", backref="alerta_emails")
 
 
+class AdminUser(Base):
+    """
+    Usuarios administrativos del portal admin.
+    Roles: superadmin | admin | th | sst | nomina | viewer
+    """
+    __tablename__ = 'admin_users'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(100), nullable=False, unique=True, index=True)
+    password_hash = Column(String(300), nullable=False)
+    nombre = Column(String(200))
+    email = Column(String(300))
+    rol = Column(String(50), nullable=False, default='viewer')  # superadmin | admin | th | sst | nomina | viewer
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='SET NULL'), nullable=True)
+    permisos = Column(JSON, default=dict)  # {"validador": true, "reportes": true, "powerbi": true, ...}
+    activo = Column(Boolean, default=True)
+    ultimo_login = Column(DateTime, nullable=True)
+    
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    
+    empresa = relationship("Company", backref="admin_users")
+
+
 class Alerta180Log(Base):
     """
     Log de alertas 180 días enviadas.
