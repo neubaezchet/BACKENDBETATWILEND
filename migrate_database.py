@@ -29,7 +29,7 @@ def migrar_base_datos():
             "ALTER TABLE employees ADD COLUMN IF NOT EXISTS centro_costo VARCHAR(100);",
             "ALTER TABLE employees ADD COLUMN IF NOT EXISTS fecha_ingreso TIMESTAMP;",
             "ALTER TABLE employees ADD COLUMN IF NOT EXISTS tipo_contrato VARCHAR(50);",
-            "ALTER TABLE employees ADD COLUMN IF NOT EXISTS dias_kactus INTEGER;",
+            # dias_kactus eliminado de employees
             "ALTER TABLE employees ADD COLUMN IF NOT EXISTS ciudad VARCHAR(100);"
         ]
         
@@ -51,13 +51,11 @@ def migrar_base_datos():
         migraciones_cases = [
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS recordatorio_enviado BOOLEAN DEFAULT FALSE;",
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_recordatorio TIMESTAMP;",
-            # ✅ NUEVAS COLUMNAS KACTUS
+            # ✅ NUEVAS COLUMNAS KACTUS (solo lo que viene del Excel)
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS codigo_cie10 VARCHAR(20);",
-            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS dias_kactus INTEGER;",
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS es_prorroga BOOLEAN DEFAULT FALSE;",
             "ALTER TABLE cases ADD COLUMN IF NOT EXISTS numero_incapacidad VARCHAR(50);",
-            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS medico_tratante VARCHAR(200);",
-            "ALTER TABLE cases ADD COLUMN IF NOT EXISTS institucion_origen VARCHAR(200);"
+            # dias_kactus, medico_tratante, institucion_origen, diagnostico_kactus eliminados
         ]
         
         for sql in migraciones_cases:
@@ -81,14 +79,14 @@ def migrar_base_datos():
             FROM information_schema.columns 
             WHERE table_name='employees' 
             AND column_name IN ('jefe_nombre', 'jefe_email', 'jefe_cargo', 'area_trabajo',
-                                'cargo', 'centro_costo', 'fecha_ingreso', 'tipo_contrato', 'dias_kactus', 'ciudad');
+                                'cargo', 'centro_costo', 'fecha_ingreso', 'tipo_contrato', 'ciudad');
         """))
         columnas_employees = [row[0] for row in result_employees]
         
-        if len(columnas_employees) == 10:
-            print(f"  ✅ Tabla 'employees': 10/10 columnas nuevas OK")
+        if len(columnas_employees) == 9:
+            print(f"  ✅ Tabla 'employees': 9/9 columnas nuevas OK")
         else:
-            print(f"  ⚠️ Tabla 'employees': {len(columnas_employees)}/10 columnas encontradas")
+            print(f"  ⚠️ Tabla 'employees': {len(columnas_employees)}/9 columnas encontradas")
         
         # Verificar cases
         result_cases = db.execute(text("""
@@ -96,14 +94,14 @@ def migrar_base_datos():
             FROM information_schema.columns 
             WHERE table_name='cases' 
             AND column_name IN ('recordatorio_enviado', 'fecha_recordatorio',
-                                'codigo_cie10', 'dias_kactus', 'es_prorroga', 'numero_incapacidad', 'medico_tratante', 'institucion_origen');
+                                'codigo_cie10', 'es_prorroga', 'numero_incapacidad');
         """))
         columnas_cases = [row[0] for row in result_cases]
         
-        if len(columnas_cases) == 8:
-            print(f"  ✅ Tabla 'cases': 8/8 columnas nuevas OK")
+        if len(columnas_cases) == 5:
+            print(f"  ✅ Tabla 'cases': 5/5 columnas nuevas OK")
         else:
-            print(f"  ⚠️ Tabla 'cases': {len(columnas_cases)}/8 columnas encontradas")
+            print(f"  ⚠️ Tabla 'cases': {len(columnas_cases)}/5 columnas encontradas")
         
         print("\n✅ Migración completada exitosamente\n")
         

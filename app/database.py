@@ -92,7 +92,6 @@ class Employee(Base):
     centro_costo = Column(String(100))
     fecha_ingreso = Column(DateTime, nullable=True)
     tipo_contrato = Column(String(50))
-    # dias_kactus eliminado: ya no se usa en empleados
     ciudad = Column(String(100))
     
     created_at = Column(DateTime, default=get_utc_now)
@@ -139,12 +138,9 @@ class Case(Base):
     
     # ✅ COLUMNAS KACTUS - Datos de Kactus / validación
     codigo_cie10 = Column(String(20))
-    dias_kactus = Column(Integer, nullable=True)
     es_prorroga = Column(Boolean, default=False)
     numero_incapacidad = Column(String(50))
-    medico_tratante = Column(String(200))
-    institucion_origen = Column(String(200))
-    diagnostico_kactus = Column(Text, nullable=True)
+    # dias_kactus, medico_tratante, institucion_origen, diagnostico_kactus eliminados - no vienen del Excel Kactus
     
     # ✅ COLUMNAS TRASLAPO - Fechas ajustadas Kactus y detección de solapamiento
     fecha_inicio_kactus = Column(DateTime, nullable=True)

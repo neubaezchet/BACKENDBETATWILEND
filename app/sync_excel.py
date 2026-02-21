@@ -420,12 +420,11 @@ def sincronizar_excel_completo():
                         if pd.notna(row.get("codigo_cie10")):
                             codigo = str(row["codigo_cie10"]).strip()
                             caso.codigo_cie10 = codigo
-                            # Auto-resolver diagnóstico desde CIE-10
+                            # Auto-resolver diagnóstico desde CIE-10 (llenar campo diagnostico del caso)
                             try:
                                 from app.services.cie10_service import buscar_codigo
                                 info_cie = buscar_codigo(codigo)
                                 if info_cie and info_cie.get("encontrado"):
-                                    caso.diagnostico_kactus = info_cie["descripcion"]
                                     if not caso.diagnostico:
                                         caso.diagnostico = info_cie["descripcion"]
                             except Exception:
@@ -643,11 +642,6 @@ def _detectar_traslapos_globales(db):
                         caso_siguiente.fecha_inicio_kactus = nueva_fecha_inicio
                         
                         # Recalcular días Kactus si no los tiene
-                        if not caso_siguiente.dias_kactus and caso_siguiente.fecha_fin:
-                            dias_kactus_calc = (caso_siguiente.fecha_fin.date() - nueva_fecha_inicio.date()).days + 1
-                            if dias_kactus_calc > 0:
-                                caso_siguiente.dias_kactus = dias_kactus_calc
-                        
                         caso_siguiente.updated_at = datetime.now()
                         db.commit()
                         traslapos_detectados += 1
@@ -830,7 +824,6 @@ def obtener_estado_sync():
                     "fecha_fin_kactus": str(t.fecha_fin_kactus.date()) if t.fecha_fin_kactus else None,
                     "dias_traslapo": t.dias_traslapo,
                     "traslapo_con": t.traslapo_con_serial,
-                    "dias_kactus": t.dias_kactus,
                 })
         
         return {
