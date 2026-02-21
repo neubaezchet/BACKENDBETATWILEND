@@ -707,7 +707,7 @@ def get_email_template_universal_con_ia(
         body += f"""
                                 <tr>
                                     <td style="padding:0 0 10px 0;">
-                                        <p style="margin:0; font-size:14px; color:#323130; font-family:Arial,sans-serif;">Estimado equipo de <strong>Talento Humano</strong>,</p>
+                                        <p style="margin:0; font-size:14px; color:#323130; font-family:Arial,sans-serif;">Estimado/a encargado/a de <strong>Presunto Fraude</strong>,</p>
                                     </td>
                                 </tr>
 """

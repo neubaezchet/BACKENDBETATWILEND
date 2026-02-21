@@ -277,13 +277,42 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
     return resultado
 
 
-def obtener_email_tthh(empresa_nombre):
-    """Retorna el email de TTHH según la empresa"""
-    emails_tthh = {
-        'ABC Corp': 'tthh.abc@example.com',
-        'XYZ S.A.S': 'tthh.xyz@example.com',
-    }
-    return emails_tthh.get(empresa_nombre, 'xoblaxbaezaospino@gmail.com')
+def obtener_email_tthh(empresa_nombre, db=None):
+    """Retorna el email del encargado de presunto fraude según la empresa.
+    Busca en correos_notificacion (area='presunto_fraude') y alerta_emails.
+    Si no hay, usa fallback de la empresa.
+    """
+    if db:
+        try:
+            from app.database import CorreoNotificacion, Company
+            # 1) Buscar en correos_notificacion area='presunto_fraude' de esa empresa
+            empresa = db.query(Company).filter(Company.nombre == empresa_nombre).first()
+            if empresa:
+                correo_pf = db.query(CorreoNotificacion).filter(
+                    CorreoNotificacion.area == 'presunto_fraude',
+                    CorreoNotificacion.company_id == empresa.id,
+                    CorreoNotificacion.activo == True
+                ).first()
+                if correo_pf:
+                    return correo_pf.email
+            
+            # 2) Buscar correo global de presunto_fraude (sin empresa)
+            correo_global = db.query(CorreoNotificacion).filter(
+                CorreoNotificacion.area == 'presunto_fraude',
+                CorreoNotificacion.company_id == None,
+                CorreoNotificacion.activo == True
+            ).first()
+            if correo_global:
+                return correo_global.email
+            
+            # 3) Fallback: correo de contacto de la empresa
+            if empresa and empresa.contacto_email:
+                return empresa.contacto_email
+        except Exception as e:
+            print(f"⚠️ Error buscando email presunto fraude: {e}")
+    
+    # Fallback final
+    return os.environ.get('EMAIL_FRAUDE_DEFAULT', 'xoblaxbaezaospino@gmail.com')
 
 
 # ==================== ENDPOINTS ====================
@@ -1750,12 +1779,12 @@ async def validar_caso_con_checks(
                 observaciones
             )
             
-            # Email al jefe/TTHH
-            email_tthh_destinatario = obtener_email_tthh(caso.empresa.nombre if caso.empresa else 'Default')
+            # Email al encargado de presunto fraude
+            email_tthh_destinatario = obtener_email_tthh(caso.empresa.nombre if caso.empresa else 'Default', db=db)
             
             email_tthh = get_email_template_universal(
                 tipo_email='tthh',
-                nombre='Equipo de Talento Humano',
+                nombre='Encargado de Presunto Fraude',
                 serial=serial,
                 empresa=caso.empresa.nombre if caso.empresa else 'N/A',
                 tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
@@ -1768,7 +1797,7 @@ async def validar_caso_con_checks(
             )
             
             fechas_str_tthh = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
-            asunto_tthh = f"CC {caso.cedula} - {serial}{fechas_str_tthh} - TTHH - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            asunto_tthh = f"CC {caso.cedula} - {serial}{fechas_str_tthh} - PRESUNTO FRAUDE - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             enviar_email_con_adjuntos(
                 email_tthh_destinatario,
                 asunto_tthh,
