@@ -338,14 +338,21 @@ async def listar_casos(
             pass
     
     if q:
-        query = query.join(Employee, Case.employee_id == Employee.id, isouter=True)
-        query = query.filter(
-            or_(
-                Case.serial.ilike(f"%{q}%"),
-                Case.cedula.ilike(f"%{q}%"),
-                Employee.nombre.ilike(f"%{q}%")
+        # Filtro por días: +N filtra dias_incapacidad >= N
+        import re as _re
+        dias_match = _re.match(r'^\+(\d+)$', q.strip())
+        if dias_match:
+            min_dias = int(dias_match.group(1))
+            query = query.filter(Case.dias_incapacidad >= min_dias)
+        else:
+            query = query.join(Employee, Case.employee_id == Employee.id, isouter=True)
+            query = query.filter(
+                or_(
+                    Case.serial.ilike(f"%{q}%"),
+                    Case.cedula.ilike(f"%{q}%"),
+                    Employee.nombre.ilike(f"%{q}%")
+                )
             )
-        )
     
     total = query.count()
     
