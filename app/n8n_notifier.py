@@ -123,7 +123,7 @@ def enviar_a_n8n(
             timeout=30,  # ← CRÍTICO: Aumentar timeout
             headers={
                 'Content-Type': 'application/json',
-                'User-Agent': 'IncaNeurobaeza-Backend/2.0'
+                'User-Agent': 'Incapacidades-Backend/2.0'
             }
         )
         
@@ -219,145 +219,114 @@ def verificar_salud_n8n() -> bool:
         return False
 
 
-# ✅ GENERADOR AUTOMÁTICO DE MENSAJES WHATSAPP (FORMATO MEJORADO)
+# ✅ GENERADOR AUTOMÁTICO DE MENSAJES WHATSAPP (CORTO, ANTI-SPAM)
+def _parsear_serial_wa(serial):
+    """Extrae cedula y fechas del serial para WhatsApp"""
+    if not serial:
+        return (serial or '', '')
+    parts = serial.strip().split()
+    if len(parts) == 7:
+        return (parts[0], f"del {parts[1]}/{parts[2]}/{parts[3]} al {parts[4]}/{parts[5]}/{parts[6]}")
+    return (serial, '')
+
+
 def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, html_content: str, drive_link: str = None) -> str:
     """
-    Genera mensaje WhatsApp bien formateado a partir del HTML del email.
-    Usa formato WhatsApp: *bold*, _italic_, ~strikethrough~
-    Estructura clara con saltos de línea y secciones.
-    Máximo ~1000 caracteres para evitar spam.
+    Mensaje WhatsApp CORTO y DIRECTO.
+    Máximo ~600 chars para evitar bloqueo por spam.
+    Sin IncaNeurobaeza - solo "Automatico por Incapacidades"
     """
     import re
-    
-    # ===== CONFIGURACIÓN POR TIPO =====
+
+    cedula, fechas = _parsear_serial_wa(serial)
+    fecha_texto = f" {fechas}" if fechas else ""
+
+    # Extraer motivos del HTML (buscar en spans dentro de bloques de mensaje)
+    motivos = []
+    # Buscar texto despues de "Motivo:" en el HTML
+    motivo_match = re.search(r'Motivo:</strong><br/>(.*?)</span>', html_content, re.DOTALL)
+    if motivo_match:
+        texto_motivo = re.sub(r'<[^>]+>', '', motivo_match.group(1)).strip()
+        texto_motivo = texto_motivo.replace('&#8226;', '•').replace('&amp;', '&')
+        for linea in texto_motivo.split('•'):
+            linea = linea.strip()
+            if linea and len(linea) > 5:
+                motivos.append(linea)
+
+    # Extraer soportes requeridos
+    soportes = []
+    soporte_matches = re.findall(r'&#8226;</td>\s*<td[^>]*>(.*?)</td>', html_content, re.DOTALL)
+    for s in soporte_matches:
+        texto_s = re.sub(r'<[^>]+>', '', s).strip()
+        if texto_s and len(texto_s) > 3 and 'Adjunta' not in texto_s and 'Verifica' not in texto_s and 'Incluye' not in texto_s:
+            soportes.append(texto_s)
+
     config = {
-        'confirmacion': {
-            'emoji': '📋',
-            'titulo': 'Incapacidad Recibida',
-            'tono': 'positivo'
-        },
-        'incompleta': {
-            'emoji': '⚠️',
-            'titulo': 'Documentación Incompleta',
-            'tono': 'accion'
-        },
-        'ilegible': {
-            'emoji': '⚠️',
-            'titulo': 'Documento Ilegible',
-            'tono': 'accion'
-        },
-        'completa': {
-            'emoji': '✅',
-            'titulo': 'Incapacidad Validada',
-            'tono': 'positivo'
-        },
-        'eps': {
-            'emoji': '📋',
-            'titulo': 'Notificación EPS',
-            'tono': 'neutro'
-        },
-        'tthh': {
-            'emoji': '🔔',
-            'titulo': 'Alerta Talento Humano',
-            'tono': 'neutro'
-        },
-        'extra': {
-            'emoji': '📢',
-            'titulo': 'Notificación',
-            'tono': 'neutro'
-        },
-        'recordatorio': {
-            'emoji': '🔔',
-            'titulo': 'Recordatorio Pendiente',
-            'tono': 'accion'
-        },
-        'alerta_jefe': {
-            'emoji': '🔔',
-            'titulo': 'Caso Pendiente',
-            'tono': 'neutro'
-        }
+        'confirmacion': ('📋', 'Incapacidad Recibida'),
+        'incompleta': ('⚠️', 'Documentacion Incompleta'),
+        'ilegible': ('⚠️', 'Documento Ilegible'),
+        'completa': ('✅', 'Incapacidad Validada'),
+        'eps': ('📋', 'Transcripcion en EPS'),
+        'tthh': ('🔔', 'Alerta Talento Humano'),
+        'recordatorio': ('🔔', 'Recordatorio Pendiente'),
+        'alerta_jefe': ('🔔', 'Caso Pendiente'),
     }
-    
-    cfg = config.get(tipo_notificacion, {'emoji': '📄', 'titulo': 'Notificación', 'tono': 'neutro'})
-    
-    # ===== EXTRAER CONTENIDO INTELIGENTE DEL HTML =====
-    # 1. Extraer items de lista (motivos, checks, soportes)
-    li_items = re.findall(r'<li[^>]*>(.*?)</li>', html_content, re.DOTALL)
-    items_limpios = []
-    for li in li_items:
-        texto_li = re.sub(r'<[^>]+>', '', li).strip()
-        texto_li = re.sub(r'\s+', ' ', texto_li)
-        if texto_li and len(texto_li) > 3:
-            items_limpios.append(texto_li)
-    
-    # 2. Extraer párrafos principales (sin tags)
-    parrafos = re.findall(r'<p[^>]*>(.*?)</p>', html_content, re.DOTALL)
-    parrafos_limpios = []
-    for p in parrafos:
-        texto_p = re.sub(r'<strong>(.*?)</strong>', r'*\1*', p)  # bold → WhatsApp bold
-        texto_p = re.sub(r'<[^>]+>', '', texto_p).strip()
-        texto_p = re.sub(r'\s+', ' ', texto_p)
-        texto_p = texto_p.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-        if texto_p and len(texto_p) > 10 and 'IncaNeurobaeza' not in texto_p and 'automático' not in texto_p.lower():
-            parrafos_limpios.append(texto_p)
-    
-    # ===== CONSTRUIR MENSAJE ESTRUCTURADO =====
+    emoji, titulo = config.get(tipo_notificacion, ('📄', 'Notificacion'))
+
     lineas = []
-    
-    # Encabezado
-    lineas.append(f"{cfg['emoji']} *IncaNeurobaeza — {cfg['titulo']}*")
-    lineas.append(f"Serial: *{serial}*")
-    lineas.append("")  # línea vacía
-    
-    # Contenido principal (máx 3 párrafos más relevantes)
-    parrafos_usados = 0
-    for p in parrafos_limpios:
-        if parrafos_usados >= 3:
-            break
-        # Saltar párrafos genéricos/repetitivos
-        if any(skip in p.lower() for skip in ['mensaje automático', 'footer', 'copyright', 'derechos reservados']):
-            continue
-        lineas.append(p)
-        lineas.append("")
-        parrafos_usados += 1
-    
-    # Si hay items de lista (motivos, checks), agregar como bullets
-    if items_limpios:
-        # Máximo 5 items para no saturar
-        for item in items_limpios[:5]:
-            lineas.append(f"  • {item}")
-        if len(items_limpios) > 5:
-            lineas.append(f"  _...y {len(items_limpios) - 5} más_")
-        lineas.append("")
-    
-    # Acción según tipo
-    if cfg['tono'] == 'accion':
-        lineas.append("📎 *Formato:* PDF escaneado, completo y legible.")
-        lineas.append("")
-        lineas.append("Si no cuenta con algún soporte, diríjase al punto de atención más cercano de su EPS y solicítelo.")
-        lineas.append("")
-    
-    # Link de Drive (si existe)
-    if drive_link:
-        lineas.append(f"📂 *Ver documentos:*")
-        lineas.append(drive_link)
-        lineas.append("")
-    
-    # Cierre
-    if cfg['tono'] == 'accion':
-        lineas.append("Comuníquese si tiene alguna duda.")
-    elif cfg['tono'] == 'positivo':
-        lineas.append("Nos comunicaremos con usted si se requiere algún paso adicional.")
-    
+    lineas.append(f"{emoji} *{titulo}*")
+    lineas.append(f"Incapacidad{fecha_texto}")
     lineas.append("")
-    lineas.append("_Mensaje automático — IncaNeurobaeza_")
-    
-    # Unir con saltos de línea
+
+    if tipo_notificacion == 'confirmacion':
+        lineas.append("Documentacion recibida. Esta siendo revisada.")
+        lineas.append("")
+        lineas.append("Nos comunicaremos si se requiere algo adicional.")
+
+    elif tipo_notificacion in ('incompleta', 'ilegible'):
+        if motivos:
+            lineas.append("*Motivo:*")
+            for m in motivos[:3]:
+                lineas.append(f"• {m}")
+            lineas.append("")
+        if soportes:
+            lineas.append("*Soportes requeridos:*")
+            for s in soportes[:5]:
+                lineas.append(f"• {s}")
+            lineas.append("")
+        lineas.append("Enviar en *PDF escaneado*, completo y legible.")
+        lineas.append("")
+        lineas.append("Subir documentos: https://repogemin.vercel.app/")
+
+    elif tipo_notificacion == 'completa':
+        lineas.append(f"Tu incapacidad{fecha_texto} ha sido validada y subida al sistema.")
+
+    elif tipo_notificacion == 'eps':
+        lineas.append(f"Tu incapacidad{fecha_texto} requiere transcripcion en tu EPS.")
+        lineas.append("Dirigete con tu documento de identidad.")
+
+    elif tipo_notificacion == 'recordatorio':
+        lineas.append(f"Tu incapacidad{fecha_texto} aun tiene documentacion pendiente.")
+        if motivos:
+            lineas.append("")
+            lineas.append("*Motivo:*")
+            for m in motivos[:3]:
+                lineas.append(f"• {m}")
+        lineas.append("")
+        lineas.append("Subir documentos: https://repogemin.vercel.app/")
+
+    elif tipo_notificacion == 'alerta_jefe':
+        lineas.append(f"Incapacidad{fecha_texto} pendiente de respuesta.")
+
+    else:
+        lineas.append("Revise su correo para mas detalles.")
+
+    lineas.append("")
+    lineas.append("_Automatico por Incapacidades_")
+
     mensaje = "\n".join(lineas)
-    
-    # Limitar a 1000 caracteres (WhatsApp recomienda 1024 max)
-    if len(mensaje) > 1000:
-        mensaje = mensaje[:997] + "..."
+    if len(mensaje) > 800:
+        mensaje = mensaje[:797] + "..."
     
     return mensaje
 

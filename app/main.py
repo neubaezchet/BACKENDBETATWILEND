@@ -1242,14 +1242,12 @@ async def subir_incapacidad(
             """
             asunto = f"Certificado de Hospitalización {consecutivo} - {nombre}"
             mensaje_whatsapp = f"""
-Hola {nombre},
+📋 *Certificado de Hospitalizacion Recibido*
+Incapacidad: {consecutivo}
 
-✅ Novedad se a tomado en cuenta
+Documentacion recibida. Esta siendo revisada.
 
-Hemos recibido tu certificado de hospitalización.
-Serial: {consecutivo}
-
-Gracias por usar IncaNeurobaeza.
+_Automatico por Incapacidades_
             """.strip()
         else:
             # Template normal para otras incapacidades
@@ -1265,18 +1263,16 @@ Gracias por usar IncaNeurobaeza.
             )
             asunto = f"Incapacidad {consecutivo} - {nombre} - {empresa_reg}"
             
-            # ✅ Mensaje para WhatsApp (bien formateado)
-            mensaje_whatsapp = f"""📋 *IncaNeurobaeza — Incapacidad Recibida*
-Serial: *{consecutivo}*
+            # ✅ Mensaje WhatsApp corto y directo
+            _parts = consecutivo.strip().split()
+            _fechas_wa = f"del {_parts[1]}/{_parts[2]}/{_parts[3]} al {_parts[4]}/{_parts[5]}/{_parts[6]}" if len(_parts) == 7 else ""
+            mensaje_whatsapp = f"""📋 *Incapacidad Recibida*
+Incapacidad {_fechas_wa}
 
-Hemos recibido su documentación de incapacidad.
+Documentacion recibida. Esta siendo revisada.
+Nos comunicaremos si se requiere algo adicional.
 
-*Empresa:* {empresa_reg}
-*Archivos:* {len(original_filenames)}
-
-Su caso está siendo revisado por el equipo de validación. Nos comunicaremos con usted si se requiere algún paso adicional.
-
-_Mensaje automático — IncaNeurobaeza_""".strip()
+_Automatico por Incapacidades_""".strip()
         
         # ✅ ENVIAR VIA N8N con COPIAS Y WHATSAPP
         from app.n8n_notifier import enviar_a_n8n
