@@ -1012,30 +1012,39 @@ async def exportar_casos_zip(
 ):
     """
     📦 Exporta PDFs de incapacidades como ZIP desde Google Drive.
+    Soporta paginación por lotes de 500.
     
     Body JSON:
     {
-      "filtro_fecha": "subida" | "incapacidad" | "historico",
-      "fecha_desde": "2026-01-01",    // opcional si historico
-      "fecha_hasta": "2026-02-15",    // opcional si historico
+      "filtro_fecha": "subida" | "incapacidad",
+      "fecha_desde": "2026-01-01",
+      "fecha_hasta": "2026-02-15",
       "empresa": "all" | "ELIOT",
       "tipo": "all" | "enfermedad_general",
-      "cedulas": "1085043374,39017565"  // opcional, separadas por comas
+      "cedulas": "1085043374,39017565",
+      "lote": 1  // número de lote (1-indexed), cada lote = 500 PDFs
     }
     """
     import zipfile
+    import math
     
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Body JSON requerido")
     
-    filtro_fecha = body.get("filtro_fecha", "historico")
+    filtro_fecha = body.get("filtro_fecha", "subida")
     fecha_desde_str = body.get("fecha_desde")
     fecha_hasta_str = body.get("fecha_hasta")
     empresa_filtro = body.get("empresa", "all")
     tipo_filtro = body.get("tipo", "all")
     cedulas_raw = body.get("cedulas", "")
+    lote = int(body.get("lote", 1))
+    
+    if lote < 1:
+        lote = 1
+    
+    LOTE_SIZE = 500
     
     # Build query
     query = db.query(Case).join(Employee, Case.employee_id == Employee.id, isouter=True)
@@ -1056,45 +1065,44 @@ async def exportar_casos_zip(
         if cedulas_list:
             query = query.filter(Case.cedula.in_(cedulas_list))
     
-    # Filtro por fechas
-    if filtro_fecha != "historico":
-        if fecha_desde_str:
-            try:
-                fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
-            except ValueError:
-                raise HTTPException(status_code=400, detail="fecha_desde inválida. Use YYYY-MM-DD")
-        else:
-            fd = None
-        
-        if fecha_hasta_str:
-            try:
-                fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="fecha_hasta inválida. Use YYYY-MM-DD")
-        else:
-            fh = None
-        
+    # Filtro por fechas (obligatorio para exportación por lotes)
+    if fecha_desde_str:
+        try:
+            fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="fecha_desde inválida. Use YYYY-MM-DD")
         if filtro_fecha == "subida":
-            if fd:
-                query = query.filter(Case.created_at >= fd)
-            if fh:
-                query = query.filter(Case.created_at <= fh)
+            query = query.filter(Case.created_at >= fd)
         elif filtro_fecha == "incapacidad":
-            if fd:
-                query = query.filter(Case.fecha_inicio >= fd)
-            if fh:
-                query = query.filter(Case.fecha_inicio <= fh)
+            query = query.filter(Case.fecha_inicio >= fd)
     
-    casos = query.order_by(Case.created_at.desc()).all()
+    if fecha_hasta_str:
+        try:
+            fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="fecha_hasta inválida. Use YYYY-MM-DD")
+        if filtro_fecha == "subida":
+            query = query.filter(Case.created_at <= fh)
+        elif filtro_fecha == "incapacidad":
+            query = query.filter(Case.fecha_inicio <= fh)
     
-    if not casos:
-        raise HTTPException(status_code=404, detail="No se encontraron casos con esos filtros")
+    # Solo contar los que tienen PDF para paginar correctamente
+    query_con_pdf = query.filter(Case.drive_link.isnot(None), Case.drive_link != "")
+    total_con_pdf = query_con_pdf.count()
     
-    # Limitar a 500 para no sobrecargar
-    if len(casos) > 500:
-        casos = casos[:500]
+    if total_con_pdf == 0:
+        raise HTTPException(status_code=404, detail="No se encontraron casos con PDF para esos filtros")
     
-    print(f"📦 Exportación ZIP: {len(casos)} casos a descargar")
+    total_lotes = math.ceil(total_con_pdf / LOTE_SIZE)
+    
+    if lote > total_lotes:
+        raise HTTPException(status_code=400, detail=f"Lote {lote} no existe. Total de lotes: {total_lotes}")
+    
+    # Paginar: offset y limit
+    offset = (lote - 1) * LOTE_SIZE
+    casos = query_con_pdf.order_by(Case.created_at.desc()).offset(offset).limit(LOTE_SIZE).all()
+    
+    print(f"📦 Exportación ZIP lote {lote}/{total_lotes}: {len(casos)} casos a descargar (total con PDF: {total_con_pdf})")
     
     # Crear ZIP en memoria
     zip_buffer = io.BytesIO()
@@ -1103,10 +1111,6 @@ async def exportar_casos_zip(
     
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         for caso in casos:
-            if not caso.drive_link:
-                errores += 1
-                continue
-            
             try:
                 # Extraer file_id del link de Drive
                 drive_id = None
@@ -1127,7 +1131,7 @@ async def exportar_casos_zip(
                     errores += 1
                     continue
                 
-                # Nombre del archivo: cedula_serial_fecha.pdf
+                # Nombre del archivo: empresa/cedula_nombre_fecha.pdf
                 emp_nombre = caso.empleado.nombre.replace(" ", "_") if caso.empleado else caso.cedula
                 fecha_str = caso.created_at.strftime("%Y%m%d") if caso.created_at else "sin_fecha"
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "otra"
@@ -1137,7 +1141,7 @@ async def exportar_casos_zip(
                 descargados += 1
                 
                 if descargados % 10 == 0:
-                    print(f"   📥 {descargados}/{len(casos)} descargados...")
+                    print(f"   📥 {descargados}/{len(casos)} descargados (lote {lote})...")
                 
             except Exception as e:
                 print(f"   ❌ Error descargando {caso.serial}: {e}")
@@ -1146,7 +1150,7 @@ async def exportar_casos_zip(
     
     zip_buffer.seek(0)
     
-    print(f"✅ ZIP generado: {descargados} PDFs, {errores} errores")
+    print(f"✅ ZIP lote {lote}/{total_lotes} generado: {descargados} PDFs, {errores} errores")
     
     fecha_label = datetime.now().strftime("%Y%m%d_%H%M")
     
@@ -1154,10 +1158,13 @@ async def exportar_casos_zip(
         zip_buffer,
         media_type="application/zip",
         headers={
-            "Content-Disposition": f"attachment; filename=incapacidades_{fecha_label}_{descargados}pdfs.zip",
-            "X-Total-Casos": str(len(casos)),
+            "Content-Disposition": f"attachment; filename=incapacidades_{fecha_label}_lote{lote}de{total_lotes}.zip",
+            "X-Total-Casos": str(total_con_pdf),
             "X-Descargados": str(descargados),
             "X-Errores": str(errores),
+            "X-Lote-Actual": str(lote),
+            "X-Total-Lotes": str(total_lotes),
+            "Access-Control-Expose-Headers": "X-Total-Casos, X-Descargados, X-Errores, X-Lote-Actual, X-Total-Lotes",
         }
     )
 
@@ -1177,7 +1184,7 @@ async def preview_exportar_zip(
     except Exception:
         raise HTTPException(status_code=400, detail="Body JSON requerido")
     
-    filtro_fecha = body.get("filtro_fecha", "historico")
+    filtro_fecha = body.get("filtro_fecha", "subida")
     fecha_desde_str = body.get("fecha_desde")
     fecha_hasta_str = body.get("fecha_hasta")
     empresa_filtro = body.get("empresa", "all")
@@ -1199,30 +1206,35 @@ async def preview_exportar_zip(
         if cedulas_list:
             query = query.filter(Case.cedula.in_(cedulas_list))
     
-    if filtro_fecha != "historico":
-        if fecha_desde_str:
-            try:
-                fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
-            except ValueError:
-                fd = None
-            if fd:
-                if filtro_fecha == "subida":
-                    query = query.filter(Case.created_at >= fd)
-                elif filtro_fecha == "incapacidad":
-                    query = query.filter(Case.fecha_inicio >= fd)
-        if fecha_hasta_str:
-            try:
-                fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
-            except ValueError:
-                fh = None
-            if fh:
-                if filtro_fecha == "subida":
-                    query = query.filter(Case.created_at <= fh)
-                elif filtro_fecha == "incapacidad":
-                    query = query.filter(Case.fecha_inicio <= fh)
+    # Filtro por fechas
+    if fecha_desde_str:
+        try:
+            fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
+        except ValueError:
+            fd = None
+        if fd:
+            if filtro_fecha == "subida":
+                query = query.filter(Case.created_at >= fd)
+            elif filtro_fecha == "incapacidad":
+                query = query.filter(Case.fecha_inicio >= fd)
+    if fecha_hasta_str:
+        try:
+            fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        except ValueError:
+            fh = None
+        if fh:
+            if filtro_fecha == "subida":
+                query = query.filter(Case.created_at <= fh)
+            elif filtro_fecha == "incapacidad":
+                query = query.filter(Case.fecha_inicio <= fh)
+    
+    import math
     
     total = query.count()
     con_pdf = query.filter(Case.drive_link.isnot(None), Case.drive_link != "").count()
+    
+    LOTE_SIZE = 500
+    total_lotes = max(1, math.ceil(con_pdf / LOTE_SIZE))
     
     # Muestra de los primeros 10
     muestra = query.order_by(Case.created_at.desc()).limit(10).all()
@@ -1244,10 +1256,135 @@ async def preview_exportar_zip(
         "total_casos": total,
         "con_pdf": con_pdf,
         "sin_pdf": total - con_pdf,
-        "limite_maximo": 500,
-        "se_descargarian": min(con_pdf, 500),
+        "lote_size": LOTE_SIZE,
+        "total_lotes": total_lotes,
+        "se_descargarian": con_pdf,
         "muestra": preview,
     }
+
+
+@router.post("/exportar/historico")
+async def exportar_historico_drive(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    📁 Histórico anual: devuelve links de carpetas de Google Drive
+    donde ya están organizadas las incapacidades por año.
+    
+    Body JSON:
+    {
+      "year": 2026,
+      "empresa": "all" | "ELIOT"
+    }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body JSON requerido")
+    
+    year = body.get("year", datetime.now().year)
+    empresa_filtro = body.get("empresa", "all")
+    
+    try:
+        from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists
+        service = get_authenticated_service()
+        
+        # Buscar la carpeta raíz de Incapacidades
+        main_query = "name='Incapacidades' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
+        main_results = service.files().list(q=main_query, spaces='drive', fields="files(id, name)").execute()
+        main_folders = main_results.get('files', [])
+        
+        if not main_folders:
+            raise HTTPException(status_code=404, detail="No se encontró la carpeta 'Incapacidades' en Google Drive")
+        
+        main_folder_id = main_folders[0]['id']
+        
+        # Obtener empresas
+        if empresa_filtro and empresa_filtro != "all":
+            empresas_buscar = [empresa_filtro]
+        else:
+            empresas_db = db.query(Company).filter(Company.activa == True).all()
+            empresas_buscar = [e.nombre for e in empresas_db]
+        
+        carpetas = []
+        total_archivos = 0
+        
+        for empresa_nombre in empresas_buscar:
+            try:
+                # Buscar carpeta de empresa
+                emp_query = f"name='{empresa_nombre}' and mimeType='application/vnd.google-apps.folder' and '{main_folder_id}' in parents and trashed=false"
+                emp_results = service.files().list(q=emp_query, spaces='drive', fields="files(id, name)").execute()
+                emp_folders = emp_results.get('files', [])
+                
+                if not emp_folders:
+                    continue
+                
+                emp_folder_id = emp_folders[0]['id']
+                
+                # Buscar carpeta del año
+                year_query = f"name='{year}' and mimeType='application/vnd.google-apps.folder' and '{emp_folder_id}' in parents and trashed=false"
+                year_results = service.files().list(q=year_query, spaces='drive', fields="files(id, name)").execute()
+                year_folders = year_results.get('files', [])
+                
+                if not year_folders:
+                    continue
+                
+                year_folder_id = year_folders[0]['id']
+                
+                # Contar archivos en la carpeta del año (recursivo)
+                count_query = f"'{year_folder_id}' in parents and trashed=false"
+                count_results = service.files().list(q=count_query, spaces='drive', fields="files(id)", pageSize=1000).execute()
+                num_items = len(count_results.get('files', []))
+                total_archivos += num_items
+                
+                folder_link = f"https://drive.google.com/drive/folders/{year_folder_id}"
+                
+                carpetas.append({
+                    "empresa": empresa_nombre,
+                    "year": year,
+                    "folder_id": year_folder_id,
+                    "link": folder_link,
+                    "items": num_items,
+                })
+                
+            except Exception as e:
+                print(f"   ⚠️ Error buscando carpeta de {empresa_nombre}/{year}: {e}")
+                continue
+        
+        if not carpetas:
+            raise HTTPException(status_code=404, detail=f"No se encontraron carpetas para el año {year}")
+        
+        # Contar casos en BD para ese año
+        casos_bd = db.query(Case).filter(
+            func.extract('year', Case.created_at) == year
+        )
+        if empresa_filtro and empresa_filtro != "all":
+            company = db.query(Company).filter(Company.nombre == empresa_filtro).first()
+            if company:
+                casos_bd = casos_bd.filter(Case.company_id == company.id)
+        
+        total_bd = casos_bd.count()
+        con_pdf_bd = casos_bd.filter(Case.drive_link.isnot(None), Case.drive_link != "").count()
+        
+        return {
+            "ok": True,
+            "year": year,
+            "empresa": empresa_filtro,
+            "carpetas": carpetas,
+            "total_carpetas": len(carpetas),
+            "total_items_drive": total_archivos,
+            "total_casos_bd": total_bd,
+            "con_pdf_bd": con_pdf_bd,
+            "instrucciones": "Abre el enlace de Drive → Selecciona todos los archivos → Click derecho → Descargar. Google Drive los empaquetará en un ZIP automáticamente.",
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en exportar histórico: {e}")
+        raise HTTPException(status_code=500, detail=f"Error accediendo a Google Drive: {str(e)}")
 
 
 @router.get("/casos/{serial}/pdf")
