@@ -1177,6 +1177,7 @@ async def preview_exportar_zip(
 ):
     """
     👁️ Preview: muestra cuántos casos se descargarían con esos filtros, SIN descargar.
+    Indica si usará ZIP directo (≤31 días, sin cédulas) o carpeta Drive temporal (>31 días o cédulas).
     Mismo body que /exportar/zip.
     """
     try:
@@ -1191,6 +1192,30 @@ async def preview_exportar_zip(
     tipo_filtro = body.get("tipo", "all")
     cedulas_raw = body.get("cedulas", "")
     
+    # Calcular días del rango
+    dias_rango = 0
+    tiene_cedulas = bool(cedulas_raw and cedulas_raw.strip())
+    
+    if fecha_desde_str and fecha_hasta_str:
+        try:
+            fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
+            fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d")
+            dias_rango = (fh - fd).days
+        except ValueError:
+            pass
+    
+    # Validar máximo 1 año
+    if dias_rango > 365:
+        raise HTTPException(status_code=400, detail=f"El rango máximo es 1 año (365 días). Seleccionaste {dias_rango} días.")
+    
+    # Determinar modo de exportación
+    # ZIP: ≤31 días y sin cédulas específicas
+    # Drive: >31 días O con cédulas específicas
+    if tiene_cedulas or dias_rango > 31:
+        modo_export = "drive"  # Carpeta temporal en Drive
+    else:
+        modo_export = "zip"  # Descarga directa en ZIP por lotes
+    
     query = db.query(Case).join(Employee, Case.employee_id == Employee.id, isouter=True)
     
     if empresa_filtro and empresa_filtro != "all":
@@ -1201,7 +1226,7 @@ async def preview_exportar_zip(
     if tipo_filtro and tipo_filtro != "all":
         query = query.filter(Case.tipo == tipo_filtro)
     
-    if cedulas_raw and cedulas_raw.strip():
+    if tiene_cedulas:
         cedulas_list = [c.strip() for c in cedulas_raw.split(",") if c.strip()]
         if cedulas_list:
             query = query.filter(Case.cedula.in_(cedulas_list))
@@ -1259,6 +1284,9 @@ async def preview_exportar_zip(
         "lote_size": LOTE_SIZE,
         "total_lotes": total_lotes,
         "se_descargarian": con_pdf,
+        "dias_rango": dias_rango,
+        "modo_export": modo_export,  # "zip" o "drive"
+        "modo_label": "📦 ZIP directo (lotes de 500)" if modo_export == "zip" else "📁 Carpeta temporal en Drive (se elimina en 24h)",
         "muestra": preview,
     }
 
@@ -1432,6 +1460,287 @@ async def exportar_historico_drive(
     except Exception as e:
         print(f"❌ Error en exportar histórico: {e}")
         raise HTTPException(status_code=500, detail=f"Error accediendo a Google Drive: {str(e)}")
+
+
+# ══════════════════════════════════════════════════════════════════
+# EXPORTAR A CARPETA TEMPORAL DE DRIVE (COPIAS, 24h)
+# Para rangos > 1 mes o búsquedas por cédulas
+# ══════════════════════════════════════════════════════════════════
+
+@router.post("/exportar/drive")
+async def exportar_a_drive_temporal(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    📁 Crea una carpeta temporal en Drive con COPIAS de los PDFs que coinciden con los filtros.
+    La carpeta se auto-elimina en 24 horas.
+    Ideal para rangos > 1 mes o búsquedas por cédulas.
+    
+    Body JSON:
+    {
+      "filtro_fecha": "subida" | "incapacidad",
+      "fecha_desde": "2025-06-01",
+      "fecha_hasta": "2026-01-31",
+      "empresa": "all" | "ELIOT",
+      "tipo": "all" | "enfermedad_general",
+      "cedulas": "1085043374,39017565"
+    }
+    
+    Limites:
+    - Máximo 1 año de rango (365 días)
+    - Los archivos son COPIAS, los originales nunca se tocan
+    - La carpeta temporal se borra automáticamente en 24 horas
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Body JSON requerido")
+    
+    filtro_fecha = body.get("filtro_fecha", "subida")
+    fecha_desde_str = body.get("fecha_desde")
+    fecha_hasta_str = body.get("fecha_hasta")
+    empresa_filtro = body.get("empresa", "all")
+    tipo_filtro = body.get("tipo", "all")
+    cedulas_raw = body.get("cedulas", "")
+    
+    # Validar rango máximo 1 año
+    if fecha_desde_str and fecha_hasta_str:
+        try:
+            fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
+            fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d")
+            dias_rango = (fh - fd).days
+            if dias_rango > 365:
+                raise HTTPException(status_code=400, detail=f"El rango máximo es 1 año (365 días). Seleccionaste {dias_rango} días.")
+            if dias_rango < 0:
+                raise HTTPException(status_code=400, detail="La fecha 'Hasta' debe ser posterior a 'Desde'")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+    
+    # Build query
+    query = db.query(Case).join(Employee, Case.employee_id == Employee.id, isouter=True)
+    
+    if empresa_filtro and empresa_filtro != "all":
+        company = db.query(Company).filter(Company.nombre == empresa_filtro).first()
+        if company:
+            query = query.filter(Case.company_id == company.id)
+    
+    if tipo_filtro and tipo_filtro != "all":
+        query = query.filter(Case.tipo == tipo_filtro)
+    
+    if cedulas_raw and cedulas_raw.strip():
+        cedulas_list = [c.strip() for c in cedulas_raw.split(",") if c.strip()]
+        if cedulas_list:
+            query = query.filter(Case.cedula.in_(cedulas_list))
+    
+    if fecha_desde_str:
+        fd = datetime.strptime(fecha_desde_str, "%Y-%m-%d")
+        if filtro_fecha == "subida":
+            query = query.filter(Case.created_at >= fd)
+        elif filtro_fecha == "incapacidad":
+            query = query.filter(Case.fecha_inicio >= fd)
+    
+    if fecha_hasta_str:
+        fh = datetime.strptime(fecha_hasta_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        if filtro_fecha == "subida":
+            query = query.filter(Case.created_at <= fh)
+        elif filtro_fecha == "incapacidad":
+            query = query.filter(Case.fecha_inicio <= fh)
+    
+    # Solo casos con PDF
+    query_con_pdf = query.filter(Case.drive_link.isnot(None), Case.drive_link != "")
+    total_con_pdf = query_con_pdf.count()
+    
+    if total_con_pdf == 0:
+        raise HTTPException(status_code=404, detail="No se encontraron casos con PDF para esos filtros")
+    
+    casos = query_con_pdf.order_by(Case.created_at.desc()).all()
+    
+    print(f"📁 Exportación Drive temporal: {len(casos)} PDFs a copiar")
+    
+    try:
+        from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists
+        service = get_authenticated_service()
+        
+        # Buscar o crear carpeta raíz "Exportaciones_Temporales"
+        export_root_id = create_folder_if_not_exists(service, "Exportaciones_Temporales")
+        
+        # Crear carpeta de esta exportación con timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        rango_label = ""
+        if fecha_desde_str and fecha_hasta_str:
+            rango_label = f"_{fecha_desde_str}_a_{fecha_hasta_str}"
+        elif cedulas_raw and cedulas_raw.strip():
+            n_ced = len([c for c in cedulas_raw.split(",") if c.strip()])
+            rango_label = f"_{n_ced}_cedulas"
+        
+        export_folder_name = f"export_{timestamp}{rango_label}"
+        export_folder_id = create_folder_if_not_exists(service, export_folder_name, export_root_id)
+        
+        # Copiar cada PDF al folder temporal
+        copiados = 0
+        errores = 0
+        
+        for caso in casos:
+            try:
+                # Extraer file_id del link de Drive
+                drive_id = None
+                if "/file/d/" in caso.drive_link:
+                    drive_id = caso.drive_link.split("/file/d/")[1].split("/")[0]
+                elif "id=" in caso.drive_link:
+                    drive_id = caso.drive_link.split("id=")[1].split("&")[0]
+                
+                if not drive_id:
+                    errores += 1
+                    continue
+                
+                # Nombre descriptivo para la copia
+                emp_nombre = caso.empleado.nombre.replace(" ", "_") if caso.empleado else caso.cedula
+                fecha_str = caso.created_at.strftime("%Y%m%d") if caso.created_at else "sin_fecha"
+                empresa_nombre = caso.empresa.nombre if caso.empresa else "otra"
+                nuevo_nombre = f"{empresa_nombre}_{caso.cedula}_{emp_nombre}_{fecha_str}.pdf"
+                
+                # COPIAR archivo (no mover) al folder temporal
+                copy_metadata = {
+                    'name': nuevo_nombre,
+                    'parents': [export_folder_id]
+                }
+                service.files().copy(
+                    fileId=drive_id,
+                    body=copy_metadata,
+                    fields='id'
+                ).execute()
+                
+                copiados += 1
+                
+                if copiados % 25 == 0:
+                    print(f"   📋 {copiados}/{len(casos)} copiados...")
+                
+            except Exception as e:
+                print(f"   ❌ Error copiando {caso.serial}: {e}")
+                errores += 1
+                continue
+        
+        export_link = f"https://drive.google.com/drive/folders/{export_folder_id}"
+        
+        print(f"✅ Carpeta temporal creada: {copiados} PDFs copiados, {errores} errores")
+        print(f"   🔗 {export_link}")
+        print(f"   ⏰ Se eliminará en 24 horas")
+        
+        return {
+            "ok": True,
+            "folder_link": export_link,
+            "folder_id": export_folder_id,
+            "folder_name": export_folder_name,
+            "total_copiados": copiados,
+            "total_errores": errores,
+            "total_con_pdf": total_con_pdf,
+            "expira_en": "24 horas",
+            "instrucciones": "Abre el enlace → Selecciona todos (Ctrl+A) → Click derecho → Descargar. Drive genera el ZIP. La carpeta se eliminará automáticamente en 24 horas.",
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error creando carpeta temporal: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creando carpeta en Drive: {str(e)}")
+
+
+@router.post("/exportar/drive/limpiar")
+async def limpiar_exportaciones_temporales(
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    🗑️ Elimina carpetas de exportación temporales que tengan más de 24 horas.
+    Se ejecuta automáticamente, pero también puede llamarse manualmente.
+    """
+    try:
+        from app.drive_uploader import get_authenticated_service
+        service = get_authenticated_service()
+        
+        # Buscar carpeta Exportaciones_Temporales
+        exp_query = "name='Exportaciones_Temporales' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
+        exp_results = service.files().list(q=exp_query, spaces='drive', fields="files(id, name)").execute()
+        exp_folders = exp_results.get('files', [])
+        
+        if not exp_folders:
+            return {"ok": True, "message": "No existe carpeta Exportaciones_Temporales", "eliminadas": 0}
+        
+        export_root_id = exp_folders[0]['id']
+        
+        # Listar subcarpetas
+        sub_query = f"'{export_root_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        sub_results = service.files().list(q=sub_query, spaces='drive', fields="files(id, name, createdTime)", pageSize=100).execute()
+        sub_folders = sub_results.get('files', [])
+        
+        eliminadas = 0
+        ahora = datetime.utcnow()
+        
+        for folder in sub_folders:
+            try:
+                # Parsear fecha de creación
+                created_str = folder.get('createdTime', '')
+                if created_str:
+                    created = datetime.fromisoformat(created_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                    edad_horas = (ahora - created).total_seconds() / 3600
+                    
+                    if edad_horas >= 24:
+                        # Eliminar carpeta y todo su contenido
+                        service.files().delete(fileId=folder['id']).execute()
+                        eliminadas += 1
+                        print(f"   🗑️ Eliminada carpeta temporal: {folder['name']} ({edad_horas:.1f}h)")
+            except Exception as e:
+                print(f"   ⚠️ Error eliminando {folder.get('name')}: {e}")
+        
+        return {
+            "ok": True,
+            "eliminadas": eliminadas,
+            "total_revisadas": len(sub_folders),
+            "message": f"{eliminadas} carpetas temporales eliminadas" if eliminadas > 0 else "No hay carpetas expiradas",
+        }
+    except Exception as e:
+        print(f"❌ Error limpiando exportaciones: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+def limpiar_exportaciones_temporales_sync():
+    """Versión síncrona para llamar desde scheduler"""
+    try:
+        from app.drive_uploader import get_authenticated_service
+        service = get_authenticated_service()
+        
+        exp_query = "name='Exportaciones_Temporales' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
+        exp_results = service.files().list(q=exp_query, spaces='drive', fields="files(id, name)").execute()
+        exp_folders = exp_results.get('files', [])
+        
+        if not exp_folders:
+            return
+        
+        export_root_id = exp_folders[0]['id']
+        sub_query = f"'{export_root_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        sub_results = service.files().list(q=sub_query, spaces='drive', fields="files(id, name, createdTime)", pageSize=100).execute()
+        
+        ahora = datetime.utcnow()
+        eliminadas = 0
+        
+        for folder in sub_results.get('files', []):
+            try:
+                created_str = folder.get('createdTime', '')
+                if created_str:
+                    created = datetime.fromisoformat(created_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                    edad_horas = (ahora - created).total_seconds() / 3600
+                    if edad_horas >= 24:
+                        service.files().delete(fileId=folder['id']).execute()
+                        eliminadas += 1
+                        print(f"   🗑️ Eliminada exportación temporal: {folder['name']} ({edad_horas:.1f}h)")
+            except Exception:
+                pass
+        
+        if eliminadas > 0:
+            print(f"✅ Limpieza exportaciones: {eliminadas} carpetas eliminadas")
+    except Exception as e:
+        print(f"⚠️ Error en limpieza exportaciones temporales: {e}")
 
 
 @router.get("/casos/{serial}/pdf")
