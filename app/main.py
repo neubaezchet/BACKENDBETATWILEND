@@ -367,6 +367,18 @@ def startup_event():
         print("✅ Alertas 180 días programadas (diario 7:00 AM)")
     except Exception as e:
         print(f"⚠️ Error iniciando scheduler alertas 180: {e}")
+    
+    # ⭐ Limpieza automática de carpetas de exportación temporales (cada 6 horas)
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from app.validador import limpiar_exportaciones_temporales_sync
+        
+        scheduler_limpieza = BackgroundScheduler()
+        scheduler_limpieza.add_job(limpiar_exportaciones_temporales_sync, 'interval', hours=6, id='limpieza_exportaciones')
+        scheduler_limpieza.start()
+        print("✅ Limpieza de exportaciones temporales programada (cada 6h)")
+    except Exception as e:
+        print(f"⚠️ Error iniciando limpieza exportaciones: {e}")
 
 @app.on_event("shutdown")
 def shutdown_event():
