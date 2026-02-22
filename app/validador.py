@@ -277,42 +277,39 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
     return resultado
 
 
-def obtener_email_tthh(empresa_nombre, db=None):
-    """Retorna el email del encargado de presunto fraude según la empresa.
-    Busca en correos_notificacion (area='presunto_fraude') y alerta_emails.
-    Si no hay, usa fallback de la empresa.
+def obtener_emails_presunto_fraude(empresa_nombre, db=None):
+    """Retorna LISTA de emails para presunto fraude según la empresa.
+    Busca en correos_notificacion (area='presunto_fraude') + contacto_email de la empresa.
     """
+    emails = set()
+    
     if db:
         try:
             from app.database import CorreoNotificacion, Company
-            # 1) Buscar en correos_notificacion area='presunto_fraude' de esa empresa
             empresa = db.query(Company).filter(Company.nombre == empresa_nombre).first()
-            if empresa:
-                correo_pf = db.query(CorreoNotificacion).filter(
-                    CorreoNotificacion.area == 'presunto_fraude',
-                    CorreoNotificacion.company_id == empresa.id,
-                    CorreoNotificacion.activo == True
-                ).first()
-                if correo_pf:
-                    return correo_pf.email
+            company_id = empresa.id if empresa else None
             
-            # 2) Buscar correo global de presunto_fraude (sin empresa)
-            correo_global = db.query(CorreoNotificacion).filter(
+            # 1) Correos de presunto_fraude (globales o de la empresa)
+            correos_pf = db.query(CorreoNotificacion).filter(
                 CorreoNotificacion.area == 'presunto_fraude',
-                CorreoNotificacion.company_id == None,
                 CorreoNotificacion.activo == True
-            ).first()
-            if correo_global:
-                return correo_global.email
+            ).all()
+            for c in correos_pf:
+                if c.company_id is None or c.company_id == company_id:
+                    emails.add(c.email)
             
-            # 3) Fallback: correo de contacto de la empresa
+            # 2) Siempre incluir contacto_email de la empresa
             if empresa and empresa.contacto_email:
-                return empresa.contacto_email
+                emails.add(empresa.contacto_email)
         except Exception as e:
-            print(f"⚠️ Error buscando email presunto fraude: {e}")
+            print(f"⚠️ Error buscando emails presunto fraude: {e}")
     
-    # Fallback final
-    return os.environ.get('EMAIL_FRAUDE_DEFAULT', 'xoblaxbaezaospino@gmail.com')
+    # Fallback si no encontró nada
+    if not emails:
+        fallback = os.environ.get('EMAIL_FRAUDE_DEFAULT', 'xoblaxbaezaospino@gmail.com')
+        emails.add(fallback)
+    
+    return list(emails)
 
 
 # ==================== ENDPOINTS ====================
@@ -1779,8 +1776,8 @@ async def validar_caso_con_checks(
                 observaciones
             )
             
-            # Email al encargado de presunto fraude
-            email_tthh_destinatario = obtener_email_tthh(caso.empresa.nombre if caso.empresa else 'Default', db=db)
+            # Email al encargado de presunto fraude (múltiples destinatarios)
+            emails_fraude = obtener_emails_presunto_fraude(caso.empresa.nombre if caso.empresa else 'Default', db=db)
             
             email_tthh = get_email_template_universal(
                 tipo_email='tthh',
@@ -1798,13 +1795,16 @@ async def validar_caso_con_checks(
             
             fechas_str_tthh = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
             asunto_tthh = f"CC {caso.cedula} - {serial}{fechas_str_tthh} - PRESUNTO FRAUDE - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
-            enviar_email_con_adjuntos(
-                email_tthh_destinatario,
-                asunto_tthh,
-                email_tthh,
-                adjuntos_paths,
-                caso=caso  # ✅ CORREGIDO: Incluir copias empresa + BD
-            )
+            
+            for email_dest in emails_fraude:
+                enviar_email_con_adjuntos(
+                    email_dest,
+                    asunto_tthh,
+                    email_tthh,
+                    adjuntos_paths,
+                    caso=caso
+                )
+                print(f"🚨 Presunto fraude enviado a: {email_dest}")
             
             # Email confirmación a la empleada (plantilla estática)
             email_empleada_falsa = get_email_template_universal(

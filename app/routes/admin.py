@@ -105,7 +105,7 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
 
 class CorreoCreate(BaseModel):
-    area: str = Field(..., description="talento_humano | seguridad_salud | nomina | incapacidades | presunto_fraude")
+    area: str = Field(..., description="alerta_180 | presunto_fraude | empresas")
     nombre_contacto: Optional[str] = None
     email: str
     company_id: Optional[int] = None

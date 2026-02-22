@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 
 from app.database import (
-    AlertaEmail, Alerta180Log, Case, Employee, Company, CorreoNotificacion, get_utc_now
+    Alerta180Log, Case, Employee, Company, CorreoNotificacion, get_utc_now
 )
 from app.services.prorroga_detector import analizar_historial_empleado
 
@@ -132,13 +132,12 @@ def _alerta_reciente(db: Session, cedula: str, tipo_alerta: str) -> bool:
 
 def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     """
-    Obtiene los correos a los que enviar la alerta para un empleado.
+    Obtiene los correos a los que enviar la alerta 180 días para un empleado.
     
-    Prioridad:
-    1. Correos de correos_notificacion (Hoja 4 Excel) — áreas: talento_humano, seguridad_salud
-    2. Emails configurados en alerta_emails para la empresa del empleado
-    3. Emails globales (company_id IS NULL)
-    4. contacto_email de la empresa como fallback
+    Flujo:
+    1. Correos de correos_notificacion area='alerta_180' (globales o de la empresa)
+    2. Siempre incluye contacto_email de la empresa
+    3. Fallback: solo contacto_email si no hay correos configurados
     """
     # Obtener empresa del empleado
     empleado = db.query(Employee).filter(Employee.cedula == cedula).first()
@@ -146,37 +145,18 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     
     emails = set()
     
-    # 1. Correos de notificación por área (Hoja 4 del Excel)
-    areas_alerta = ['talento_humano', 'seguridad_salud', 'nomina']
-    for area in areas_alerta:
-        correos_area = db.query(CorreoNotificacion).filter(
-            CorreoNotificacion.area == area,
-            CorreoNotificacion.activo == True,
-        ).all()
-        for c in correos_area:
-            # Si el correo es global (sin empresa) o de la misma empresa
-            if c.company_id is None or c.company_id == company_id:
-                emails.add(c.email)
-    
-    # 2. Emails específicos de la empresa (tabla alerta_emails)
-    if company_id:
-        empresa_emails = db.query(AlertaEmail).filter(
-            AlertaEmail.company_id == company_id,
-            AlertaEmail.activo == True,
-        ).all()
-        for e in empresa_emails:
-            emails.add(e.email)
-    
-    # 3. Emails globales (tabla alerta_emails)
-    globales = db.query(AlertaEmail).filter(
-        AlertaEmail.company_id.is_(None),
-        AlertaEmail.activo == True,
+    # 1. Correos de notificación area='alerta_180' (admin portal)
+    correos_180 = db.query(CorreoNotificacion).filter(
+        CorreoNotificacion.area == 'alerta_180',
+        CorreoNotificacion.activo == True,
     ).all()
-    for e in globales:
-        emails.add(e.email)
+    for c in correos_180:
+        # Si el correo es global (sin empresa) o de la misma empresa
+        if c.company_id is None or c.company_id == company_id:
+            emails.add(c.email)
     
-    # 4. Fallback: contacto_email de la empresa
-    if not emails and company_id:
+    # 2. Siempre incluir contacto_email de la empresa
+    if company_id:
         company = db.query(Company).filter(Company.id == company_id).first()
         if company and company.contacto_email:
             emails.add(company.contacto_email)
