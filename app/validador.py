@@ -1270,12 +1270,13 @@ async def exportar_historico_drive(
     _: bool = Depends(verificar_token_admin)
 ):
     """
-    📁 Histórico anual: devuelve links de carpetas de Google Drive
-    donde ya están organizadas las incapacidades por año.
+    📁 Histórico: devuelve links de carpetas de Google Drive
+    donde ya están organizadas las incapacidades por año y quincena.
     
     Body JSON:
     {
       "year": 2026,
+      "month": 2,        // opcional (1-12), null = todo el año
       "empresa": "all" | "ELIOT"
     }
     """
@@ -1285,7 +1286,15 @@ async def exportar_historico_drive(
         raise HTTPException(status_code=400, detail="Body JSON requerido")
     
     year = body.get("year", datetime.now().year)
+    month = body.get("month")  # None = todo el año, 1-12 = mes específico
     empresa_filtro = body.get("empresa", "all")
+    
+    # Mapping mes → nombres de quincena en Drive
+    MESES_ES = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
     
     try:
         from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists
@@ -1333,33 +1342,69 @@ async def exportar_historico_drive(
                 
                 year_folder_id = year_folders[0]['id']
                 
-                # Contar archivos en la carpeta del año (recursivo)
-                count_query = f"'{year_folder_id}' in parents and trashed=false"
-                count_results = service.files().list(q=count_query, spaces='drive', fields="files(id)", pageSize=1000).execute()
-                num_items = len(count_results.get('files', []))
-                total_archivos += num_items
-                
-                folder_link = f"https://drive.google.com/drive/folders/{year_folder_id}"
-                
-                carpetas.append({
-                    "empresa": empresa_nombre,
-                    "year": year,
-                    "folder_id": year_folder_id,
-                    "link": folder_link,
-                    "items": num_items,
-                })
+                if month and month in MESES_ES:
+                    # ═══ MES ESPECÍFICO: buscar carpetas de quincena ═══
+                    mes_nombre = MESES_ES[month]
+                    quincenas = [f"Primera_Quincena_{mes_nombre}", f"Segunda_Quincena_{mes_nombre}"]
+                    
+                    for q_name in quincenas:
+                        q_query = f"name='{q_name}' and mimeType='application/vnd.google-apps.folder' and '{year_folder_id}' in parents and trashed=false"
+                        q_results = service.files().list(q=q_query, spaces='drive', fields="files(id, name)").execute()
+                        q_folders = q_results.get('files', [])
+                        
+                        if q_folders:
+                            q_folder_id = q_folders[0]['id']
+                            # Contar items
+                            count_query = f"'{q_folder_id}' in parents and trashed=false"
+                            count_results = service.files().list(q=count_query, spaces='drive', fields="files(id)", pageSize=1000).execute()
+                            num_items = len(count_results.get('files', []))
+                            total_archivos += num_items
+                            
+                            folder_link = f"https://drive.google.com/drive/folders/{q_folder_id}"
+                            label = q_name.replace("_", " ")
+                            
+                            carpetas.append({
+                                "empresa": empresa_nombre,
+                                "year": year,
+                                "month": month,
+                                "label": f"{empresa_nombre} — {label}",
+                                "folder_id": q_folder_id,
+                                "link": folder_link,
+                                "items": num_items,
+                            })
+                else:
+                    # ═══ AÑO COMPLETO: link a la carpeta del año ═══
+                    count_query = f"'{year_folder_id}' in parents and trashed=false"
+                    count_results = service.files().list(q=count_query, spaces='drive', fields="files(id)", pageSize=1000).execute()
+                    num_items = len(count_results.get('files', []))
+                    total_archivos += num_items
+                    
+                    folder_link = f"https://drive.google.com/drive/folders/{year_folder_id}"
+                    
+                    carpetas.append({
+                        "empresa": empresa_nombre,
+                        "year": year,
+                        "month": None,
+                        "label": f"{empresa_nombre} — {year}",
+                        "folder_id": year_folder_id,
+                        "link": folder_link,
+                        "items": num_items,
+                    })
                 
             except Exception as e:
                 print(f"   ⚠️ Error buscando carpeta de {empresa_nombre}/{year}: {e}")
                 continue
         
         if not carpetas:
-            raise HTTPException(status_code=404, detail=f"No se encontraron carpetas para el año {year}")
+            mes_label = f" / {MESES_ES.get(month, month)}" if month else ""
+            raise HTTPException(status_code=404, detail=f"No se encontraron carpetas para {year}{mes_label}")
         
-        # Contar casos en BD para ese año
+        # Contar casos en BD para ese año/mes
         casos_bd = db.query(Case).filter(
             func.extract('year', Case.created_at) == year
         )
+        if month:
+            casos_bd = casos_bd.filter(func.extract('month', Case.created_at) == month)
         if empresa_filtro and empresa_filtro != "all":
             company = db.query(Company).filter(Company.nombre == empresa_filtro).first()
             if company:
@@ -1371,6 +1416,8 @@ async def exportar_historico_drive(
         return {
             "ok": True,
             "year": year,
+            "month": month,
+            "month_label": MESES_ES.get(month) if month else "Todo el año",
             "empresa": empresa_filtro,
             "carpetas": carpetas,
             "total_carpetas": len(carpetas),
