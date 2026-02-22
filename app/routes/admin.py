@@ -86,6 +86,13 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6)
+
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3)
     password: str = Field(..., min_length=6)
@@ -169,6 +176,85 @@ async def whoami(user: AdminUser = Depends(get_current_user)):
             "permisos": user.permisos or {},
         }
     }
+
+
+@router.post("/forgot-password")
+async def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """🔑 Envía correo de recuperación de contraseña"""
+    user = db.query(AdminUser).filter(
+        AdminUser.email == data.email,
+        AdminUser.activo == True
+    ).first()
+
+    if not user:
+        # No revelar si el email existe o no (seguridad)
+        return {"ok": True, "mensaje": "Si el correo existe, recibirás un enlace de recuperación"}
+
+    # Crear token de reset (15 min de vida)
+    reset_token = jwt.encode(
+        {"sub": user.username, "purpose": "reset", "exp": datetime.utcnow() + timedelta(minutes=15)},
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+    # Enviar email de recuperación
+    try:
+        from app.n8n_notifier import enviar_a_n8n
+
+        portal_url = os.environ.get("PORTAL_URL", "https://repogemin.vercel.app")
+        reset_link = f"{portal_url}?reset_token={reset_token}"
+
+        html_recovery = f"""
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background: #f8fafc; border-radius: 12px;">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <h2 style="color: #1e293b; margin: 0;">🔐 Recuperación de Contraseña</h2>
+                <p style="color: #64748b; font-size: 14px;">Portal Incapacidades</p>
+            </div>
+            <div style="background: white; padding: 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <p style="color: #334155;">Hola <strong>{user.nombre or user.username}</strong>,</p>
+                <p style="color: #334155;">Recibimos una solicitud para restablecer tu contraseña.</p>
+                <div style="text-align: center; margin: 24px 0;">
+                    <a href="{reset_link}" style="display: inline-block; background: #2563eb; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">Restablecer Contraseña</a>
+                </div>
+                <p style="color: #94a3b8; font-size: 12px;">Este enlace expira en 15 minutos. Si no solicitaste esto, ignora este correo.</p>
+            </div>
+        </div>
+        """
+
+        enviar_a_n8n(
+            tipo_notificacion="recuperacion",
+            email=user.email,
+            serial="RECOVERY",
+            subject="🔐 Recuperación de contraseña - Portal Incapacidades",
+            html_content=html_recovery,
+        )
+        logger.info(f"📧 Recovery email sent to {user.email} for user {user.username}")
+    except Exception as e:
+        logger.error(f"Error enviando email recovery: {e}")
+
+    return {"ok": True, "mensaje": "Si el correo existe, recibirás un enlace de recuperación"}
+
+
+@router.post("/reset-password")
+async def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """🔑 Restablece la contraseña usando el token de recuperación"""
+    try:
+        payload = jwt.decode(data.token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") != "reset":
+            raise HTTPException(status_code=400, detail="Token inválido")
+        username = payload.get("sub")
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Token expirado o inválido")
+
+    user = db.query(AdminUser).filter(AdminUser.username == username, AdminUser.activo == True).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    user.password_hash = pwd_context.hash(data.new_password)
+    db.commit()
+
+    logger.info(f"🔑 Password reset for user {username}")
+    return {"ok": True, "mensaje": "Contraseña actualizada exitosamente"}
 
 
 @router.post("/setup-superadmin")
