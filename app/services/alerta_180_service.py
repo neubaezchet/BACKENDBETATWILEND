@@ -134,10 +134,8 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     """
     Obtiene los correos a los que enviar la alerta 180 días para un empleado.
     
-    Flujo:
-    1. Correos de correos_notificacion area='alerta_180' (globales o de la empresa)
-    2. Siempre incluye contacto_email de la empresa
-    3. Fallback: solo contacto_email si no hay correos configurados
+    Flujo: SOLO correos del DIRECTORIO (correos_notificacion area='alerta_180')
+    Ya NO usa contacto_email de la empresa — todo viene del directorio.
     """
     # Obtener empresa del empleado
     empleado = db.query(Employee).filter(Employee.cedula == cedula).first()
@@ -145,7 +143,7 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     
     emails = set()
     
-    # 1. Correos de notificación area='alerta_180' (admin portal)
+    # Correos de notificación area='alerta_180' del DIRECTORIO (admin portal)
     correos_180 = db.query(CorreoNotificacion).filter(
         CorreoNotificacion.area == 'alerta_180',
         CorreoNotificacion.activo == True,
@@ -153,13 +151,13 @@ def _obtener_destinatarios(db: Session, cedula: str) -> List[str]:
     for c in correos_180:
         # Si el correo es global (sin empresa) o de la misma empresa
         if c.company_id is None or c.company_id == company_id:
-            emails.add(c.email)
+            if c.email and c.email.strip():
+                emails.add(c.email.strip())
     
-    # 2. Siempre incluir contacto_email de la empresa
-    if company_id:
-        company = db.query(Company).filter(Company.id == company_id).first()
-        if company and company.contacto_email:
-            emails.add(company.contacto_email)
+    if emails:
+        logger.info(f"📧 Directorio alerta_180 → {len(emails)} emails para CC {cedula}: {list(emails)}")
+    else:
+        logger.warning(f"⚠️ Sin emails en directorio alerta_180 para CC {cedula} (company_id={company_id})")
     
     return list(emails)
 
