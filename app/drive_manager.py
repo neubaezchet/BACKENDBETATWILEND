@@ -142,33 +142,11 @@ class CaseFileOrganizer:
         
         try:
             if nuevo_estado == 'COMPLETA':
-                # Caso COMPLETA: 
-                # 1. Mover a Incapacidades_validadas/{Empresa}/
-                # 2. Crear COPIA en Completas/{Empresa}/
-                validadas_folder = self.drive_manager.get_or_create_folder_structure(
-                    empresa_nombre, 'COMPLETA'
-                )
-                
-                # Mover a validadas
-                self.drive_manager.move_file(file_id, validadas_folder)
-                
-                # Crear copia en Completas
-                completas_main = create_folder_if_not_exists(
-                    self.drive_manager.service, b'Completas', 'root'
-                )
-                completas_empresa = create_folder_if_not_exists(
-                    self.drive_manager.service, 
-                    empresa_nombre.encode(), 
-                    completas_main
-                )
-                
-                # Copiar archivo
-                copied_file = self.drive_manager.service.files().copy(
-                    fileId=file_id,
-                    body={'parents': [completas_empresa]}
-                ).execute()
-                
-                print(f"✅ Caso {caso.serial} → Validadas + Completas")
+                # Caso COMPLETA:
+                # El archivo se queda en Historico (Incapacidades/{Empresa}/{Año}/...)
+                # Solo se crea una COPIA en Completes/{Empresa}/
+                # (La copia la hace completes_mgr.copiar_caso_a_completes en validador.py)
+                print(f"✅ Caso {caso.serial} → permanece en Historico (se copiará a Completes)")
                 return self._get_file_link(file_id)
             
             elif nuevo_estado in ['INCOMPLETA', 'ILEGIBLE', 'INCOMPLETA_ILEGIBLE']:
@@ -265,6 +243,61 @@ class CaseFileOrganizer:
             print(f"❌ Error actualizando PDF {caso.serial}: {e}")
             return None
     
+    def copiar_a_historico(self, caso):
+        """
+        Crea una COPIA del archivo en la carpeta Historico
+        (Incapacidades/{Empresa}/{Año}/{Quincena}/{Tipo}/)
+        Se usa al aprobar reenvío: el archivo vuelve al histórico.
+        """
+        if not caso.drive_link:
+            print(f"⚠️ Caso {caso.serial} sin drive_link, no se copia a Historico")
+            return None
+        
+        file_id = self._extract_file_id_from_link(caso.drive_link)
+        if not file_id:
+            return None
+        
+        try:
+            from datetime import datetime
+            from app.drive_uploader import normalize_tipo_incapacidad, get_quinzena_folder_name
+            
+            empresa_nombre = caso.empresa.nombre if caso.empresa else "OTRA_EMPRESA"
+            año_actual = str(datetime.now().year)
+            quinzena = get_quinzena_folder_name()
+            tipo_raw = caso.tipo.value if caso.tipo else 'General'
+            tipo_normalizado = normalize_tipo_incapacidad(tipo_raw, None)
+            
+            # Crear estructura: Incapacidades/{Empresa}/{Año}/{Quincena}/{Tipo}/
+            main_folder_id = create_folder_if_not_exists(
+                self.drive_manager.service, b'Incapacidades', 'root'
+            )
+            empresa_folder_id = create_folder_if_not_exists(
+                self.drive_manager.service, empresa_nombre.encode(), main_folder_id
+            )
+            year_folder_id = create_folder_if_not_exists(
+                self.drive_manager.service, año_actual.encode(), empresa_folder_id
+            )
+            quinzena_folder_id = create_folder_if_not_exists(
+                self.drive_manager.service, quinzena.encode(), year_folder_id
+            )
+            tipo_folder_id = create_folder_if_not_exists(
+                self.drive_manager.service, tipo_normalizado.encode(), quinzena_folder_id
+            )
+            
+            # Copiar archivo al Historico
+            copied_file = self.drive_manager.service.files().copy(
+                fileId=file_id,
+                body={'parents': [tipo_folder_id]}
+            ).execute()
+            
+            copied_link = f"https://drive.google.com/file/d/{copied_file.get('id')}/view"
+            print(f"✅ Caso {caso.serial} copiado a Historico: Incapacidades/{empresa_nombre}/{año_actual}/{quinzena}/{tipo_normalizado}/")
+            return copied_link
+            
+        except Exception as e:
+            print(f"❌ Error copiando a Historico: {e}")
+            return None
+
     def _extract_file_id_from_link(self, drive_link):
         """Extrae el file_id de un link de Google Drive"""
         if '/file/d/' in drive_link:
