@@ -598,8 +598,9 @@ def generar_mensaje_segun_tipo(tipo_email, checks, tipo_incapacidad, serial, qui
         fecha_texto = f" {fechas}" if fechas else ""
         return _bloque_mensaje(
             "#D1FAE5", "#16A34A",
-            "&#9989; Incapacidad validada",
-            f"Tu incapacidad{fecha_texto} ha sido subida al sistema exitosamente. "
+            "&#9989; Incapacidad Validada",
+            f"Tu incapacidad{fecha_texto} ha sido enviada correctamente. "
+            "Procederemos a subirla al sistema. "
             "Nos comunicaremos contigo si se requiere algun paso adicional."
         )
 
