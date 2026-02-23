@@ -10,7 +10,7 @@ RUTAS ADMIN - Portal Administrativo NeuroBarranquilla
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, text
+from sqlalchemy import func, desc, text, or_
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -130,9 +130,9 @@ class CorreoUpdate(BaseModel):
 
 @router.post("/login")
 async def login(data: LoginRequest, db: Session = Depends(get_db)):
-    """🔐 Login - retorna JWT token"""
+    """🔐 Login - retorna JWT token (acepta username o email)"""
     user = db.query(AdminUser).filter(
-        AdminUser.username == data.username,
+        or_(AdminUser.username == data.username, AdminUser.email == data.username),
         AdminUser.activo == True
     ).first()
 
