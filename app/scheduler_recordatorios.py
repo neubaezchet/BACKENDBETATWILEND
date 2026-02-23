@@ -1,6 +1,9 @@
 """
 Sistema de Recordatorios Automáticos
-Ejecuta cada día a las 9 AM para verificar casos pendientes > 7 días
+- 3 días: recordatorio al empleado
+- 5 días: recordatorio al empleado + alerta al jefe
+- Cada 3 días adicionales: recordatorio al empleado
+Ejecuta cada día a las 9 AM
 """
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -11,7 +14,7 @@ from app.email_templates import get_email_template_universal
 import os
 from app.n8n_notifier import enviar_a_n8n
 
-def send_html_email(to_email: str, subject: str, html_body: str, caso=None) -> bool:
+def send_html_email(to_email: str, subject: str, html_body: str, caso=None, whatsapp_message=None) -> bool:
     """Envía email usando N8N con copias a empresa y empleado BD"""
     tipo_map = {
         'Recordatorio': 'recordatorio',
@@ -53,6 +56,7 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None) -> b
         cc_email=cc_email,
         correo_bd=correo_bd,
         whatsapp=whatsapp,
+        whatsapp_message=whatsapp_message,
         adjuntos_base64=[]
     )
     
@@ -66,8 +70,11 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None) -> b
 
 def verificar_casos_pendientes():
     """
-    Verifica casos incompletos/ilegibles sin respuesta después de 7 días
-    Envía recordatorios a empleadas y alertas a jefes
+    Verifica casos incompletos/ilegibles y envía recordatorios:
+    - 3 días sin respuesta → recordatorio al empleado (+ WhatsApp)
+    - 5 días sin respuesta → segundo recordatorio al empleado + alerta al jefe
+    - Cada 3 días adicionales → recordatorio al empleado
+    Usa recordatorios_count para rastrear cuántos se han enviado.
     """
     db = SessionLocal()
     
@@ -76,28 +83,14 @@ def verificar_casos_pendientes():
         print(f"🔍 Verificación de recordatorios - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}\n")
         
-        # 3 DÍAS - Recordatorio empleado
-        fecha_limite_3 = datetime.now() - timedelta(days=3)
-        fecha_limite_5 = datetime.now() - timedelta(days=5)
+        ahora = datetime.now()
 
-        # Casos 3 días (empleado)
-        casos_3dias = db.query(Case).filter(
+        # Todos los casos incompletos/ilegibles activos
+        casos_pendientes = db.query(Case).filter(
             Case.estado.in_([EstadoCaso.INCOMPLETA, EstadoCaso.ILEGIBLE, EstadoCaso.INCOMPLETA_ILEGIBLE]),
-            Case.updated_at < fecha_limite_3,
-            Case.updated_at >= fecha_limite_5,  # Solo entre 3-5 días
-            Case.recordatorio_enviado == False
         ).all()
 
-        # Casos 5 días (jefe)
-        casos_5dias = db.query(Case).filter(
-            Case.estado.in_([EstadoCaso.INCOMPLETA, EstadoCaso.ILEGIBLE, EstadoCaso.INCOMPLETA_ILEGIBLE]),
-            Case.updated_at < fecha_limite_5,
-            Case.recordatorio_enviado == False
-        ).all()
-
-        casos_pendientes = list(set(casos_3dias + casos_5dias))
-
-        print(f"📊 Casos encontrados para recordatorio: {len(casos_pendientes)}")
+        print(f"📊 Casos en estado incompleta/ilegible: {len(casos_pendientes)}")
 
         if not casos_pendientes:
             print(f"✅ No hay casos pendientes que requieran recordatorio\n")
@@ -110,20 +103,38 @@ def verificar_casos_pendientes():
             try:
                 empleado = caso.empleado
                 if not empleado:
-                    print(f"⚠️ Caso {caso.serial} sin empleado asignado, omitiendo...")
                     continue
+
+                dias_sin_respuesta = (ahora - caso.updated_at).days
+                count = caso.recordatorios_count or 0
+
+                # Determinar si toca enviar recordatorio
+                enviar_empleado = False
+                enviar_jefe = False
+
+                if count == 0 and dias_sin_respuesta >= 3:
+                    # Primer recordatorio: 3 días → empleado
+                    enviar_empleado = True
+                elif count == 1 and dias_sin_respuesta >= 5:
+                    # Segundo recordatorio: 5 días → empleado + jefe
+                    enviar_empleado = True
+                    enviar_jefe = True
+                elif count >= 2 and dias_sin_respuesta >= (5 + (count - 1) * 3):
+                    # Recordatorios adicionales cada 3 días después del día 5
+                    enviar_empleado = True
+
+                if not enviar_empleado and not enviar_jefe:
+                    continue
+
                 print(f"\n📧 Procesando caso {caso.serial}:")
                 print(f"   • Empleado: {empleado.nombre}")
                 print(f"   • Estado: {caso.estado.value}")
-                print(f"   • Días sin respuesta: {(datetime.now() - caso.updated_at).days}")
+                print(f"   • Días sin respuesta: {dias_sin_respuesta}")
+                print(f"   • Recordatorios previos: {count}")
 
-                # Determinar si es 3 días (empleado) o 5 días (jefe)
-                es_3dias = caso in casos_3dias
-                es_5dias = caso in casos_5dias
-
-                # EMAIL AL EMPLEADO (3 días)
-                if es_3dias and caso.email_form:
-                    print(f"   • Generando recordatorio con IA (3 días)...")
+                # EMAIL AL EMPLEADO
+                if enviar_empleado and caso.email_form:
+                    print(f"   • Generando recordatorio con IA (día {dias_sin_respuesta})...")
                     contenido_ia = redactar_recordatorio_7dias(
                         empleado.nombre,
                         caso.serial,
@@ -140,19 +151,53 @@ def verificar_casos_pendientes():
                         link_drive=caso.drive_link,
                         contenido_ia=contenido_ia
                     )
+                    
+                    # Construir WhatsApp con motivos si hay checks guardados
+                    wa_msg = None
+                    checks_guardados = caso.metadata_form.get('checks_seleccionados', []) if caso.metadata_form else []
+                    if checks_guardados:
+                        try:
+                            from app.checks_disponibles import CHECKS_DISPONIBLES
+                            from app.n8n_notifier import _parsear_serial_wa
+                            from app.ia_redactor import DOCUMENTOS_REQUERIDOS
+                            _ced, _fechas = _parsear_serial_wa(caso.serial)
+                            _ftxt = f" {_fechas}" if _fechas else ""
+                            wa_l = [f"🔔 *Recordatorio - Documentación Pendiente*", f"Incapacidad{_ftxt}", ""]
+                            motivos = [CHECKS_DISPONIBLES[c]['label'] for c in checks_guardados if c in CHECKS_DISPONIBLES]
+                            if motivos:
+                                wa_l.append("*Motivo:*")
+                                for m in motivos[:5]:
+                                    wa_l.append(f"• {m}")
+                                wa_l.append("")
+                            tipo_v = caso.tipo.value.lower().replace(' ', '_') if caso.tipo else 'enfermedad_general'
+                            sop = DOCUMENTOS_REQUERIDOS.get(tipo_v, [])
+                            if sop:
+                                wa_l.append("*Soportes requeridos:*")
+                                for s in sop[:5]:
+                                    wa_l.append(f"• {s}")
+                                wa_l.append("")
+                            wa_l.extend(["Enviar en *PDF escaneado*, completo y legible.", "", "Subir documentos: https://repogemin.vercel.app/", "", "_Automatico por Incapacidades_"])
+                            wa_msg = "\n".join(wa_l)
+                        except Exception as e:
+                            print(f"   ⚠️ Error construyendo WhatsApp: {e}")
+
+                    fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+                    asunto_rec = f"CC {caso.cedula} - {caso.serial}{fechas_str} - Recordatorio - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+                    
                     if send_html_email(
                         caso.email_form,
-                        f"Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
+                        asunto_rec,
                         html_email,
-                        caso=caso
+                        caso=caso,
+                        whatsapp_message=wa_msg
                     ):
                         recordatorios_enviados += 1
                         print(f"   ✅ Recordatorio enviado a empleado")
                     else:
                         print(f"   ❌ Error enviando recordatorio")
 
-                # EMAIL AL JEFE (5 días)
-                if es_5dias and empleado.jefe_email:
+                # EMAIL AL JEFE (solo a los 5 días)
+                if enviar_jefe and empleado.jefe_email:
                     print(f"   • Generando alerta para jefe (5 días) {empleado.jefe_nombre}...")
                     contenido_jefe = redactar_alerta_jefe_7dias(
                         empleado.jefe_nombre,
@@ -182,14 +227,15 @@ def verificar_casos_pendientes():
                         print(f"   ✅ Alerta enviada a jefe")
                     else:
                         print(f"   ❌ Error enviando alerta al jefe")
-                else:
-                    print(f"   ⚠️ Sin datos de jefe en el sistema o no corresponde a 5 días")
+                elif enviar_jefe:
+                    print(f"   ⚠️ Sin email de jefe en el sistema")
 
-                # Marcar como enviado
+                # Actualizar contador
+                caso.recordatorios_count = count + 1
                 caso.recordatorio_enviado = True
-                caso.fecha_recordatorio = datetime.now()
+                caso.fecha_recordatorio = ahora
                 db.commit()
-                print(f"   ✅ Caso {caso.serial} marcado como recordatorio enviado")
+                print(f"   ✅ Caso {caso.serial} → recordatorios_count={count + 1}")
             except Exception as e:
                 print(f"   ❌ Error procesando caso {caso.serial}: {e}")
                 db.rollback()
@@ -216,8 +262,8 @@ def iniciar_scheduler_recordatorios():
         'cron',
         hour=9,
         minute=0,
-        id='recordatorios_7dias',
-        name='Verificación de recordatorios 7 días',
+        id='recordatorios_3_5_dias',
+        name='Recordatorios incompletas (3d empleado, 5d jefe)',
         replace_existing=True
     )
     
@@ -225,7 +271,9 @@ def iniciar_scheduler_recordatorios():
     
     print("✅ Scheduler de recordatorios iniciado")
     print("   • Frecuencia: Diaria a las 9:00 AM")
-    print("   • Job ID: recordatorios_7dias")
+    print("   • 3 días → recordatorio empleado")
+    print("   • 5 días → recordatorio empleado + alerta jefe")
+    print("   • Cada 3 días después → recordatorio empleado")
     
     return scheduler
 
