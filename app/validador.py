@@ -3034,12 +3034,12 @@ async def aprobar_reenvio(
         
         # 1. Buscar y eliminar versión incompleta de Drive
         from app.drive_manager import IncompleteFileManager
-        incomplete_mgr = IncompleteFileManager()
+        incomplete_mgr_drive = IncompleteFileManager()
         
-        version_incompleta = incomplete_mgr.buscar_version_incompleta(serial)
+        version_incompleta = incomplete_mgr_drive.buscar_version_incompleta(serial)
         if version_incompleta:
             print(f"   🗑️ Eliminando versión incompleta: {version_incompleta['filename']}")
-            incomplete_mgr.eliminar_version_incompleta(version_incompleta['file_id'])
+            incomplete_mgr_drive.eliminar_version_incompleta(version_incompleta['file_id'])
         
         # 2. Actualizar caso con nueva versión
         caso.drive_link = ultimo_reenvio['link']
@@ -3053,13 +3053,28 @@ async def aprobar_reenvio(
         ultimo_reenvio['motivo'] = motivo or "Documentos correctos"
         caso.metadata_form['reenvios'][-1] = ultimo_reenvio
         
-        # 4. Mover archivo en Drive a Validadas
+        # 4. Copiar archivo a Completes/{Empresa}/ y a Historico
         from app.drive_manager import CaseFileOrganizer
         organizer = CaseFileOrganizer()
-        nuevo_link = organizer.mover_caso_segun_estado(caso, 'COMPLETA')
-        if nuevo_link:
-            caso.drive_link = nuevo_link
-            print(f"   ✅ Archivo movido a Validadas: {nuevo_link}")
+        
+        # 4a. Copiar a Completes (carpeta operativa)
+        try:
+            link_completes = completes_mgr.copiar_caso_a_completes(caso)
+            if link_completes:
+                if not caso.metadata_form:
+                    caso.metadata_form = {}
+                caso.metadata_form['link_completes'] = link_completes
+                print(f"   ✅ Archivo copiado a Completes: {link_completes}")
+        except Exception as e:
+            print(f"   ⚠️ Error copiando a Completes: {e}")
+        
+        # 4b. Copiar a Historico (Incapacidades/{Empresa}/{Año}/{Quincena}/{Tipo}/)
+        try:
+            link_historico = organizer.copiar_a_historico(caso)
+            if link_historico:
+                print(f"   ✅ Archivo copiado a Historico: {link_historico}")
+        except Exception as e:
+            print(f"   ⚠️ Error copiando a Historico: {e}")
         
         # 5. Registrar evento
         registrar_evento(
