@@ -93,6 +93,41 @@ def registrar_evento(db: Session, case_id: int, accion: str, actor: str = "Siste
     db.add(evento)
     db.commit()
 
+
+def obtener_emails_empresa_directorio(company_id, db=None):
+    """Obtiene emails de copia del DIRECTORIO (correos_notificacion area='empresas').
+    Ya NO usa Company.email_copia — todo viene del directorio del admin portal."""
+    emails = []
+    close_db = False
+    try:
+        if not db:
+            from app.database import SessionLocal
+            db = SessionLocal()
+            close_db = True
+        
+        correos = db.query(CorreoNotificacion).filter(
+            CorreoNotificacion.area == 'empresas',
+            CorreoNotificacion.activo == True
+        ).all()
+        
+        for c in correos:
+            if c.company_id is None or c.company_id == company_id:
+                if c.email and c.email.strip():
+                    emails.append(c.email.strip())
+        
+        if emails:
+            print(f"📧 Directorio empresas → {len(emails)} emails para company_id={company_id}: {emails}")
+        else:
+            print(f"⚠️ Directorio empresas → Sin emails para company_id={company_id}")
+    except Exception as e:
+        print(f"⚠️ Error obteniendo emails del directorio: {e}")
+    finally:
+        if close_db and db:
+            db.close()
+    
+    return emails
+
+
 def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], caso=None, db=None, whatsapp_message=None):
     """
     ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
@@ -135,16 +170,20 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
             break
     
     # ✅ OBTENER EMAILS DE COPIA Y TELÉFONO
+    # CC empresa ahora viene del DIRECTORIO (correos_notificacion area='empresas')
     cc_empresa = None
     correo_bd = None
     whatsapp = None
     
     if caso:
-        if hasattr(caso, 'empresa') and caso.empresa:
-            if hasattr(caso.empresa, 'email_copia') and caso.empresa.email_copia:
-                cc_empresa = caso.empresa.email_copia
-                print(f"📧 CC empresa: {cc_empresa}")
+        # ✅ CC EMPRESA: Desde el DIRECTORIO (ya no usa Company.email_copia)
+        if hasattr(caso, 'company_id') and caso.company_id:
+            emails_dir = obtener_emails_empresa_directorio(caso.company_id)
+            if emails_dir:
+                cc_empresa = ",".join(emails_dir)
+                print(f"📧 CC empresa (directorio): {cc_empresa}")
         
+        # ✅ CC EMPLEADO: Correo del empleado en BD (se mantiene)
         if hasattr(caso, 'empleado') and caso.empleado:
             if hasattr(caso.empleado, 'correo') and caso.empleado.correo:
                 correo_bd = caso.empleado.correo
@@ -229,16 +268,20 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
             break
     
     # ✅ OBTENER EMAILS DE COPIA Y TELÉFONO
+    # CC empresa ahora viene del DIRECTORIO (correos_notificacion area='empresas')
     cc_empresa = None
     correo_bd = None
     whatsapp = None
     
     if caso:
-        if hasattr(caso, 'empresa') and caso.empresa:
-            if hasattr(caso.empresa, 'email_copia') and caso.empresa.email_copia:
-                cc_empresa = caso.empresa.email_copia
-                print(f"📧 CC empresa: {cc_empresa}")
+        # ✅ CC EMPRESA: Desde el DIRECTORIO (ya no usa Company.email_copia)
+        if hasattr(caso, 'company_id') and caso.company_id:
+            emails_dir = obtener_emails_empresa_directorio(caso.company_id)
+            if emails_dir:
+                cc_empresa = ",".join(emails_dir)
+                print(f"📧 CC empresa (directorio): {cc_empresa}")
         
+        # ✅ CC EMPLEADO: Correo del empleado en BD (se mantiene)
         if hasattr(caso, 'empleado') and caso.empleado:
             if hasattr(caso.empleado, 'correo') and caso.empleado.correo:
                 correo_bd = caso.empleado.correo
@@ -279,35 +322,46 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
 
 def obtener_emails_presunto_fraude(empresa_nombre, db=None):
     """Retorna LISTA de emails para presunto fraude según la empresa.
-    Busca en correos_notificacion (area='presunto_fraude') + contacto_email de la empresa.
+    Busca SOLO en el directorio (correos_notificacion area='presunto_fraude').
+    Ya NO usa contacto_email de la empresa — todo viene del directorio.
     """
     emails = set()
+    close_db = False
     
-    if db:
-        try:
-            from app.database import CorreoNotificacion, Company
-            empresa = db.query(Company).filter(Company.nombre == empresa_nombre).first()
-            company_id = empresa.id if empresa else None
-            
-            # 1) Correos de presunto_fraude (globales o de la empresa)
-            correos_pf = db.query(CorreoNotificacion).filter(
-                CorreoNotificacion.area == 'presunto_fraude',
-                CorreoNotificacion.activo == True
-            ).all()
-            for c in correos_pf:
-                if c.company_id is None or c.company_id == company_id:
-                    emails.add(c.email)
-            
-            # 2) Siempre incluir contacto_email de la empresa
-            if empresa and empresa.contacto_email:
-                emails.add(empresa.contacto_email)
-        except Exception as e:
-            print(f"⚠️ Error buscando emails presunto fraude: {e}")
+    try:
+        if not db:
+            from app.database import SessionLocal
+            db = SessionLocal()
+            close_db = True
+        
+        empresa = db.query(Company).filter(Company.nombre == empresa_nombre).first()
+        company_id = empresa.id if empresa else None
+        
+        # Correos de presunto_fraude del DIRECTORIO (globales o de la empresa)
+        correos_pf = db.query(CorreoNotificacion).filter(
+            CorreoNotificacion.area == 'presunto_fraude',
+            CorreoNotificacion.activo == True
+        ).all()
+        for c in correos_pf:
+            if c.company_id is None or c.company_id == company_id:
+                if c.email and c.email.strip():
+                    emails.add(c.email.strip())
+        
+        if emails:
+            print(f"📧 Directorio presunto_fraude → {len(emails)} emails para '{empresa_nombre}': {list(emails)}")
+        else:
+            print(f"⚠️ Directorio presunto_fraude → Sin emails para '{empresa_nombre}'")
+    except Exception as e:
+        print(f"⚠️ Error buscando emails presunto fraude: {e}")
+    finally:
+        if close_db and db:
+            db.close()
     
-    # Fallback si no encontró nada
+    # Fallback si no encontró nada en el directorio
     if not emails:
         fallback = os.environ.get('EMAIL_FRAUDE_DEFAULT', 'xoblaxbaezaospino@gmail.com')
         emails.add(fallback)
+        print(f"⚠️ Usando fallback presunto fraude: {fallback}")
     
     return list(emails)
 

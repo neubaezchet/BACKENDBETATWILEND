@@ -124,68 +124,12 @@ def sincronizar_excel_completo():
             print(f"❌ No se pudo descargar el Excel, sync cancelado\n")
             return
         
-        # ========== PASO 1: SYNC EMPRESAS (HOJA 2) ==========
-        print(f"📊 PASO 1: Sincronizando empresas (Hoja 2)...")
-        empresas_actualizadas = 0
-        
-        try:
-            df_empresas = None
-            nombres_posibles = ['Hoja 2', 'Empresas', 'Sheet2', 'Hoja2']
-            
-            for nombre_hoja in nombres_posibles:
-                try:
-                    df_empresas = pd.read_excel(excel_path, sheet_name=nombre_hoja)
-                    print(f"   ✅ Hoja encontrada: '{nombre_hoja}' ({len(df_empresas)} filas)")
-                    break
-                except:
-                    continue
-            
-            if df_empresas is None:
-                print(f"   ⚠️ No se encontró Hoja 2. Continuando sin emails de copia...\n")
-            else:
-                for _, row in df_empresas.iterrows():
-                    try:
-                        nombre_col = 'nombre' if 'nombre' in df_empresas.columns else 'empresa'
-                        
-                        if pd.isna(row.get(nombre_col)) or pd.isna(row.get('email_copia')):
-                            continue
-                        
-                        empresa_nombre = str(row[nombre_col]).strip()
-                        email_copia = str(row['email_copia']).strip()
-                        
-                        empresa = db.query(Company).filter(Company.nombre == empresa_nombre).first()
-                        
-                        if empresa:
-                            if empresa.email_copia != email_copia:
-                                empresa.email_copia = email_copia
-                                empresa.contacto_email = email_copia
-                                empresa.updated_at = datetime.now()
-                                db.commit()
-                                empresas_actualizadas += 1
-                                print(f"   🔄 {empresa_nombre} → {email_copia}")
-                        else:
-                            nueva_empresa = Company(
-                                nombre=empresa_nombre,
-                                email_copia=email_copia,
-                                contacto_email=email_copia,
-                                activa=True
-                            )
-                            db.add(nueva_empresa)
-                            db.commit()
-                            empresas_actualizadas += 1
-                            print(f"   ➕ {empresa_nombre} → {email_copia}")
-                    
-                    except Exception as e:
-                        print(f"   ❌ Error en empresa: {e}")
-                        db.rollback()
-                
-                if empresas_actualizadas > 0:
-                    print(f"   ✅ {empresas_actualizadas} empresas actualizadas\n")
-                else:
-                    print(f"   ℹ️ Sin cambios en empresas\n")
-        
-        except Exception as e:
-            print(f"   ❌ Error leyendo Hoja 2: {e}\n")
+        # ========== PASO 1: EMPRESAS (Hoja 2) — OMITIDO ==========
+        # ✅ Los emails de copia por empresa ahora se gestionan desde el DIRECTORIO
+        # del admin portal (correos_notificacion area='empresas').
+        # Ya NO se sincronizan desde el Excel Hoja 2.
+        print(f"📊 PASO 1: Emails empresas → Se gestionan desde el Directorio del Admin Portal (omitido)")
+        print(f"   ℹ️ Si necesita cambiar emails, use el Directorio en el portal admin\n")
         
         # ========== PASO 2: SYNC EMPLEADOS EXACTO ==========
         print(f"📊 PASO 2: Sincronizando empleados (MODO EXACTO)...")
@@ -316,7 +260,7 @@ def sincronizar_excel_completo():
         # RESUMEN
         print(f"\n{'='*60}")
         print(f"✅ SYNC COMPLETADO")
-        print(f"   • Empresas actualizadas: {empresas_actualizadas}")
+        print(f"   • Emails empresas: Gestionados desde Directorio (admin portal)")
         print(f"   • Empleados nuevos: {nuevos}")
         print(f"   • Empleados actualizados: {actualizados}")
         print(f"   • Empleados eliminados: {eliminados}")
