@@ -619,9 +619,13 @@ async def cambiar_estado(
                     caso.telefono_form or 'N/A', caso.email_form,
                     caso.drive_link, contenido_ia=contenido
                 )
+                # ✅ Usar directorio en vez de Company.email_copia
+                cc_directorio = obtener_emails_empresa_directorio(
+                    caso.empresa.nombre, db
+                ) if caso.empresa else None
                 enviar_a_n8n('completa', caso.email_form, caso.serial,
                     f"✅ Validada - {caso.serial}", html,
-                    caso.empresa.email_copia if caso.empresa else None,
+                    cc_directorio,
                     caso.empleado.correo if caso.empleado else None,
                     caso.telefono_form, None, [],
                     drive_link=caso.drive_link)
