@@ -405,6 +405,20 @@ def shutdown_event():
         scheduler_token.shutdown()
         print("🛑 Renovación de token detenida")
 
+# ==================== TEST RECORDATORIOS ====================
+
+@app.post("/admin/test-recordatorios")
+async def test_recordatorios(
+    _: bool = Depends(verificar_token_admin)
+):
+    """Ejecuta manualmente la verificación de recordatorios (para testing)"""
+    from app.scheduler_recordatorios import verificar_casos_pendientes
+    try:
+        verificar_casos_pendientes()
+        return {"status": "ok", "mensaje": "Verificación de recordatorios ejecutada. Revisa los logs del servidor."}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 # ==================== UTILIDADES ====================
 
 def get_current_quinzena():
