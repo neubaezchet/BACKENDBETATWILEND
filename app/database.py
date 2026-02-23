@@ -135,6 +135,7 @@ class Case(Base):
     # ✅ NUEVAS COLUMNAS - Sistema de recordatorios
     recordatorio_enviado = Column(Boolean, default=False)
     fecha_recordatorio = Column(DateTime, nullable=True)
+    recordatorios_count = Column(Integer, default=0)  # Contador: 0=ninguno, 1=3días, 2=5días+jefe
     
     # ✅ COLUMNAS KACTUS - Datos de Kactus / validación
     codigo_cie10 = Column(String(20))

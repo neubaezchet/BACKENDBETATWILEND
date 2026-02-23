@@ -242,6 +242,8 @@ def startup_event():
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS dias_traslapo INTEGER DEFAULT 0;",
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS traslapo_con_serial VARCHAR(50);",
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS kactus_sync_at TIMESTAMP;",
+                # Recordatorios mejorados
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS recordatorios_count INTEGER DEFAULT 0;",
             ]
             for sql in migraciones:
                 conn.execute(text(sql))
@@ -822,6 +824,11 @@ async def reenviar_caso_incompleto(
         estado_anterior = caso.estado.value
         caso.estado = EstadoCaso.NUEVO
         caso.updated_at = datetime.now()
+        
+        # ✅ Resetear recordatorios para nuevo ciclo de validación
+        caso.recordatorio_enviado = False
+        caso.recordatorios_count = 0
+        caso.fecha_recordatorio = None
         
         # 6. Registrar evento
         evento = CaseEvent(
