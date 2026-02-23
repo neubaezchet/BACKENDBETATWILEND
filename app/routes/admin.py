@@ -272,7 +272,7 @@ async def setup_superadmin(data: LoginRequest, db: Session = Depends(get_db)):
         password_hash=pwd_context.hash(data.password),
         nombre="Super Administrador",
         rol="superadmin",
-        permisos={"validador": True, "reportes": True, "powerbi": True, "directorio": True, "consola": True},
+        permisos={"validador": True, "reportes": True, "exportaciones": True, "powerbi": True, "directorio": True, "consola": True},
         activo=True,
     )
     db.add(superadmin)
