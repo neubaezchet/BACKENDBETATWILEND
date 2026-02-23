@@ -77,34 +77,23 @@ class DriveFileManager:
         """
         Crea/obtiene la estructura de carpetas según el estado del caso
         
-        Estructura:
-        Mi_Unidad/Incapacidades/
-        ├── Incapacidades_por_validar/{Empresa}/{Año}/{Quincena}/{Tipo}/
-        ├── Incapacidades_validadas/{Empresa}/{Año}/{Quincena}/{Tipo}/
-        ├── Completas/{Empresa}/
-        └── Incompletas/{Empresa}/{Motivo}/
+        Estructura en raíz de Drive:
+        ├── Incapacidades/{Empresa}/{Año}/{Quincena}/{Tipo}/  ← Histórico
+        ├── Completas/{Empresa}/                              ← Respaldo validadas
+        └── Incompletas/{Empresa}/{Motivo}/                   ← Casos pendientes
         """
         from datetime import datetime
         
-        # Carpeta raíz
-        main_folder_id = create_folder_if_not_exists(self.service, b'Incapacidades', 'root')
-        
         # Determinar la carpeta según el estado
-        if estado == 'NUEVO':
-            base_folder = b'Incapacidades_por_validar'
+        if estado in ['INCOMPLETA', 'ILEGIBLE', 'INCOMPLETA_ILEGIBLE', 'EPS_TRANSCRIPCION', 'DERIVADO_TTHH']:
+            # ✅ Incompletas va en RAÍZ (no dentro de Incapacidades)
+            base_folder_id = create_folder_if_not_exists(self.service, b'Incompletas', 'root')
         elif estado == 'COMPLETA':
-            # Primero va a validadas, luego se copia a completas
-            base_folder = b'Incapacidades_validadas'
-        elif estado in ['INCOMPLETA', 'ILEGIBLE', 'INCOMPLETA_ILEGIBLE']:
-            base_folder = b'Incompletas'
-        elif estado == 'EPS_TRANSCRIPCION':
-            base_folder = b'Incompletas'
-        elif estado == 'DERIVADO_TTHH':
-            base_folder = b'Incompletas'
+            # ✅ Completas va en RAÍZ
+            base_folder_id = create_folder_if_not_exists(self.service, b'Completas', 'root')
         else:
-            base_folder = b'Incapacidades_por_validar'
-        
-        base_folder_id = create_folder_if_not_exists(self.service, base_folder, main_folder_id)
+            # NUEVO y otros → Incapacidades (histórico)
+            base_folder_id = create_folder_if_not_exists(self.service, b'Incapacidades', 'root')
         
         # Crear/obtener carpeta de empresa
         empresa_folder_id = create_folder_if_not_exists(self.service, empresa.encode(), base_folder_id)
