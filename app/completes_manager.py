@@ -33,11 +33,11 @@ class CompletesManager:
         return self.service
     
     def _init_completes_structure(self):
-        """Inicializa estructura Completes y _Respaldos_24h"""
+        """Inicializa estructura Completas y _Respaldos_24h"""
         self._get_service()
         if not self.completes_root_id:
             self.completes_root_id = create_folder_if_not_exists(
-                self.service, b'Completes', 'root'
+                self.service, b'Completas', 'root'
             )
         
         if not self.respaldos_root_id:
@@ -84,17 +84,20 @@ class CompletesManager:
             ).execute()
             copied_file_id = copied_file.get('id')
             copied_link = f"https://drive.google.com/file/d/{copied_file_id}/view"
-            # Eliminar archivo de incompletas si existe
+            # ✅ Eliminar archivo de Incompletas/ si existe (buscar por file_id original)
             try:
-                from app.drive_manager import DriveFileManager
-                drive_manager = DriveFileManager()
-                incompletas_folder_id = drive_manager.get_or_create_folder_structure(empresa_nombre, 'INCOMPLETA')
-                incompleta_file_id = drive_manager.get_file_id_by_name(caso.serial + ".pdf", incompletas_folder_id)
-                if incompleta_file_id:
-                    drive_manager.eliminar_version_incompleta(incompleta_file_id)
+                from app.drive_manager import IncompleteFileManager
+                incomplete_mgr = IncompleteFileManager()
+                # Buscar el archivo original en Incompletas/ por serial
+                version_incompleta = incomplete_mgr.buscar_version_incompleta(caso.serial)
+                if version_incompleta:
+                    incomplete_mgr.eliminar_version_incompleta(version_incompleta['file_id'])
+                    print(f"🗑️ Eliminado de Incompletas: {version_incompleta['filename']}")
+                else:
+                    print(f"ℹ️ Caso {caso.serial} no tenía versión en Incompletas/")
             except Exception as e:
                 print(f"⚠️ Error eliminando incompleta: {e}")
-            print(f"✅ Caso {caso.serial} copiado a Completes/{empresa_nombre}/")
+            print(f"✅ Caso {caso.serial} copiado a Completas/{empresa_nombre}/")
             return copied_link
         except Exception as e:
             print(f"❌ Error copiando caso {caso.serial} a Completes: {e}")

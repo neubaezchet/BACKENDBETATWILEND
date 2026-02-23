@@ -600,7 +600,39 @@ async def cambiar_estado(
     if nuevo_estado in ["INCOMPLETA", "ILEGIBLE", "INCOMPLETA_ILEGIBLE"]:
         caso.bloquea_nueva = True
     
+    if nuevo_estado == "COMPLETA":
+        caso.bloquea_nueva = False
+    
     db.commit()
+    
+    # ✅ DRIVE: Mover archivos según estado
+    if nuevo_estado == "COMPLETA":
+        # Copiar a Completas/{Empresa}/ y eliminar de Incompletas/
+        try:
+            link_completes = completes_mgr.copiar_caso_a_completes(caso)
+            if link_completes:
+                if not caso.metadata_form:
+                    caso.metadata_form = {}
+                caso.metadata_form['link_completes'] = link_completes
+                flag_modified(caso, 'metadata_form')
+                db.commit()
+                print(f"✅ Caso {serial} copiado a Completas")
+        except Exception as e:
+            print(f"⚠️ Error copiando a Completas: {e}")
+    
+    elif nuevo_estado in ["INCOMPLETA", "ILEGIBLE", "INCOMPLETA_ILEGIBLE"]:
+        # Mover a Incompletas/{Empresa}/{Motivo}/
+        try:
+            from app.drive_manager import IncompleteFileManager
+            incomplete_mgr = IncompleteFileManager()
+            motivo_cat = 'Ilegibles' if 'ILEGIBLE' in nuevo_estado else 'Faltan_Soportes'
+            nuevo_link = incomplete_mgr.mover_a_incompletas(caso, motivo_cat)
+            if nuevo_link:
+                caso.drive_link = nuevo_link
+                db.commit()
+        except Exception as e:
+            print(f"⚠️ Error moviendo a Incompletas: {e}")
+    
     # ✅ EMAIL COMPLETA
     if nuevo_estado == "COMPLETA":
         try:
@@ -620,9 +652,10 @@ async def cambiar_estado(
                     caso.drive_link, contenido_ia=contenido
                 )
                 # ✅ Usar directorio en vez de Company.email_copia
-                cc_directorio = obtener_emails_empresa_directorio(
-                    caso.empresa.nombre, db
-                ) if caso.empresa else None
+                emails_dir = obtener_emails_empresa_directorio(
+                    caso.company_id, db
+                ) if caso.company_id else []
+                cc_directorio = ",".join(emails_dir) if emails_dir else None
                 enviar_a_n8n('completa', caso.email_form, caso.serial,
                     f"✅ Validada - {caso.serial}", html,
                     cc_directorio,
