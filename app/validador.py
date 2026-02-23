@@ -11,6 +11,7 @@ import os
 import tempfile
 import base64
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import or_, and_, func
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -2204,6 +2205,7 @@ async def validar_caso_con_checks(
                 if not caso.metadata_form:
                     caso.metadata_form = {}
                 caso.metadata_form['link_completes'] = link_completes
+                flag_modified(caso, 'metadata_form')
                 print(f"✅ Caso {serial} disponible en Completes: {link_completes}")
         except Exception as e:
             print(f"⚠️ Error copiando a Completes: {e}")
@@ -2218,6 +2220,7 @@ async def validar_caso_con_checks(
             if not caso.metadata_form:
                 caso.metadata_form = {}
             caso.metadata_form['checks_seleccionados'] = checks
+            flag_modified(caso, 'metadata_form')
         
         # ✅ BLOQUEAR si es incompleta/ilegible
         if accion in ['incompleta', 'ilegible']:
@@ -3115,6 +3118,7 @@ async def aprobar_reenvio(
         ultimo_reenvio['validador_decision'] = 'APROBAR'
         ultimo_reenvio['motivo'] = motivo or "Documentos correctos"
         caso.metadata_form['reenvios'][-1] = ultimo_reenvio
+        flag_modified(caso, 'metadata_form')
         
         # 4. Copiar archivo a Completes/{Empresa}/ y a Historico
         from app.drive_manager import CaseFileOrganizer
@@ -3127,6 +3131,7 @@ async def aprobar_reenvio(
                 if not caso.metadata_form:
                     caso.metadata_form = {}
                 caso.metadata_form['link_completes'] = link_completes
+                flag_modified(caso, 'metadata_form')
                 print(f"   ✅ Archivo copiado a Completes: {link_completes}")
         except Exception as e:
             print(f"   ⚠️ Error copiando a Completes: {e}")
@@ -3242,6 +3247,7 @@ async def aprobar_reenvio(
         ultimo_reenvio['motivo_rechazo'] = motivo
         ultimo_reenvio['checks_faltantes'] = checks
         caso.metadata_form['reenvios'][-1] = ultimo_reenvio
+        flag_modified(caso, 'metadata_form')
         
         # 4. Mantener bloqueo y estado incompleto
         caso.estado = EstadoCaso.INCOMPLETA
@@ -3250,6 +3256,7 @@ async def aprobar_reenvio(
         # 5. Guardar checks en metadata para próximo intento
         if checks:
             caso.metadata_form['checks_seleccionados'] = checks
+            flag_modified(caso, 'metadata_form')
         
         # 6. Registrar evento
         registrar_evento(
@@ -3620,6 +3627,7 @@ async def guardar_pdf_editado(
         if not caso.metadata_form:
             caso.metadata_form = {}
         caso.metadata_form['motivo_validacion'] = motivo
+        flag_modified(caso, 'metadata_form')
     
     # ✅ GUARDAR EN BD
     db.commit()
