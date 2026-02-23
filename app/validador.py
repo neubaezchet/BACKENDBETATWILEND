@@ -390,6 +390,13 @@ async def listar_casos(
         empleado = caso.empleado if caso.empleado else None
         empresa_obj = caso.empresa if caso.empresa else None
         
+        # Contar reenvíos desde metadata_form
+        total_reenvios = 0
+        if caso.metadata_form and isinstance(caso.metadata_form, dict):
+            reenvios = caso.metadata_form.get('reenvios', [])
+            if isinstance(reenvios, list):
+                total_reenvios = len(reenvios)
+        
         items.append({
             "id": caso.id,
             "serial": caso.serial,
@@ -405,7 +412,9 @@ async def listar_casos(
             "dias_incapacidad": caso.dias_incapacidad,
             "eps": caso.eps,
             "fecha_inicio": caso.fecha_inicio.isoformat() if caso.fecha_inicio else None,
-            "fecha_fin": caso.fecha_fin.isoformat() if caso.fecha_fin else None
+            "fecha_fin": caso.fecha_fin.isoformat() if caso.fecha_fin else None,
+            "total_reenvios": total_reenvios,
+            "recordatorios_count": caso.recordatorios_count or 0
         })
     
     return {
