@@ -299,7 +299,10 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
         lineas.append("Subir documentos: https://repogemin.vercel.app/")
 
     elif tipo_notificacion == 'completa':
-        lineas.append(f"Tu incapacidad{fecha_texto} ha sido validada y subida al sistema.")
+        lineas.append(f"Tu incapacidad{fecha_texto} ha sido enviada correctamente.")
+        lineas.append("Procederemos a subirla al sistema.")
+        lineas.append("")
+        lineas.append("Nos comunicaremos contigo si se requiere algo adicional.")
 
     elif tipo_notificacion == 'eps':
         lineas.append(f"Tu incapacidad{fecha_texto} requiere transcripcion en tu EPS.")
