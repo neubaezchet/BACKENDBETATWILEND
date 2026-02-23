@@ -8,6 +8,69 @@ Reglas: Table-based 600px, inline CSS, HTML entities, bgcolor, MSO conditionals
 import re
 
 
+def _markdown_to_html(texto):
+    """
+    Convierte texto con formato markdown (generado por IA) a HTML legible para email.
+    - **negrita** → <strong>
+    - • bullet → bullet preservado
+    - Saltos de linea → <br/>
+    - Lineas vacias → párrafo separador
+    """
+    if not texto:
+        return ""
+    
+    # Convertir **negrita** a <strong>
+    texto = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', texto)
+    
+    # Convertir *italica* a <em>
+    texto = re.sub(r'\*(.+?)\*', r'<em>\1</em>', texto)
+    
+    # Procesar línea por línea
+    lineas = texto.split('\n')
+    resultado = []
+    en_lista = False
+    
+    for linea in lineas:
+        linea_strip = linea.strip()
+        
+        if not linea_strip:
+            # Línea vacía = separador de párrafo
+            if en_lista:
+                resultado.append('</ul>')
+                en_lista = False
+            resultado.append('<br/>')
+            continue
+        
+        # Detectar bullet points (•, -, *)
+        es_bullet = False
+        contenido_bullet = linea_strip
+        if linea_strip.startswith('• '):
+            es_bullet = True
+            contenido_bullet = linea_strip[2:]
+        elif linea_strip.startswith('- '):
+            es_bullet = True
+            contenido_bullet = linea_strip[2:]
+        elif re.match(r'^\* ', linea_strip):
+            es_bullet = True
+            contenido_bullet = linea_strip[2:]
+        
+        if es_bullet:
+            if not en_lista:
+                resultado.append('<ul style="margin:4px 0 4px 0; padding-left:20px;">')
+                en_lista = True
+            resultado.append(f'<li style="font-size:13px; color:#323130; font-family:Arial,sans-serif; line-height:1.6; margin-bottom:3px;">{contenido_bullet}</li>')
+        else:
+            if en_lista:
+                resultado.append('</ul>')
+                en_lista = False
+            resultado.append(f'{linea_strip}<br/>')
+    
+    if en_lista:
+        resultado.append('</ul>')
+    
+    return '\n'.join(resultado)
+
+
 def _parsear_serial(serial):
     """
     Extrae cedula y fechas del serial.
@@ -722,7 +785,8 @@ def get_email_template_universal_con_ia(
 
     # MENSAJE PRINCIPAL
     if contenido_ia:
-        body += _bloque_mensaje("#FAF9F8", config['color'], "", contenido_ia)
+        contenido_html = _markdown_to_html(contenido_ia)
+        body += _bloque_mensaje("#FAF9F8", config['color'], "", contenido_html)
     else:
         body += generar_mensaje_segun_tipo(tipo_email, checks_seleccionados, tipo_incapacidad, serial, quinzena, archivos_nombres)
 

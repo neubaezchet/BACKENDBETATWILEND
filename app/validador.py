@@ -93,7 +93,7 @@ def registrar_evento(db: Session, case_id: int, accion: str, actor: str = "Siste
     db.add(evento)
     db.commit()
 
-def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], caso=None, db=None):
+def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], caso=None, db=None, whatsapp_message=None):
     """
     ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
     """
@@ -154,8 +154,8 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
             whatsapp = caso.telefono_form
             print(f"📱 WhatsApp: {whatsapp}")
     
-    # ✅ El mensaje WhatsApp se genera automáticamente
-    whatsapp_message = None
+    # ✅ Si no se pasó mensaje WhatsApp explícito, n8n_notifier lo genera automáticamente
+    # (whatsapp_message ya viene del parámetro de la función)
     
     # Obtener drive_link si hay caso
     drive_link = caso.drive_link if caso and hasattr(caso, 'drive_link') else None
@@ -2249,12 +2249,50 @@ async def validar_caso_con_checks(
             estado_label = 'Incompleta' if accion == 'incompleta' else 'Ilegible'
             fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
             asunto = f"CC {caso.cedula} - {serial}{fechas_str} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            # ✅ Construir mensaje WhatsApp con los checks directamente (sin parsear HTML)
+            from app.checks_disponibles import CHECKS_DISPONIBLES
+            from app.n8n_notifier import _parsear_serial_wa
+            _cedula_wa, _fechas_wa = _parsear_serial_wa(serial)
+            wa_lineas = []
+            wa_emoji = '⚠️'
+            wa_titulo = 'Documentacion Incompleta' if accion == 'incompleta' else 'Documento Ilegible'
+            _fecha_texto_wa = f" {_fechas_wa}" if _fechas_wa else ""
+            wa_lineas.append(f"{wa_emoji} *{wa_titulo}*")
+            wa_lineas.append(f"Incapacidad{_fecha_texto_wa}")
+            wa_lineas.append("")
+            # Motivos desde checks
+            motivos_wa = []
+            for ck in checks:
+                if ck in CHECKS_DISPONIBLES:
+                    motivos_wa.append(CHECKS_DISPONIBLES[ck]['label'])
+            if motivos_wa:
+                wa_lineas.append("*Motivo:*")
+                for m in motivos_wa[:5]:
+                    wa_lineas.append(f"• {m}")
+                wa_lineas.append("")
+            # Soportes requeridos
+            from app.ia_redactor import DOCUMENTOS_REQUERIDOS
+            tipo_val = caso.tipo.value.lower().replace(' ', '_') if caso.tipo else 'enfermedad_general'
+            soportes_wa = DOCUMENTOS_REQUERIDOS.get(tipo_val, [])
+            if soportes_wa:
+                wa_lineas.append("*Soportes requeridos:*")
+                for s in soportes_wa[:5]:
+                    wa_lineas.append(f"• {s}")
+                wa_lineas.append("")
+            wa_lineas.append("Enviar en *PDF escaneado*, completo y legible.")
+            wa_lineas.append("")
+            wa_lineas.append("Subir documentos: https://repogemin.vercel.app/")
+            wa_lineas.append("")
+            wa_lineas.append("_Automatico por Incapacidades_")
+            wa_msg = "\n".join(wa_lineas)
+
             enviar_email_con_adjuntos(
                 caso.email_form,
                 asunto,
                 email_empleada,
                 adjuntos_paths,
-                caso=caso  # ✅ COPIA AUTOMÁTICA
+                caso=caso,  # ✅ COPIA AUTOMÁTICA
+                whatsapp_message=wa_msg
             )
         
         elif accion == 'tthh':
