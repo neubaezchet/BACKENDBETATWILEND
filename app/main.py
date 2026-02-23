@@ -1008,6 +1008,49 @@ async def completar_caso_incompleto(
             content={"error": f"Error procesando archivos: {str(e)}"}
         )
 
+
+# ══════════════════════════════════════════════════════════════════
+# VERIFICAR DUPLICADOS (antes de subir incapacidad)
+# ══════════════════════════════════════════════════════════════════
+@app.get("/verificar-duplicado")
+async def verificar_duplicado(
+    cedula: str,
+    fecha_inicio: str,
+    fecha_fin: str,
+    db: Session = Depends(get_db)
+):
+    """
+    ✅ Verifica si ya existe una incapacidad con las mismas fechas para esa cédula.
+    El frontend debe llamar esto ANTES de permitir enviar.
+    Retorna: {duplicado: true/false, serial, estado, mensaje}
+    """
+    try:
+        fi = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+        ff = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+    except ValueError:
+        return {"duplicado": False, "error": "Formato de fecha inválido"}
+    
+    # Buscar caso con MISMA cédula, misma fecha_inicio Y misma fecha_fin
+    from sqlalchemy import and_
+    caso_existente = db.query(Case).filter(
+        and_(
+            Case.cedula == cedula,
+            Case.fecha_inicio == fi,
+            Case.fecha_fin == ff
+        )
+    ).first()
+    
+    if caso_existente:
+        return {
+            "duplicado": True,
+            "serial": caso_existente.serial,
+            "estado": caso_existente.estado.value if caso_existente.estado else None,
+            "mensaje": f"Ya existe una incapacidad con estas fechas (Serial: {caso_existente.serial}). No puedes enviar la misma incapacidad dos veces."
+        }
+    
+    return {"duplicado": False}
+
+
 @app.post("/subir-incapacidad/")
 async def subir_incapacidad(
     cedula: str = Form(...),

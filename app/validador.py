@@ -1131,11 +1131,11 @@ async def exportar_casos_zip(
                     errores += 1
                     continue
                 
-                # Nombre del archivo: empresa/cedula_nombre_fecha.pdf
-                emp_nombre = caso.empleado.nombre.replace(" ", "_") if caso.empleado else caso.cedula
-                fecha_str = caso.created_at.strftime("%Y%m%d") if caso.created_at else "sin_fecha"
+                # Nombre del archivo: empresa/cedula_fechaInicio_fechaFin.pdf
+                fecha_inicio_str = caso.fecha_inicio.strftime("%d%m%Y") if caso.fecha_inicio else "sin_inicio"
+                fecha_fin_str = caso.fecha_fin.strftime("%d%m%Y") if caso.fecha_fin else "sin_fin"
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "otra"
-                filename = f"{empresa_nombre}/{caso.cedula}_{emp_nombre}_{fecha_str}.pdf"
+                filename = f"{empresa_nombre}/{caso.cedula}_{fecha_inicio_str}_{fecha_fin_str}.pdf"
                 
                 zf.writestr(filename, response.content)
                 descargados += 1
@@ -1595,11 +1595,11 @@ async def exportar_a_drive_temporal(
                     errores += 1
                     continue
                 
-                # Nombre descriptivo para la copia
-                emp_nombre = caso.empleado.nombre.replace(" ", "_") if caso.empleado else caso.cedula
-                fecha_str = caso.created_at.strftime("%Y%m%d") if caso.created_at else "sin_fecha"
+                # Nombre descriptivo para la copia: cedula_fechaInicio_fechaFin.pdf
+                fecha_inicio_str = caso.fecha_inicio.strftime("%d%m%Y") if caso.fecha_inicio else "sin_inicio"
+                fecha_fin_str = caso.fecha_fin.strftime("%d%m%Y") if caso.fecha_fin else "sin_fin"
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "otra"
-                nuevo_nombre = f"{empresa_nombre}_{caso.cedula}_{emp_nombre}_{fecha_str}.pdf"
+                nuevo_nombre = f"{caso.cedula}_{fecha_inicio_str}_{fecha_fin_str}.pdf"
                 
                 # COPIAR archivo (no mover) al folder temporal
                 copy_metadata = {
