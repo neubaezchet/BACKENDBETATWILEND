@@ -409,9 +409,11 @@ def shutdown_event():
 
 @app.post("/admin/test-recordatorios")
 async def test_recordatorios(
-    _: bool = Depends(verificar_token_admin)
+    authorization: str = Header(...)
 ):
     """Ejecuta manualmente la verificación de recordatorios (para testing)"""
+    from app.validador import verificar_token_admin
+    verificar_token_admin(authorization)
     from app.scheduler_recordatorios import verificar_casos_pendientes
     try:
         verificar_casos_pendientes()
