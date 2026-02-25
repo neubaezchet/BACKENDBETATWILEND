@@ -20,7 +20,7 @@ from app.database import (
     get_db, init_db, engine, Case, CaseDocument, Employee, Company,
     EstadoCaso, EstadoDocumento, TipoIncapacidad, CorreoNotificacion
 )
-from app.validador import router as validador_router
+from app.validador import router as validador_router, obtener_emails_empresa_directorio
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
 from app.serial_generator import generar_serial_unico  # ✅ NUEVO
 
@@ -453,10 +453,14 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None):
     correo_bd = None
     
     if caso:
-        if hasattr(caso, 'empresa') and caso.empresa:
-            if hasattr(caso.empresa, 'email_copia') and caso.empresa.email_copia:
-                cc_email = caso.empresa.email_copia
-                print(f"📧 CC configurado: {cc_email} ({caso.empresa.nombre})")
+        # ✅ CC EMPRESA: Ahora viene del DIRECTORIO (no de BD)
+        if hasattr(caso, 'company_id') and caso.company_id:
+            emails_dir = obtener_emails_empresa_directorio(caso.company_id, db=db)
+            if emails_dir:
+                cc_email = emails_dir[0]  # Primer email del directorio
+                print(f"📧 CC desde DIRECTORIO: {cc_email} (empresa_id={caso.company_id})")
+            else:
+                print(f"⚠️ Sin emails en directorio para empresa_id={caso.company_id}")
         
         # ✅ OBTENER TELÉFONO DEL FORMULARIO (prioritario)
         if hasattr(caso, 'telefono_form') and caso.telefono_form:
@@ -1304,10 +1308,13 @@ async def subir_incapacidad(
         correo_empleado = empleado_bd.correo
         empresa_reg = empleado_bd.empresa.nombre if empleado_bd.empresa else "No especificada"
         
-        # ✅ OBTENER EMAIL DE COPIA DE LA EMPRESA
+        # ✅ OBTENER EMAIL DE COPIA DE LA EMPRESA (desde Directorio, no BD)
         cc_empresa = None
-        if empleado_bd.empresa and empleado_bd.empresa.email_copia:
-            cc_empresa = empleado_bd.empresa.email_copia
+        if empleado_bd.empresa and hasattr(empleado_bd.empresa, 'id'):
+            emails_dir = obtener_emails_empresa_directorio(empleado_bd.empresa.id, db=db)
+            if emails_dir:
+                cc_empresa = emails_dir[0]
+                print(f"📧 CC empresa (directorio): {cc_empresa}")
         
         # ✅ VERIFICAR SI ES CERTIFICADO DE HOSPITALIZACIÓN (mensaje especial)
         es_certificado = tipo_bd and tipo_bd.value.lower() == 'certificado' if tipo_bd else False
