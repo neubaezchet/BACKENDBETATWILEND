@@ -373,3 +373,23 @@ def redactar_mensaje_completo(nombre: str, serial: str, tipo: str) -> str:
         return message.content[0].text.strip()
     except:
         return f"¡Excelentes noticias {nombre}! Su incapacidad **{serial}** fue VALIDADA y subida al sistema exitosamente."
+
+# ✅ ALIAS para mantener compatibilidad
+redactar_mensaje_completa = redactar_mensaje_completo
+
+def redactar_whatsapp_completa(nombre: str, serial: str) -> str:
+    """
+    WhatsApp cuando incapacidad es COMPLETA/VALIDADA
+    Corto, informal, celebratorio
+    """
+    try:
+        message = client.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=200,
+            messages=[{"role": "user", "content": 
+                f"Mensaje WhatsApp corto y celebratorio para {nombre}: incapacidad {serial} fue validada "
+                "exitosamente. Se subirá al sistema. Usa emojis, máx 100 caracteres, informal y alegre."}]
+        )
+        return message.content[0].text.strip()
+    except:
+        return f"¡Yupi! 🎉 Tu incapacidad {serial} fue validada exitosamente. Se procederá a subirla al sistema. ¡Gracias!"

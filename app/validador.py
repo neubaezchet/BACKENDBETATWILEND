@@ -636,7 +636,7 @@ async def cambiar_estado(
     # ✅ EMAIL COMPLETA
     if nuevo_estado == "COMPLETA":
         try:
-            from app.ia_redactor import redactar_mensaje_completa
+            from app.ia_redactor import redactar_mensaje_completa, redactar_whatsapp_completa
             from app.email_templates import get_email_template_universal
             from app.n8n_notifier import enviar_a_n8n
             if caso.empleado and caso.email_form:
@@ -656,14 +656,30 @@ async def cambiar_estado(
                     caso.company_id, db
                 ) if caso.company_id else []
                 cc_directorio = ",".join(emails_dir) if emails_dir else None
-                enviar_a_n8n('completa', caso.email_form, caso.serial,
-                    f"✅ Validada - {caso.serial}", html,
-                    cc_directorio,
-                    caso.empleado.correo if caso.empleado else None,
-                    caso.telefono_form, None, [],
-                    drive_link=caso.drive_link)
+                
+                # ✅ MENSAJE WHATSAPP
+                whatsapp_msg = redactar_whatsapp_completa(
+                    caso.empleado.nombre, caso.serial
+                )
+                
+                # ✅ ENVIAR EMAIL + WHATSAPP
+                enviar_a_n8n(
+                    tipo_notificacion='completa',
+                    email=caso.email_form,
+                    serial=caso.serial,
+                    subject=f"✅ Incapacidad Validada - {caso.serial}",
+                    html_content=html,
+                    cc_email=cc_directorio,
+                    correo_bd=caso.empleado.correo if caso.empleado else None,
+                    whatsapp=caso.telefono_form,  # ✅ NUEVO: Enviar WhatsApp
+                    whatsapp_message=whatsapp_msg,  # ✅ NUEVO: Mensaje WhatsApp
+                    adjuntos_base64=[]
+                )
+                print(f"✅ Notificaciones COMPLETA enviadas: {caso.email_form} + WhatsApp {caso.telefono_form}")
         except Exception as e:
-            print(f"⚠️ Email COMPLETA error: {e}")
+            print(f"⚠️ Notificación COMPLETA error: {e}")
+            import traceback
+            traceback.print_exc()
     
     return {
         "status": "ok",
