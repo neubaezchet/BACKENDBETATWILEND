@@ -740,8 +740,11 @@ def verificar_bloqueo_empleado(
         if not motivo_detallado and checks_faltantes:
             docs_faltantes = []
             for check in checks_faltantes:
-                if check.get('estado') in ['INCOMPLETO', 'ILEGIBLE', 'PENDIENTE']:
+                # Validar que check sea un diccionario
+                if isinstance(check, dict) and check.get('estado') in ['INCOMPLETO', 'ILEGIBLE', 'PENDIENTE']:
                     docs_faltantes.append(check.get('nombre', 'Documento'))
+                elif isinstance(check, str) and check in ['INCOMPLETO', 'ILEGIBLE', 'PENDIENTE']:
+                    docs_faltantes.append(check)
             
             if docs_faltantes:
                 motivo_detallado = f"Documentos faltantes o ilegibles: {', '.join(docs_faltantes)}"
