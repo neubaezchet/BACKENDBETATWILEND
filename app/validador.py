@@ -633,51 +633,95 @@ async def cambiar_estado(
         except Exception as e:
             print(f"⚠️ Error moviendo a Incompletas: {e}")
     
-    # ✅ EMAIL COMPLETA
-    if nuevo_estado == "COMPLETA":
+    # ✅ NOTIFICACIONES PARA TODOS LOS ESTADOS (excepto NUEVO)
+    # Obtener emails de directorio una sola vez
+    emails_directorio = obtener_emails_empresa_directorio(
+        caso.company_id, db
+    ) if caso.company_id else []
+    cc_directorio = ",".join(emails_directorio) if emails_directorio else None
+    
+    # Mapeo de estados a notificaciones
+    notificaciones_estado = {
+        "INCOMPLETA": {
+            "tipo": "incompleta",
+            "subject": f"📋 Incapacidad Incompleta - {serial}",
+            "template": "incompleta"
+        },
+        "ILEGIBLE": {
+            "tipo": "ilegible",
+            "subject": f"📄 Documentos Ilegibles - {serial}",
+            "template": "ilegible"
+        },
+        "INCOMPLETA_ILEGIBLE": {
+            "tipo": "incompleta_ilegible",
+            "subject": f"⚠️ Incapacidad Incompleta e Ilegible - {serial}",
+            "template": "incompleta_ilegible"
+        },
+        "EPS_TRANSCRIPCION": {
+            "tipo": "eps_transcripcion",
+            "subject": f"🏥 Derivado a EPS - {serial}",
+            "template": "eps_transcripcion"
+        },
+        "DERIVADO_TTHH": {
+            "tipo": "derivado_tthh",
+            "subject": f"👥 Derivado a Recursos Humanos - {serial}",
+            "template": "derivado_tthh"
+        },
+        "CAUSA_EXTRA": {
+            "tipo": "causa_extra",
+            "subject": f"📌 Causa Extra Identificada - {serial}",
+            "template": "causa_extra"
+        },
+        "COMPLETA": {
+            "tipo": "completa",
+            "subject": f"✅ Incapacidad Validada - {serial}",
+            "template": "completa"
+        },
+        "EN_RADICACION": {
+            "tipo": "en_radicacion",
+            "subject": f"📤 En Radicación - {serial}",
+            "template": "en_radicacion"
+        }
+    }
+    
+    if nuevo_estado in notificaciones_estado and caso.email_form and caso.empleado:
         try:
-            from app.ia_redactor import redactar_mensaje_completa, redactar_whatsapp_completa
+            config = notificaciones_estado[nuevo_estado]
             from app.email_templates import get_email_template_universal
-            from app.n8n_notifier import enviar_a_n8n
-            if caso.empleado and caso.email_form:
-                contenido = redactar_mensaje_completa(
-                    caso.empleado.nombre, caso.serial,
-                    caso.tipo.value if caso.tipo else 'General'
-                )
-                html = get_email_template_universal(
-                    'completa', caso.empleado.nombre, caso.serial,
-                    caso.empresa.nombre if caso.empresa else 'N/A',
-                    caso.tipo.value if caso.tipo else 'General',
-                    caso.telefono_form or 'N/A', caso.email_form,
-                    caso.drive_link, contenido_ia=contenido
-                )
-                # ✅ Usar directorio en vez de Company.email_copia
-                emails_dir = obtener_emails_empresa_directorio(
-                    caso.company_id, db
-                ) if caso.company_id else []
-                cc_directorio = ",".join(emails_dir) if emails_dir else None
-                
-                # ✅ MENSAJE WHATSAPP
-                whatsapp_msg = redactar_whatsapp_completa(
-                    caso.empleado.nombre, caso.serial
-                )
-                
-                # ✅ ENVIAR EMAIL + WHATSAPP
-                enviar_a_n8n(
-                    tipo_notificacion='completa',
-                    email=caso.email_form,
-                    serial=caso.serial,
-                    subject=f"✅ Incapacidad Validada - {caso.serial}",
-                    html_content=html,
-                    cc_email=cc_directorio,
-                    correo_bd=caso.empleado.correo if caso.empleado else None,
-                    whatsapp=caso.telefono_form,  # ✅ NUEVO: Enviar WhatsApp
-                    whatsapp_message=whatsapp_msg,  # ✅ NUEVO: Mensaje WhatsApp
-                    adjuntos_base64=[]
-                )
-                print(f"✅ Notificaciones COMPLETA enviadas: {caso.email_form} + WhatsApp {caso.telefono_form}")
+            
+            # Obtener motivo del cambio o usar genérico
+            motivo_email = cambio.motivo or f"El caso ha sido marcado como {nuevo_estado}"
+            
+            # Generar HTML del email
+            html = get_email_template_universal(
+                config["template"], caso.empleado.nombre, serial,
+                caso.empresa.nombre if caso.empresa else 'N/A',
+                caso.tipo.value if caso.tipo else 'General',
+                caso.telefono_form or 'N/A', 
+                caso.email_form,
+                caso.drive_link,
+                contenido_ia=motivo_email,
+                motivo=cambio.motivo
+            )
+            
+            # ✅ ENVIAR NOTIFICACIÓN (con directorio automáticamente)
+            enviar_a_n8n(
+                tipo_notificacion=config["tipo"],
+                email=caso.email_form,
+                serial=serial,
+                subject=config["subject"],
+                html_content=html,
+                cc_email=cc_directorio,  # ✅ DIRECTORIO INCLUIDO
+                correo_bd=caso.empleado.correo if caso.empleado else None,
+                whatsapp=caso.telefono_form,
+                whatsapp_message=None,  # Se genera automáticamente en n8n
+                adjuntos_base64=[]
+            )
+            print(f"✅ Notificación {nuevo_estado} enviada: {caso.email_form}")
+            if cc_directorio:
+                print(f"   📧 Con copia a directorio: {cc_directorio}")
         except Exception as e:
-            print(f"⚠️ Notificación COMPLETA error: {e}")
+            print(f"⚠️ Error enviando notificación {nuevo_estado}: {e}")
             import traceback
             traceback.print_exc()
     
@@ -686,7 +730,9 @@ async def cambiar_estado(
         "serial": serial,
         "estado_anterior": estado_anterior,
         "estado_nuevo": nuevo_estado,
-        "mensaje": f"Estado actualizado a {nuevo_estado}"
+        "mensaje": f"Estado actualizado a {nuevo_estado}",
+        "emails_directorio": emails_directorio if emails_directorio else [],
+        "cc_enviado": cc_directorio
     }
 
 @router.post("/casos/{serial}/nota")
