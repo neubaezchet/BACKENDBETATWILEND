@@ -132,6 +132,10 @@ class Case(Base):
     email_form = Column(String(200))
     telefono_form = Column(String(50))
     
+    # ✅ COLUMNAS - Rastreo de intentos incompletos
+    intentos_incompletos = Column(Integer, default=0)  # Contador: cuántas veces se marcó como INCOMPLETA/ILEGIBLE
+    fecha_ultimo_incompleto = Column(DateTime, nullable=True)  # Última fecha que se marcó como incompleta
+    
     # ✅ NUEVAS COLUMNAS - Sistema de recordatorios
     recordatorio_enviado = Column(Boolean, default=False)
     fecha_recordatorio = Column(DateTime, nullable=True)
