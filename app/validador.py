@@ -21,7 +21,7 @@ import pandas as pd
 from app.database import (
     get_db, Case, CaseDocument, CaseEvent, CaseNote, Employee, 
     Company, SearchHistory, EstadoCaso, EstadoDocumento, TipoIncapacidad,
-    CorreoNotificacion, AlertaEmail, Alerta180Log
+    CorreoNotificacion, AlertaEmail, Alerta180Log, get_utc_now
 )
 from app.checks_disponibles import CHECKS_DISPONIBLES, obtener_checks_por_tipo
 from app.email_templates import get_email_template_universal
@@ -597,8 +597,11 @@ async def cambiar_estado(
         metadata={"fecha_limite": cambio.fecha_limite} if cambio.fecha_limite else None
     )
     
+    # ✅ CONTADORES: Rastrear intentos incompletos
     if nuevo_estado in ["INCOMPLETA", "ILEGIBLE", "INCOMPLETA_ILEGIBLE"]:
         caso.bloquea_nueva = True
+        caso.intentos_incompletos = (caso.intentos_incompletos or 0) + 1
+        caso.fecha_ultimo_incompleto = get_utc_now()
     
     if nuevo_estado == "COMPLETA":
         caso.bloquea_nueva = False
@@ -607,18 +610,44 @@ async def cambiar_estado(
     
     # ✅ DRIVE: Mover archivos según estado
     if nuevo_estado == "COMPLETA":
-        # Copiar a Completas/{Empresa}/ y eliminar de Incompletas/
+        # COPIAR A HISTÓRICO + COMPLETAS + ELIMINAR DE INCOMPLETAS
         try:
+            from app.drive_manager import IncompleteFileManager
+            
+            # 1️⃣ Copiar a Histórico (Incapacidades/{Empresa}/{Año}/{Quincena}/{Tipo}/)
+            organizer = CaseFileOrganizer()
+            link_historico = organizer.copiar_a_historico(caso)
+            if link_historico:
+                if not caso.metadata_form:
+                    caso.metadata_form = {}
+                caso.metadata_form['link_historico'] = link_historico
+                print(f"✅ Caso {serial} copiado a Histórico")
+            
+            # 2️⃣ Copiar a Completas para respaldo rápido
             link_completes = completes_mgr.copiar_caso_a_completes(caso)
             if link_completes:
                 if not caso.metadata_form:
                     caso.metadata_form = {}
                 caso.metadata_form['link_completes'] = link_completes
-                flag_modified(caso, 'metadata_form')
-                db.commit()
                 print(f"✅ Caso {serial} copiado a Completas")
+            
+            # 3️⃣ Eliminar de Incompletas si estaba allí
+            if caso.drive_link and '/Incompletas/' in caso.drive_link:
+                try:
+                    incomplete_mgr = IncompleteFileManager()
+                    file_id = incomplete_mgr._extract_file_id(caso.drive_link)
+                    if file_id and incomplete_mgr.eliminar_version_incompleta(file_id):
+                        print(f"✅ Archivo incompleto eliminado de Incompletas: {serial}")
+                except Exception as delete_err:
+                    print(f"⚠️ Error eliminando de Incompletas: {delete_err}")
+            
+            flag_modified(caso, 'metadata_form')
+            db.commit()
+            
         except Exception as e:
-            print(f"⚠️ Error copiando a Completas: {e}")
+            print(f"⚠️ Error en manejo de archivos para COMPLETA: {e}")
+            import traceback
+            traceback.print_exc()
     
     elif nuevo_estado in ["INCOMPLETA", "ILEGIBLE", "INCOMPLETA_ILEGIBLE"]:
         # Mover a Incompletas/{Empresa}/{Motivo}/
@@ -740,7 +769,9 @@ async def cambiar_estado(
         "estado_nuevo": nuevo_estado,
         "mensaje": f"Estado actualizado a {nuevo_estado}",
         "emails_directorio": emails_directorio if emails_directorio else [],
-        "cc_enviado": cc_directorio
+        "cc_enviado": cc_directorio,
+        "intentos_incompletos": caso.intentos_incompletos or 0,
+        "fecha_ultimo_incompleto": caso.fecha_ultimo_incompleto.isoformat() if caso.fecha_ultimo_incompleto else None
     }
 
 @router.post("/casos/{serial}/nota")
