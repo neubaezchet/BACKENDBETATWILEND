@@ -692,6 +692,14 @@ async def cambiar_estado(
             # Obtener motivo del cambio o usar genérico
             motivo_email = cambio.motivo or f"El caso ha sido marcado como {nuevo_estado}"
             
+            # ✅ MENSAJE WHATSAPP ESPECIAL PARA COMPLETA
+            whatsapp_msg = None
+            if nuevo_estado == "COMPLETA":
+                from app.ia_redactor import redactar_whatsapp_completa
+                whatsapp_msg = redactar_whatsapp_completa(
+                    caso.empleado.nombre, serial
+                )
+            
             # Generar HTML del email
             html = get_email_template_universal(
                 config["template"], caso.empleado.nombre, serial,
@@ -714,7 +722,7 @@ async def cambiar_estado(
                 cc_email=cc_directorio,  # ✅ DIRECTORIO INCLUIDO
                 correo_bd=caso.empleado.correo if caso.empleado else None,
                 whatsapp=caso.telefono_form,
-                whatsapp_message=None,  # Se genera automáticamente en n8n
+                whatsapp_message=whatsapp_msg,  # ✅ Mensaje especial para COMPLETA, None para otros
                 adjuntos_base64=[]
             )
             print(f"✅ Notificación {nuevo_estado} enviada: {caso.email_form}")
