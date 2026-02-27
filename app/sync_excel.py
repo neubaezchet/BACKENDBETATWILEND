@@ -295,18 +295,19 @@ def sincronizar_excel_completo():
                         
                         num_incap = str(row["numero_incapacidad"]).strip() if pd.notna(row.get("numero_incapacidad")) else None
                         
-                        # ═══ MATCHING INTELIGENTE: 4 estrategias ═══
+                        # ═══ MATCHING INTELIGENTE: 5 estrategias ═══
+                        # NOTA: numero_incapacidad es SOLO para reportes, NO para matching
                         caso = None
                         match_method = ""
                         
-                        # 1) Por numero_incapacidad exacto (más preciso)
-                        if num_incap and caso is None:
-                            caso = db.query(Case).filter(
+                        # 0) Intentar por numero_incapacidad SOLO si no hay coincidencia de fechas
+                        # (es lo menos confiable pero útil como último recurso)
+                        caso_num_incap = None
+                        if num_incap:
+                            caso_num_incap = db.query(Case).filter(
                                 Case.cedula == cedula_case,
                                 Case.numero_incapacidad == num_incap
                             ).first()
-                            if caso:
-                                match_method = "numero_incapacidad"
                         
                         # 2) Por cedula + fecha_inicio Kactus ≈ fecha_inicio portal
                         if caso is None and fecha_inicio_kactus:
@@ -386,6 +387,11 @@ def sincronizar_excel_completo():
                             if candidatos:
                                 caso = candidatos
                                 match_method = "rango_superpuesto"
+                        
+                        # 6) Fallback: Si NO encontramos por fechas pero hay numero_incapacidad, usarlo
+                        if caso is None and caso_num_incap:
+                            caso = caso_num_incap
+                            match_method = "numero_incapacidad_fallback"
                         
                         if not caso:
                             cases_no_encontrados += 1

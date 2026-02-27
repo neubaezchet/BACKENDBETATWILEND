@@ -244,6 +244,9 @@ def startup_event():
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS kactus_sync_at TIMESTAMP;",
                 # Recordatorios mejorados
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS recordatorios_count INTEGER DEFAULT 0;",
+                # ✅ COLUMNAS - Rastreo de intentos incompletos
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS intentos_incompletos INTEGER DEFAULT 0;",
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_ultimo_incompleto TIMESTAMP;",
             ]
             for sql in migraciones:
                 conn.execute(text(sql))
