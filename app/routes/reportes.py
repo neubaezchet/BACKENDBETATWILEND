@@ -24,6 +24,16 @@ from app.services.reporte_service import ReporteService
 from app.utils.excel_formatter import ExcelFormatter
 from app.services.prorroga_detector import auto_detectar_prorroga_caso, analizar_historial_empleado
 from app.services.cie10_service import buscar_codigo, validar_dias
+from app.services.correlacion_analytics import (
+    obtener_precision_correlaciones,
+    obtener_correlaciones_aprendidas,
+    validar_exclusion_par,
+    obtener_reglas_exclusion,
+    calcular_asertividad_con_degradacion,
+    analizar_patrones_por_departamento,
+    generar_indicadores_confiabilidad,
+    detectar_anomalias_correlacion,
+)
 from app.checks_disponibles import CHECKS_DISPONIBLES
 
 logger = logging.getLogger(__name__)
@@ -1140,3 +1150,55 @@ async def vaciar_kactus_manual():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================
+# 🔬 ENDPOINT: VALIDAR RUPTURA PRÓRROGA (OMS + LOCAL)
+# ============================================================
+@router.post("/analytics/cie10/validar-ruptura")
+async def validar_ruptura_prorroga(
+    codigo_a: str = Query(..., description="Código CIE-10 diagnóstico anterior"),
+    codigo_b: str = Query(..., description="Código CIE-10 diagnóstico nuevo"),
+    dias_entre: int = Query(default=10, description="Días de brecha entre incapacidades")
+):
+    """
+    Valida si dos códigos CIE-10 ROMPEN la prórroga según:
+    1. **API OMS** (primaria) - Exclusiones mutuas, sin relación jerárquica
+    2. **Reglas locales** (complementaria) - exclusiones_cie10.json + degradación temporal
+    
+    Retorna:
+    - `puede_ser_prorroga`: bool - Si la prórroga es válida
+    - `razon_ruptura`: str - Explicación si está rechazada
+    - `fuente`: str - "OMS", "LOCAL", "AMBAS", "NINGUNA"
+    - `confianza_oms`: float - Nivel de confianza OMS (0-100)
+    - `cita_legal`: str - Referencia legal/clínica
+    
+    **Ejemplos:**
+    - A00 + A05: PERMITIDA (98% OMS - mismo bloque)
+    - O80 + S72: RECHAZADA (OMS excluye - embarazo no relacionado con trauma)
+    - F10 + F42: Baja confianza local (20% asertividad)
+    """
+    try:
+        from app.services.prorroga_detector import _validar_ruptura_prorroga
+        
+        validacion = _validar_ruptura_prorroga(codigo_a.upper(), codigo_b.upper(), dias_entre)
+        
+        return {
+            "ok": True,
+            "codigo_a": codigo_a.upper(),
+            "codigo_b": codigo_b.upper(),
+            "dias_entre": dias_entre,
+            "puede_ser_prorroga": validacion["puede_ser_prorroga"],
+            "razon_ruptura": validacion["razon_ruptura"],
+            "fuente_validacion": validacion["fuente"],
+            "confianza_oms_%": validacion["confianza_oms"],
+            "asertividad_local_%": validacion["asertividad_local"],
+            "cita_legal": validacion["cita_legal"],
+            "recomendacion": (
+                "✅ Prórroga válida" if validacion["puede_ser_prorroga"] 
+                else f"❌ Prórroga rechazada por {validacion['fuente']}"
+            )
+        }
+    
+    except Exception as e:
+        logger.error(f"Error validando ruptura prórroga: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

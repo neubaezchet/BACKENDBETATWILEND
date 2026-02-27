@@ -41,6 +41,8 @@ from app.services.cie10_service import (
     validar_conteo_dias,
     _cargar_correlaciones,
 )
+import json
+from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════
 # CONSTANTES NORMATIVA COLOMBIANA
@@ -56,8 +58,111 @@ VENTANA_CORTE_PRORROGA = 30    # Máximo días de brecha para mantener cadena ac
 
 
 # ═══════════════════════════════════════════════════════════
-# DETECTOR PRINCIPAL
+# VALIDACIÓN RUPTURA DE PRÓRROGA: OMS + REGLAS LOCALES
 # ═══════════════════════════════════════════════════════════
+
+def _validar_ruptura_prorroga(codigo_a: str, codigo_b: str, dias_entre: int) -> dict:
+    """
+    Valida si dos códigos CIE-10 ROMPEN la prórroga según:
+    1. API OMS (primaria) - Exclusiones mutuas, sin relación jerárquica
+    2. Reglas locales (complementaria) - exclusiones_cie10.json
+    
+    Retorna:
+        {
+            "puede_ser_prorroga": bool,
+            "razon_ruptura": str,
+            "fuente": "OMS" | "LOCAL" | "AMBAS" | "NINGUNA" (puede ser prórroga),
+            "confianza_oms": float | None,
+            "asertividad_local": float | None,
+            "cita_legal": str | None
+        }
+    """
+    resultado = {
+        "puede_ser_prorroga": True,  # Por defecto, permite prórroga
+        "razon_ruptura": "",
+        "fuente": "NINGUNA",
+        "confianza_oms": None,
+        "asertividad_local": None,
+        "cita_legal": None
+    }
+    
+    if not codigo_a or not codigo_b:
+        return resultado  # Sin códigos, sin ruptura detectada
+    
+    # ═══ 1. VALIDAR CON API OMS (primaria) ═══
+    try:
+        from app.services.oms_icd_service import validar_correlacion_oms_local_sync
+        
+        validacion_oms = validar_correlacion_oms_local_sync(codigo_a, codigo_b)
+        
+        if validacion_oms.get("validado_oms"):
+            resultado["confianza_oms"] = validacion_oms.get("confianza_oms", 0)
+            nivel_oms = validacion_oms.get("nivel_oms", "")
+            
+            # ⭐ OMS dice que ROMPE prórroga
+            if nivel_oms == "EXCLUIDO_OMS" or validacion_oms.get("confianza_oms", 0) == 0:
+                resultado["puede_ser_prorroga"] = False
+                resultado["razon_ruptura"] = (
+                    f"OMS RECHAZA PRÓRROGA: {validacion_oms.get('razon_oms', '')}. "
+                    f"{validacion_oms.get('cita_legal_oms', '')}"
+                )
+                resultado["fuente"] = "OMS"
+                resultado["cita_legal"] = validacion_oms.get("cita_legal_oms", "")
+                return resultado
+            
+            # OMS dice que SÍ correlaciona (98%, 92%, 85%, 75%, etc.)
+            # Continuar a validación local como confirmación
+    
+    except Exception as e:
+        pass  # Si OMS falla, continuar con reglas locales
+    
+    # ═══ 2. VALIDAR CON REGLAS LOCALES (complementaria) ═══
+    try:
+        data_dir = Path(__file__).parent.parent / "data"
+        excl_file = data_dir / "exclusiones_cie10.json"
+        
+        if excl_file.exists():
+            with open(excl_file, "r", encoding="utf-8") as f:
+                excl_data = json.load(f)
+            
+            codigo_a_norm = codigo_a.strip().upper().replace(".", "")
+            codigo_b_norm = codigo_b.strip().upper().replace(".", "")
+            
+            for excl in excl_data.get("exclusiones", []):
+                cod_a_local = excl.get("codigo_a", "").strip().upper().replace(".", "")
+                cod_b_local = excl.get("codigo_b", "").strip().upper().replace(".", "")
+                
+                # Encontrar si el par existe (cualquier dirección)
+                if (cod_a_local == codigo_a_norm and cod_b_local == codigo_b_norm) or \
+                   (cod_a_local == codigo_b_norm and cod_b_local == codigo_a_norm):
+                    
+                    bloquear = excl.get("bloquear", False)
+                    asertividad_reducida = excl.get("asertividad_reducida", 0)
+                    
+                    resultado["asertividad_local"] = asertividad_reducida
+                    
+                    # Si bloquear = true, la exclusión ROMPE la prórroga
+                    if bloquear:
+                        resultado["puede_ser_prorroga"] = False
+                        resultado["razon_ruptura"] = (
+                            f"REGLA LOCAL BLOQUEA: {excl.get('razon', '')}. "
+                            f"Evidencia: {excl.get('evidencia', '')}"
+                        )
+                        resultado["fuente"] = "LOCAL"
+                        resultado["cita_legal"] = f"Resolución MinSalud — {excl.get('evidencia', '')}"
+                        return resultado
+                    
+                    # Si bloquear = false, reduce asertividad pero no rompe
+                    # La correlación local decide
+    
+    except Exception as e:
+        pass
+    
+    return resultado
+
+
+# ═════════════════════════════════════════════════════════════
+
 
 def analizar_historial_empleado(db: Session, cedula: str) -> dict:
     """
@@ -392,22 +497,34 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
     codigo_anterior = caso_anterior.codigo_cie10 or ""
     codigo_nuevo = caso_nuevo.codigo_cie10 or ""
     
-    # Si no hay códigos CIE-10, usar solo temporalidad
+    # ⭐ v4: CAMBIO CRÍTICO — Sin CIE-10, NO es prórroga
+    # Las prorrogas REQUIEREN correlación diagnóstica (código_cie10 relacionado)
+    # No se permiten "prorrogas por solo temporalidad" sin validación clínica
     if not codigo_anterior and not codigo_nuevo:
-        if brecha <= VENTANA_CORTE_PRORROGA:
-            asert_temporal = max(15, 45 - brecha)  # 45% día 0, decrece con los días
-            return {
-                "es_prorroga": True,
-                "tipo": "temporal_sin_cie10",
-                "confianza": "BAJA",
-                "asertividad": float(asert_temporal),
-                "brecha_dias": brecha,
-                "explicacion": f"Prórroga posible por proximidad temporal ({brecha}d), sin códigos CIE-10 para confirmar. Asertividad {asert_temporal}%."
-            }
+        # Sin códigos CIE-10 = no hay correlación diagnóstica = no es prórroga
+        resultado_base["explicacion"] = (
+            f"SIN CORRELACIÓN DIAGNÓSTICA: Ambas incapacidades sin código CIE-10. "
+            f"No se puede determinar prórroga sin diagnósticos. Brecha: {brecha}d. "
+            f"⚠️ Esperar confirmación de Kactus con códigos CIE-10."
+        )
         return resultado_base
     
     # Correlación CIE-10 con motor v2
     if codigo_anterior and codigo_nuevo:
+        # ⭐ PRIMERO: Validar si OMS + reglas locales ROMPEN la prórroga
+        validacion_ruptura = _validar_ruptura_prorroga(codigo_anterior, codigo_nuevo, brecha)
+        
+        if not validacion_ruptura["puede_ser_prorroga"]:
+            # OMS o reglas locales detecten incompatibilidad
+            resultado_base["explicacion"] = validacion_ruptura["razon_ruptura"]
+            resultado_base["validacion_oms"] = {
+                "rechazada_por": validacion_ruptura["fuente"],
+                "confianza_oms": validacion_ruptura["confianza_oms"],
+                "cita_legal": validacion_ruptura["cita_legal"]
+            }
+            return resultado_base
+        
+        # SEGUNDO: Si OMS+LOCAL no rechazan, evaluar con motor local
         # Llamar al motor v2 con días_entre y dirección
         correlacion = son_correlacionados(
             codigo_anterior,
@@ -426,7 +543,7 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
             else:
                 tipo = "correlacion_cie10_baja"
             
-            return {
+            resultado_response = {
                 "es_prorroga": True,
                 "tipo": tipo,
                 "confianza": confianza,
@@ -436,8 +553,13 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
                 "explicacion": correlacion["explicacion"],
                 "detalles_calculo": correlacion.get("detalles_calculo", {}),
                 "requiere_validacion_medica": correlacion.get("requiere_validacion_medica", False),
-                "evidencia": correlacion.get("evidencia", "")
+                "evidencia": correlacion.get("evidencia", ""),
+                "validacion_oms": {
+                    "permitida_por": validacion_ruptura["fuente"],
+                    "confianza_oms": validacion_ruptura["confianza_oms"]
+                }
             }
+            return resultado_response
         else:
             # v3: No correlacionados → NO es prórroga (independiente de la brecha)
             # El detector de huecos temporales en _detectar_cadenas_prorroga
@@ -448,17 +570,13 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
                 f"No se considera prórroga."
             )
     elif codigo_anterior or codigo_nuevo:
-        # Solo uno tiene código
-        if brecha <= 15:
-            asert = max(30, 55 - brecha * 2)
-            return {
-                "es_prorroga": True,
-                "tipo": "temporal_codigo_parcial",
-                "confianza": "MEDIA" if asert >= 40 else "BAJA",
-                "asertividad": float(asert),
-                "brecha_dias": brecha,
-                "explicacion": f"Prórroga probable por proximidad ({brecha}d). Solo {'primera' if codigo_anterior else 'segunda'} incapacidad tiene código CIE-10. Asertividad {asert}%."
-            }
+        # ⭐ v4: Solo uno tiene código = NO es prórroga, es INCOMPLETO
+        # Requiere que AMBOS tengan código CIE-10 para detectar prórroga
+        resultado_base["explicacion"] = (
+            f"SIN CORRELACIÓN COMPLETA: Solo {'primera' if codigo_anterior else 'segunda'} incapacidad tiene código CIE-10. "
+            f"Necesita que ambas tengan diagnóstico para detectar prórroga. Brecha: {brecha}d. "
+            f"⚠️ Marcar segunda como INCOMPLETA si falta el código."
+        )
     
     return resultado_base
 
