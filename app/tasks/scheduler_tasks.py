@@ -107,15 +107,15 @@ def iniciar_scheduler():
             )
             logger.info("✅ Tarea registrada: Regeneración de tabla viva (día 1, 00:01)")
             
-            # Tarea 2: Detección de cambios cada 3 horas
+            # Tarea 2: Detección de cambios cada 30 minutos
             scheduler.add_job(
                 tarea_detectar_cambios_completes,
-                IntervalTrigger(hours=3),
+                IntervalTrigger(minutes=30),
                 id='detectar_cambios_completes',
                 name='Detección de cambios en Completes',
                 replace_existing=True
             )
-            logger.info("✅ Tarea registrada: Detección de cambios (cada 3 horas)")
+            logger.info("✅ Tarea registrada: Detección de cambios (cada 30 minutos)")
             
             # Tarea 3: Limpieza de respaldos cada 6 horas
             scheduler.add_job(

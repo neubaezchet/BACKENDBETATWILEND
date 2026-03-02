@@ -607,6 +607,10 @@ async def cambiar_estado(
     
     if nuevo_estado == "COMPLETA":
         caso.bloquea_nueva = False
+        # ✅ RESETEAR CONTADORES DE RECORDATORIOS
+        caso.recordatorios_count = 0
+        caso.recordatorio_enviado = False
+        caso.fecha_recordatorio = None
     
     db.commit()
     
@@ -2392,6 +2396,10 @@ async def validar_caso_con_checks(
         # ✅ Cambiar estado y desbloquear
         caso.estado = EstadoCaso.COMPLETA
         caso.bloquea_nueva = False
+        # ✅ RESETEAR CONTADORES DE RECORDATORIOS
+        caso.recordatorios_count = 0
+        caso.recordatorio_enviado = False
+        caso.fecha_recordatorio = None
         
         # ✅ COPIAR A HISTÓRICO + COMPLETAS + ELIMINAR DE INCOMPLETAS
         try:
@@ -3441,6 +3449,10 @@ async def aprobar_reenvio(
         caso.drive_link = ultimo_reenvio['link']
         caso.estado = EstadoCaso.COMPLETA
         caso.bloquea_nueva = False  # ✅ DESBLOQUEAR
+        # ✅ RESETEAR CONTADORES DE RECORDATORIOS
+        caso.recordatorios_count = 0
+        caso.recordatorio_enviado = False
+        caso.fecha_recordatorio = None
         
         # 3. Actualizar metadata
         ultimo_reenvio['estado'] = 'APROBADO'
@@ -3487,27 +3499,36 @@ async def aprobar_reenvio(
         db.commit()
         
         # 6. Enviar email al empleado
-        from app.email_templates import get_email_template_universal
-        
-        email_aprobacion = get_email_template_universal(
-            tipo_email='completa',
-            nombre=caso.empleado.nombre if caso.empleado else 'Colaborador/a',
-            serial=serial,
-            empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-            tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-            telefono=caso.telefono_form,
-            email=caso.email_form,
-            link_drive=caso.drive_link
-        )
-        
-        asunto = f"✅ Incapacidad Validada - {serial} - {caso.empleado.nombre if caso.empleado else 'N/A'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
-        
-        send_html_email(
-            caso.email_form,
-            asunto,
-            email_aprobacion,
-            caso=caso
-        )
+        try:
+            from app.email_templates import get_email_template_universal
+            
+            email_aprobacion = get_email_template_universal(
+                tipo_email='completa',
+                nombre=caso.empleado.nombre if caso.empleado else 'Colaborador/a',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link
+            )
+            
+            asunto = f"✅ Incapacidad Validada - {serial} - {caso.empleado.nombre if caso.empleado else 'N/A'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            
+            if caso.email_form:
+                send_html_email(
+                    caso.email_form,
+                    asunto,
+                    email_aprobacion,
+                    caso=caso
+                )
+                print(f"✅ [{serial}] Notificación reenvío APROBADO enviada → {caso.email_form}")
+            else:
+                print(f"⚠️ [{serial}] Sin email_form, no se envió notificación de aprobación")
+        except Exception as e:
+            print(f"⚠️ [{serial}] Error enviando notificación de aprobación: {e}")
+            import traceback
+            traceback.print_exc()
         
         print(f"✅ Reenvío APROBADO: {serial} - Caso desbloqueado y validado")
         
@@ -3602,39 +3623,48 @@ async def aprobar_reenvio(
         db.commit()
         
         # 7. Enviar email al empleado con IA
-        from app.email_templates import get_email_template_universal
-        from app.ia_redactor import redactar_email_incompleta
-        
-        print(f"   🤖 Generando email con IA para notificar rechazo...")
-        
-        contenido_ia = redactar_email_incompleta(
-            caso.empleado.nombre if caso.empleado else 'Colaborador/a',
-            serial,
-            checks,
-            caso.tipo.value if caso.tipo else 'General'
-        )
-        
-        email_rechazo = get_email_template_universal(
-            tipo_email='incompleta',
-            nombre=caso.empleado.nombre if caso.empleado else 'Colaborador/a',
-            serial=serial,
-            empresa=caso.empresa.nombre if caso.empresa else 'N/A',
-            tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
-            telefono=caso.telefono_form,
-            email=caso.email_form,
-            link_drive=caso.drive_link,
-            checks_seleccionados=checks,
-            contenido_ia=contenido_ia
-        )
-        
-        asunto = f"❌ Documentos Aún Incompletos - {serial} - {caso.empleado.nombre if caso.empleado else 'N/A'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
-        
-        send_html_email(
-            caso.email_form,
-            asunto,
-            email_rechazo,
-            caso=caso
-        )
+        try:
+            from app.email_templates import get_email_template_universal
+            from app.ia_redactor import redactar_email_incompleta
+            
+            print(f"   🤖 Generando email con IA para notificar rechazo...")
+            
+            contenido_ia = redactar_email_incompleta(
+                caso.empleado.nombre if caso.empleado else 'Colaborador/a',
+                serial,
+                checks,
+                caso.tipo.value if caso.tipo else 'General'
+            )
+            
+            email_rechazo = get_email_template_universal(
+                tipo_email='incompleta',
+                nombre=caso.empleado.nombre if caso.empleado else 'Colaborador/a',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link,
+                checks_seleccionados=checks,
+                contenido_ia=contenido_ia
+            )
+            
+            asunto = f"❌ Documentos Aún Incompletos - {serial} - {caso.empleado.nombre if caso.empleado else 'N/A'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            
+            if caso.email_form:
+                send_html_email(
+                    caso.email_form,
+                    asunto,
+                    email_rechazo,
+                    caso=caso
+                )
+                print(f"✅ [{serial}] Notificación reenvío RECHAZADO enviada → {caso.email_form}")
+            else:
+                print(f"⚠️ [{serial}] Sin email_form, no se envió notificación de rechazo")
+        except Exception as e:
+            print(f"⚠️ [{serial}] Error enviando notificación de rechazo: {e}")
+            import traceback
+            traceback.print_exc()
         
         print(f"❌ Reenvío RECHAZADO: {serial} - Caso sigue bloqueado")
         
