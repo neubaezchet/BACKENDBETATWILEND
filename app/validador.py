@@ -713,7 +713,14 @@ async def cambiar_estado(
         }
     }
     
-    if nuevo_estado in notificaciones_estado and caso.email_form and caso.empleado:
+    if nuevo_estado in notificaciones_estado and caso.email_form:
+        # ✅ Nombre del empleado con fallback robusto (no requiere caso.empleado)
+        nombre_empleado = 'Colaborador/a'
+        correo_bd_empleado = None
+        if caso.empleado:
+            nombre_empleado = caso.empleado.nombre or 'Colaborador/a'
+            correo_bd_empleado = getattr(caso.empleado, 'correo', None)
+        
         try:
             config = notificaciones_estado[nuevo_estado]
             from app.email_templates import get_email_template_universal
@@ -721,17 +728,21 @@ async def cambiar_estado(
             # Obtener motivo del cambio o usar genérico
             motivo_email = cambio.motivo or f"El caso ha sido marcado como {nuevo_estado}"
             
-            # ✅ MENSAJE WHATSAPP ESPECIAL PARA COMPLETA
+            # ✅ MENSAJE WHATSAPP ESPECIAL PARA COMPLETA (con fallback si IA falla)
             whatsapp_msg = None
             if nuevo_estado == "COMPLETA":
-                from app.ia_redactor import redactar_whatsapp_completa
-                whatsapp_msg = redactar_whatsapp_completa(
-                    caso.empleado.nombre, serial
-                )
+                try:
+                    from app.ia_redactor import redactar_whatsapp_completa
+                    whatsapp_msg = redactar_whatsapp_completa(
+                        nombre_empleado, serial
+                    )
+                except Exception as e_wa:
+                    print(f"⚠️ IA WhatsApp falló, usando mensaje estático: {e_wa}")
+                    whatsapp_msg = f"✅ *Incapacidad Validada*\n\nHola {nombre_empleado}, tu incapacidad {serial} ha sido validada exitosamente.\nProcederemos a subirla al sistema.\n\nNos comunicaremos contigo si se requiere algo adicional.\n\n_Automatico por Incapacidades_"
             
             # Generar HTML del email
             html = get_email_template_universal(
-                config["template"], caso.empleado.nombre, serial,
+                config["template"], nombre_empleado, serial,
                 caso.empresa.nombre if caso.empresa else 'N/A',
                 caso.tipo.value if caso.tipo else 'General',
                 caso.telefono_form or 'N/A', 
@@ -741,26 +752,42 @@ async def cambiar_estado(
                 motivo=cambio.motivo
             )
             
+            print(f"📤 Enviando notificación {nuevo_estado} para {serial}...")
+            print(f"   📧 Email TO: {caso.email_form}")
+            print(f"   📱 WhatsApp: {caso.telefono_form or 'N/A'}")
+            print(f"   📧 CC directorio: {cc_directorio or 'N/A'}")
+            
             # ✅ ENVIAR NOTIFICACIÓN (con directorio automáticamente)
-            enviar_a_n8n(
+            resultado_n8n = enviar_a_n8n(
                 tipo_notificacion=config["tipo"],
                 email=caso.email_form,
                 serial=serial,
                 subject=config["subject"],
                 html_content=html,
                 cc_email=cc_directorio,  # ✅ DIRECTORIO INCLUIDO
-                correo_bd=caso.empleado.correo if caso.empleado else None,
+                correo_bd=correo_bd_empleado,
                 whatsapp=caso.telefono_form,
-                whatsapp_message=whatsapp_msg,  # ✅ Mensaje especial para COMPLETA, None para otros
+                whatsapp_message=whatsapp_msg,  # ✅ Mensaje especial para COMPLETA, fallback estático para otros
                 adjuntos_base64=[]
             )
-            print(f"✅ Notificación {nuevo_estado} enviada: {caso.email_form}")
+            
+            if resultado_n8n:
+                print(f"✅ Notificación {nuevo_estado} enviada exitosamente: {caso.email_form}")
+            else:
+                print(f"❌ Fallo al enviar notificación {nuevo_estado} a n8n para: {caso.email_form}")
+            
             if cc_directorio:
                 print(f"   📧 Con copia a directorio: {cc_directorio}")
         except Exception as e:
             print(f"⚠️ Error enviando notificación {nuevo_estado}: {e}")
             import traceback
             traceback.print_exc()
+    elif nuevo_estado in notificaciones_estado and not caso.email_form:
+        print(f"⚠️ NOTIFICACIÓN OMITIDA para {serial}: No tiene email_form registrado")
+        notificacion_enviada = False
+    
+    # Variable para rastrear si se envió notificación
+    notificacion_enviada = nuevo_estado in notificaciones_estado and bool(caso.email_form)
     
     return {
         "status": "ok",
@@ -770,6 +797,9 @@ async def cambiar_estado(
         "mensaje": f"Estado actualizado a {nuevo_estado}",
         "emails_directorio": emails_directorio if emails_directorio else [],
         "cc_enviado": cc_directorio,
+        "notificacion_enviada": notificacion_enviada,
+        "email_destino": caso.email_form or None,
+        "whatsapp_destino": caso.telefono_form or None,
         "intentos_incompletos": caso.intentos_incompletos or 0,
         "fecha_ultimo_incompleto": caso.fecha_ultimo_incompleto.isoformat() if caso.fecha_ultimo_incompleto else None
     }
