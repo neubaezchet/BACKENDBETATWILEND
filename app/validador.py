@@ -3,7 +3,7 @@ Router del Portal de Validadores - IncaNeurobaeza
 Endpoints para gestión, validación y búsqueda de casos
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form, Request, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
 import requests
 import io
@@ -28,6 +28,7 @@ from app.email_templates import get_email_template_universal
 from app.drive_manager import CaseFileOrganizer
 from app.n8n_notifier import enviar_a_n8n  # ✅ NUEVO
 from app.completes_manager import completes_mgr  # ✅ NUEVO - Sincronización Completes
+from app.notification_queue import notification_queue, NotificacionPendiente  # ✅ Cola de notificaciones
 
 router = APIRouter(prefix="/validador", tags=["Portal de Validadores"])
 
@@ -558,10 +559,11 @@ async def detalle_caso(
 async def cambiar_estado(
     serial: str,
     cambio: CambioEstado,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
-    """Cambia el estado de un caso y envía notificaciones"""
+    """Cambia el estado de un caso y envía notificaciones via cola"""
     
     caso = db.query(Case).filter(Case.serial == serial).first()
     if not caso:
@@ -631,15 +633,24 @@ async def cambiar_estado(
                 caso.metadata_form['link_completes'] = link_completes
                 print(f"✅ Caso {serial} copiado a Completas")
             
-            # 3️⃣ Eliminar de Incompletas si estaba allí
-            if caso.drive_link and '/Incompletas/' in caso.drive_link:
-                try:
-                    incomplete_mgr = IncompleteFileManager()
-                    file_id = incomplete_mgr._extract_file_id(caso.drive_link)
-                    if file_id and incomplete_mgr.eliminar_version_incompleta(file_id):
-                        print(f"✅ Archivo incompleto eliminado de Incompletas: {serial}")
-                except Exception as delete_err:
-                    print(f"⚠️ Error eliminando de Incompletas: {delete_err}")
+            # 3️⃣ ELIMINAR DE INCOMPLETAS — Búsqueda robusta por serial
+            print(f"🗑️ [{serial}] Buscando y eliminando de Incompletas...")
+            incomplete_mgr = IncompleteFileManager()
+            
+            # Método A: Buscar por serial (elimina TODOS los archivos del serial en Incompletas)
+            eliminados_count = incomplete_mgr.eliminar_de_incompletas_por_serial(serial)
+            
+            # Método B: Si no se encontró por serial, intentar por file_id del drive_link
+            if eliminados_count == 0 and caso.drive_link:
+                file_id = incomplete_mgr._extract_file_id(caso.drive_link)
+                if file_id:
+                    eliminado_por_id = incomplete_mgr.eliminar_de_incompletas_por_file_id(file_id)
+                    if eliminado_por_id:
+                        eliminados_count = 1
+                        print(f"✅ Archivo eliminado de Incompletas por file_id: {serial}")
+            
+            if eliminados_count > 0:
+                print(f"✅ [{serial}] {eliminados_count} archivo(s) eliminados de Incompletas")
             
             flag_modified(caso, 'metadata_form')
             db.commit()
@@ -662,7 +673,7 @@ async def cambiar_estado(
         except Exception as e:
             print(f"⚠️ Error moviendo a Incompletas: {e}")
     
-    # ✅ NOTIFICACIONES PARA TODOS LOS ESTADOS (excepto NUEVO)
+    # ✅ NOTIFICACIONES VIA COLA (background, no bloquea la respuesta)
     # Obtener emails de directorio una sola vez
     emails_directorio = obtener_emails_empresa_directorio(
         caso.company_id, db
@@ -713,81 +724,76 @@ async def cambiar_estado(
         }
     }
     
+    notificacion_encolada = False
+    
     if nuevo_estado in notificaciones_estado and caso.email_form:
-        # ✅ Nombre del empleado con fallback robusto (no requiere caso.empleado)
+        # ✅ Nombre del empleado con fallback robusto
         nombre_empleado = 'Colaborador/a'
         correo_bd_empleado = None
         if caso.empleado:
             nombre_empleado = caso.empleado.nombre or 'Colaborador/a'
             correo_bd_empleado = getattr(caso.empleado, 'correo', None)
         
-        try:
-            config = notificaciones_estado[nuevo_estado]
-            from app.email_templates import get_email_template_universal
+        config = notificaciones_estado[nuevo_estado]
+        
+        # ✅ CAPTURAR datos del caso ANTES de salir del scope de DB
+        _email = caso.email_form
+        _telefono = caso.telefono_form
+        _empresa = caso.empresa.nombre if caso.empresa else 'N/A'
+        _tipo_inc = caso.tipo.value if caso.tipo else 'General'
+        _drive_link = caso.drive_link
+        _motivo = cambio.motivo
+        
+        if nuevo_estado == "COMPLETA":
+            # ✅ ENCOLAR NOTIFICACIÓN COMPLETA (con WhatsApp especial)
+            print(f"🔔 [{serial}] Encolando notificación COMPLETA → {_email}")
             
-            # Obtener motivo del cambio o usar genérico
-            motivo_email = cambio.motivo or f"El caso ha sido marcado como {nuevo_estado}"
+            def _enviar_completa():
+                notification_queue.encolar_completa(
+                    serial=serial,
+                    email=_email,
+                    nombre_empleado=nombre_empleado,
+                    empresa=_empresa,
+                    tipo_incapacidad=_tipo_inc,
+                    telefono=_telefono,
+                    drive_link=_drive_link,
+                    cc_email=cc_directorio,
+                    correo_bd=correo_bd_empleado,
+                    motivo=_motivo
+                )
             
-            # ✅ MENSAJE WHATSAPP ESPECIAL PARA COMPLETA (con fallback si IA falla)
-            whatsapp_msg = None
-            if nuevo_estado == "COMPLETA":
-                try:
-                    from app.ia_redactor import redactar_whatsapp_completa
-                    whatsapp_msg = redactar_whatsapp_completa(
-                        nombre_empleado, serial
-                    )
-                except Exception as e_wa:
-                    print(f"⚠️ IA WhatsApp falló, usando mensaje estático: {e_wa}")
-                    whatsapp_msg = f"✅ *Incapacidad Validada*\n\nHola {nombre_empleado}, tu incapacidad {serial} ha sido validada exitosamente.\nProcederemos a subirla al sistema.\n\nNos comunicaremos contigo si se requiere algo adicional.\n\n_Automatico por Incapacidades_"
+            background_tasks.add_task(_enviar_completa)
+            notificacion_encolada = True
+        else:
+            # ✅ ENCOLAR NOTIFICACIÓN GENÉRICA (incompleta, ilegible, etc.)
+            print(f"🔔 [{serial}] Encolando notificación {nuevo_estado} → {_email}")
             
-            # Generar HTML del email
-            html = get_email_template_universal(
-                config["template"], nombre_empleado, serial,
-                caso.empresa.nombre if caso.empresa else 'N/A',
-                caso.tipo.value if caso.tipo else 'General',
-                caso.telefono_form or 'N/A', 
-                caso.email_form,
-                caso.drive_link,
-                contenido_ia=motivo_email,
-                motivo=cambio.motivo
-            )
+            def _enviar_estado():
+                notification_queue.encolar_notificacion_estado(
+                    serial=serial,
+                    tipo=config["tipo"],
+                    email=_email,
+                    nombre_empleado=nombre_empleado,
+                    empresa=_empresa,
+                    tipo_incapacidad=_tipo_inc,
+                    telefono=_telefono,
+                    drive_link=_drive_link,
+                    subject=config["subject"],
+                    template=config["template"],
+                    cc_email=cc_directorio,
+                    correo_bd=correo_bd_empleado,
+                    motivo=_motivo
+                )
             
-            print(f"📤 Enviando notificación {nuevo_estado} para {serial}...")
-            print(f"   📧 Email TO: {caso.email_form}")
-            print(f"   📱 WhatsApp: {caso.telefono_form or 'N/A'}")
-            print(f"   📧 CC directorio: {cc_directorio or 'N/A'}")
-            
-            # ✅ ENVIAR NOTIFICACIÓN (con directorio automáticamente)
-            resultado_n8n = enviar_a_n8n(
-                tipo_notificacion=config["tipo"],
-                email=caso.email_form,
-                serial=serial,
-                subject=config["subject"],
-                html_content=html,
-                cc_email=cc_directorio,  # ✅ DIRECTORIO INCLUIDO
-                correo_bd=correo_bd_empleado,
-                whatsapp=caso.telefono_form,
-                whatsapp_message=whatsapp_msg,  # ✅ Mensaje especial para COMPLETA, fallback estático para otros
-                adjuntos_base64=[]
-            )
-            
-            if resultado_n8n:
-                print(f"✅ Notificación {nuevo_estado} enviada exitosamente: {caso.email_form}")
-            else:
-                print(f"❌ Fallo al enviar notificación {nuevo_estado} a n8n para: {caso.email_form}")
-            
-            if cc_directorio:
-                print(f"   📧 Con copia a directorio: {cc_directorio}")
-        except Exception as e:
-            print(f"⚠️ Error enviando notificación {nuevo_estado}: {e}")
-            import traceback
-            traceback.print_exc()
+            background_tasks.add_task(_enviar_estado)
+            notificacion_encolada = True
+        
+        print(f"   📧 Email TO: {_email}")
+        print(f"   📱 WhatsApp: {_telefono or 'N/A'}")
+        print(f"   📧 CC directorio: {cc_directorio or 'N/A'}")
+        
     elif nuevo_estado in notificaciones_estado and not caso.email_form:
         print(f"⚠️ NOTIFICACIÓN OMITIDA para {serial}: No tiene email_form registrado")
-        notificacion_enviada = False
-    
-    # Variable para rastrear si se envió notificación
-    notificacion_enviada = nuevo_estado in notificaciones_estado and bool(caso.email_form)
     
     return {
         "status": "ok",
@@ -797,12 +803,35 @@ async def cambiar_estado(
         "mensaje": f"Estado actualizado a {nuevo_estado}",
         "emails_directorio": emails_directorio if emails_directorio else [],
         "cc_enviado": cc_directorio,
-        "notificacion_enviada": notificacion_enviada,
+        "notificacion_encolada": notificacion_encolada,
         "email_destino": caso.email_form or None,
         "whatsapp_destino": caso.telefono_form or None,
         "intentos_incompletos": caso.intentos_incompletos or 0,
         "fecha_ultimo_incompleto": caso.fecha_ultimo_incompleto.isoformat() if caso.fecha_ultimo_incompleto else None
     }
+
+
+# ==================== COLA DE NOTIFICACIONES ENDPOINTS ====================
+
+@router.get("/notificaciones/estado")
+async def estado_cola_notificaciones(
+    _: bool = Depends(verificar_token_admin)
+):
+    """Retorna el estado actual de la cola de notificaciones"""
+    return notification_queue.obtener_estado()
+
+
+@router.get("/notificaciones/{serial}/historial")
+async def historial_notificaciones(
+    serial: str,
+    _: bool = Depends(verificar_token_admin)
+):
+    """Retorna el historial de notificaciones de un serial"""
+    return {
+        "serial": serial,
+        "historial": notification_queue.obtener_historial_serial(serial)
+    }
+
 
 @router.post("/casos/{serial}/nota")
 async def agregar_nota(
@@ -2364,19 +2393,139 @@ async def validar_caso_con_checks(
         caso.estado = EstadoCaso.COMPLETA
         caso.bloquea_nueva = False
         
-        # ✅ NUEVO: Copiar a carpeta operativa Completes/
-        print(f"📋 Copiando caso {serial} a carpeta Completes...")
+        # ✅ COPIAR A HISTÓRICO + COMPLETAS + ELIMINAR DE INCOMPLETAS
         try:
-            link_completes = completes_mgr.copiar_caso_a_completes(caso)
-            if link_completes:
-                # Guardar referencia en metadata
-                if not caso.metadata_form:
-                    caso.metadata_form = {}
-                caso.metadata_form['link_completes'] = link_completes
-                flag_modified(caso, 'metadata_form')
-                print(f"✅ Caso {serial} disponible en Completes: {link_completes}")
+            from app.drive_manager import IncompleteFileManager
+            organizer = CaseFileOrganizer()
+            incomplete_mgr_validar = IncompleteFileManager()
+
+            # 1️⃣ Copiar a Histórico (Incapacidades/{Empresa}/{Año}/{Quincena}/{Tipo}/)
+            try:
+                link_hist = organizer.copiar_a_historico(caso)
+                if link_hist:
+                    print(f"✅ [{serial}] Copiado a Histórico: {link_hist}")
+            except Exception as e:
+                print(f"⚠️ [{serial}] Error copiando a Histórico: {e}")
+
+            # 2️⃣ Copiar a Completas
+            print(f"📋 Copiando caso {serial} a carpeta Completes...")
+            try:
+                link_completes = completes_mgr.copiar_caso_a_completes(caso)
+                if link_completes:
+                    if not caso.metadata_form:
+                        caso.metadata_form = {}
+                    caso.metadata_form['link_completes'] = link_completes
+                    flag_modified(caso, 'metadata_form')
+                    print(f"✅ Caso {serial} disponible en Completes: {link_completes}")
+            except Exception as e:
+                print(f"⚠️ Error copiando a Completes: {e}")
+
+            # 3️⃣ ELIMINAR DE INCOMPLETAS — Búsqueda robusta por serial
+            print(f"🗑️ [{serial}] Buscando y eliminando de Incompletas...")
+            eliminados_validar = incomplete_mgr_validar.eliminar_de_incompletas_por_serial(serial)
+            if eliminados_validar > 0:
+                print(f"✅ [{serial}] {eliminados_validar} archivo(s) eliminados de Incompletas")
+            else:
+                # Fallback por file_id
+                if caso.drive_link:
+                    import re as re_val
+                    match_val = re_val.search(r'/d/([a-zA-Z0-9_-]+)', caso.drive_link)
+                    if match_val:
+                        fid_val = match_val.group(1)
+                        eliminado_id = incomplete_mgr_validar.eliminar_de_incompletas_por_file_id(fid_val)
+                        if eliminado_id:
+                            print(f"✅ [{serial}] Eliminado de Incompletas por file_id")
+                        else:
+                            print(f"ℹ️ [{serial}] No estaba en Incompletas")
         except Exception as e:
-            print(f"⚠️ Error copiando a Completes: {e}")
+            print(f"⚠️ Error en manejo de archivos COMPLETA en /validar: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # ✅ REGISTRAR EVENTO para COMPLETA desde /validar
+        registrar_evento(
+            db, caso.id,
+            "validacion_completa",
+            actor="Validador",
+            estado_anterior="INCOMPLETA",
+            estado_nuevo="COMPLETA",
+            motivo="Validado como completa vía portal",
+            metadata={"checks": checks, "es_reenvio": es_reenvio}
+        )
+        
+        # ✅ ENVIAR NOTIFICACIÓN EMAIL/WHATSAPP para COMPLETA desde /validar
+        try:
+            nombre_emp = empleado.nombre if empleado else 'Colaborador/a'
+            email_completa = get_email_template_universal(
+                tipo_email='completa',
+                nombre=nombre_emp,
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form or 'N/A',
+                email=caso.email_form or '',
+                link_drive=caso.drive_link
+            )
+            
+            # Construir mensaje WhatsApp
+            wa_msg_completa = None
+            if caso.telefono_form:
+                try:
+                    from app.ia_redactor import redactar_whatsapp_completa
+                    wa_msg_completa = redactar_whatsapp_completa(nombre_emp, serial)
+                except Exception:
+                    wa_msg_completa = (
+                        f"✅ *Incapacidad Validada*\n\n"
+                        f"Hola {nombre_emp}, tu incapacidad {serial} ha sido validada exitosamente.\n"
+                        f"_Automatico por Incapacidades_"
+                    )
+            
+            # Obtener emails de directorio
+            emails_dir = obtener_emails_empresa_directorio(
+                caso.company_id, db
+            ) if caso.company_id else []
+            cc_dir = ",".join(emails_dir) if emails_dir else None
+            correo_bd_emp = getattr(empleado, 'correo', None) if empleado else None
+            
+            fechas_str_c = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto_completa = f"CC {caso.cedula} - {serial}{fechas_str_c} - Validada - {nombre_emp} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            
+            if caso.email_form:
+                from app.n8n_notifier import enviar_a_n8n
+                enviar_a_n8n(
+                    tipo_notificacion='completa',
+                    email=caso.email_form,
+                    serial=serial,
+                    subject=asunto_completa,
+                    html_content=email_completa,
+                    cc_email=cc_dir,
+                    correo_bd=correo_bd_emp,
+                    whatsapp=caso.telefono_form,
+                    whatsapp_message=wa_msg_completa,
+                    drive_link=caso.drive_link
+                )
+                print(f"✅ [{serial}] Notificación COMPLETA enviada desde /validar → {caso.email_form}")
+            else:
+                print(f"⚠️ [{serial}] Sin email_form, no se envió notificación")
+        except Exception as e:
+            print(f"⚠️ [{serial}] Error enviando notificación COMPLETA desde /validar: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # ✅ SINCRONIZAR CON GOOGLE SHEETS para COMPLETA
+        try:
+            from app.google_sheets_tracker import actualizar_caso_en_sheet, registrar_cambio_estado_sheet
+            actualizar_caso_en_sheet(caso, accion="actualizar")
+            registrar_cambio_estado_sheet(
+                caso,
+                estado_anterior="INCOMPLETA",
+                estado_nuevo="COMPLETA",
+                validador="Sistema",
+                observaciones="Validado como completa"
+            )
+            print(f"✅ [{serial}] Sincronizado con Google Sheets")
+        except Exception as e:
+            print(f"⚠️ [{serial}] Error sincronizando con Sheets: {e}")
 
     else:
         # ✅ Si es INCOMPLETA, ILEGIBLE, etc. → bloquea nuevas
@@ -3266,14 +3415,27 @@ async def aprobar_reenvio(
         
         print(f"✅ Aprobando reenvío de {serial}...")
         
-        # 1. Buscar y eliminar versión incompleta de Drive
+        # 1. Buscar y eliminar versión incompleta de Drive (método robusto)
         from app.drive_manager import IncompleteFileManager
         incomplete_mgr_drive = IncompleteFileManager()
         
-        version_incompleta = incomplete_mgr_drive.buscar_version_incompleta(serial)
-        if version_incompleta:
-            print(f"   🗑️ Eliminando versión incompleta: {version_incompleta['filename']}")
-            incomplete_mgr_drive.eliminar_version_incompleta(version_incompleta['file_id'])
+        # Método robusto: busca por serial y recorre árbol de carpetas hasta 5 niveles
+        eliminados_aprobar = incomplete_mgr_drive.eliminar_de_incompletas_por_serial(serial)
+        if eliminados_aprobar > 0:
+            print(f"   🗑️ Eliminados {eliminados_aprobar} archivo(s) de Incompletas para {serial}")
+        else:
+            # Fallback: intentar por file_id del drive_link actual
+            if caso.drive_link:
+                import re as re_drive
+                match_fid = re_drive.search(r'/d/([a-zA-Z0-9_-]+)', caso.drive_link)
+                if match_fid:
+                    fid = match_fid.group(1)
+                    if incomplete_mgr_drive.eliminar_de_incompletas_por_file_id(fid):
+                        print(f"   🗑️ Eliminado de Incompletas por file_id: {fid}")
+                    else:
+                        print(f"   ℹ️ Archivo {fid} no estaba en Incompletas (ya movido o no existe)")
+            else:
+                print(f"   ℹ️ No se encontró archivo de {serial} en Incompletas")
         
         # 2. Actualizar caso con nueva versión
         caso.drive_link = ultimo_reenvio['link']
