@@ -265,9 +265,14 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
         'confirmacion': ('📋', 'Incapacidad Recibida'),
         'incompleta': ('⚠️', 'Documentacion Incompleta'),
         'ilegible': ('⚠️', 'Documento Ilegible'),
+        'incompleta_ilegible': ('⚠️', 'Documentacion Incompleta'),
         'completa': ('✅', 'Incapacidad Validada'),
         'eps': ('📋', 'Transcripcion en EPS'),
+        'eps_transcripcion': ('📋', 'Transcripcion en EPS'),
         'tthh': ('🔔', 'Alerta Talento Humano'),
+        'derivado_tthh': ('🔔', 'Alerta Talento Humano'),
+        'causa_extra': ('📌', 'Causa Extra Identificada'),
+        'en_radicacion': ('📤', 'En Radicacion'),
         'recordatorio': ('🔔', 'Recordatorio Pendiente'),
         'alerta_jefe': ('🔔', 'Caso Pendiente'),
     }
@@ -283,7 +288,7 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
         lineas.append("")
         lineas.append("Nos comunicaremos si se requiere algo adicional.")
 
-    elif tipo_notificacion in ('incompleta', 'ilegible'):
+    elif tipo_notificacion in ('incompleta', 'ilegible', 'incompleta_ilegible'):
         if motivos:
             lineas.append("*Motivo:*")
             for m in motivos[:3]:
@@ -304,7 +309,7 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
         lineas.append("")
         lineas.append("Nos comunicaremos contigo si se requiere algo adicional.")
 
-    elif tipo_notificacion == 'eps':
+    elif tipo_notificacion in ('eps', 'eps_transcripcion'):
         lineas.append(f"Tu incapacidad{fecha_texto} requiere transcripcion en tu EPS.")
         lineas.append("Dirigete con tu documento de identidad.")
 
@@ -317,6 +322,17 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
                 lineas.append(f"• {m}")
         lineas.append("")
         lineas.append("Subir documentos: https://repogemin.vercel.app/")
+
+    elif tipo_notificacion in ('tthh', 'derivado_tthh'):
+        lineas.append(f"Incapacidad{fecha_texto} ha sido derivada a Talento Humano.")
+
+    elif tipo_notificacion == 'causa_extra':
+        lineas.append(f"Tu incapacidad{fecha_texto} tiene una causa extra identificada.")
+        lineas.append("Revisa tu correo para mas detalles.")
+
+    elif tipo_notificacion == 'en_radicacion':
+        lineas.append(f"Tu incapacidad{fecha_texto} esta en proceso de radicacion.")
+        lineas.append("Te notificaremos cuando el proceso se complete.")
 
     elif tipo_notificacion == 'alerta_jefe':
         lineas.append(f"Incapacidad{fecha_texto} pendiente de respuesta.")

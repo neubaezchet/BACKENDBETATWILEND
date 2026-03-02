@@ -84,19 +84,9 @@ class CompletesManager:
             ).execute()
             copied_file_id = copied_file.get('id')
             copied_link = f"https://drive.google.com/file/d/{copied_file_id}/view"
-            # ✅ Eliminar archivo de Incompletas/ si existe (buscar por file_id original)
-            try:
-                from app.drive_manager import IncompleteFileManager
-                incomplete_mgr = IncompleteFileManager()
-                # Buscar el archivo original en Incompletas/ por serial
-                version_incompleta = incomplete_mgr.buscar_version_incompleta(caso.serial)
-                if version_incompleta:
-                    incomplete_mgr.eliminar_version_incompleta(version_incompleta['file_id'])
-                    print(f"🗑️ Eliminado de Incompletas: {version_incompleta['filename']}")
-                else:
-                    print(f"ℹ️ Caso {caso.serial} no tenía versión en Incompletas/")
-            except Exception as e:
-                print(f"⚠️ Error eliminando incompleta: {e}")
+            # NOTA: La eliminación de Incompletas/ se hace en los endpoints
+            # (/estado, /validar, /aprobar-reenvio) con métodos robustos.
+            # No se duplica aquí para evitar conflictos.
             print(f"✅ Caso {caso.serial} copiado a Completas/{empresa_nombre}/")
             return copied_link
         except Exception as e:

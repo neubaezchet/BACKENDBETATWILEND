@@ -392,4 +392,4 @@ def redactar_whatsapp_completa(nombre: str, serial: str) -> str:
         )
         return message.content[0].text.strip()
     except:
-        return f"¡Yupi! 🎉 Tu incapacidad {serial} fue validada exitosamente. Se procederá a subirla al sistema. ¡Gracias!"
+        return f"🎉 Tu incapacidad {serial} fue validada exitosamente. Se procederá a subirla al sistema. ¡Gracias!"

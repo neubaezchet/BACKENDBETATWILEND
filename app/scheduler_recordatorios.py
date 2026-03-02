@@ -38,10 +38,25 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None, what
             if hasattr(caso.empleado, 'correo') and caso.empleado.correo:
                 correo_bd = caso.empleado.correo
         
-        # CC empresa
-        if hasattr(caso, 'empresa') and caso.empresa:
-            if hasattr(caso.empresa, 'email_copia') and caso.empresa.email_copia:
-                cc_email = caso.empresa.email_copia
+        # CC empresa — desde DIRECTORIO (correos_notificacion area='empresas')
+        if hasattr(caso, 'company_id') and caso.company_id:
+            try:
+                from app.database import SessionLocal as _SL
+                from app.database import CorreoNotificacion
+                _db = _SL()
+                correos = _db.query(CorreoNotificacion).filter(
+                    CorreoNotificacion.area == 'empresas',
+                    CorreoNotificacion.activo == True
+                ).all()
+                emails_dir = []
+                for c in correos:
+                    if (c.company_id is None or c.company_id == caso.company_id) and c.email and c.email.strip():
+                        emails_dir.append(c.email.strip())
+                if emails_dir:
+                    cc_email = ",".join(emails_dir)
+                _db.close()
+            except Exception as e:
+                print(f"⚠️ Error obteniendo CC directorio en recordatorios: {e}")
         
         # WhatsApp
         if hasattr(caso, 'telefono_form') and caso.telefono_form:
