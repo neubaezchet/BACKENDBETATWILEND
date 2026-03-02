@@ -412,6 +412,123 @@ class IncompleteFileManager:
             print(f"❌ Error eliminando: {e}")
             return False
     
+    def archivo_esta_en_incompletas(self, file_id: str) -> bool:
+        """
+        Verifica si un file_id está dentro de alguna carpeta 'Incompletas' 
+        recorriendo sus carpetas padre.
+        """
+        try:
+            archivo = self.drive_manager.service.files().get(
+                fileId=file_id, fields='parents'
+            ).execute()
+            parents = archivo.get('parents', [])
+            
+            # Recorrer hasta 5 niveles de profundidad
+            visitados = set()
+            cola = list(parents)
+            
+            for _ in range(5):
+                if not cola:
+                    break
+                parent_id = cola.pop(0)
+                if parent_id in visitados:
+                    continue
+                visitados.add(parent_id)
+                
+                try:
+                    folder = self.drive_manager.service.files().get(
+                        fileId=parent_id, fields='name, parents'
+                    ).execute()
+                    nombre = folder.get('name', '')
+                    if 'Incompletas' in nombre or 'incompletas' in nombre.lower():
+                        return True
+                    # Seguir subiendo
+                    for p in folder.get('parents', []):
+                        if p not in visitados:
+                            cola.append(p)
+                except:
+                    continue
+            
+            return False
+        except Exception as e:
+            print(f"⚠️ Error verificando si archivo está en Incompletas: {e}")
+            return False
+    
+    def eliminar_de_incompletas_por_serial(self, serial: str) -> int:
+        """
+        Busca y elimina TODOS los archivos de un serial que estén dentro 
+        de carpetas Incompletas. Método seguro y robusto.
+        
+        Returns:
+            int: Cantidad de archivos eliminados (0 si no se eliminó ninguno)
+        """
+        eliminados = 0
+        try:
+            # Buscar por serial en Drive
+            # NOTA: Drive API tokeniza la query por espacios (AND de todos los tokens).
+            # Después filtramos en Python para verificar que el serial EXACTO esté en el nombre.
+            query = f"name contains '{serial}' and trashed=false"
+            results = self.drive_manager.service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name, parents)',
+                pageSize=50
+            ).execute()
+            
+            archivos = results.get('files', [])
+            print(f"🔍 Buscando archivos de {serial} en Incompletas... ({len(archivos)} encontrados en Drive)")
+            
+            for archivo in archivos:
+                fid = archivo['id']
+                fname = archivo.get('name', '')
+                
+                # ✅ VERIFICACIÓN PYTHON: El serial EXACTO debe estar en el nombre del archivo
+                # Esto evita falsos positivos de la búsqueda tokenizada de Drive API
+                if serial not in fname:
+                    print(f"   ⏭️ {fname} → serial '{serial}' no coincide exacto, se ignora")
+                    continue
+                
+                if self.archivo_esta_en_incompletas(fid):
+                    print(f"   🗑️ Eliminando de Incompletas: {fname} ({fid})")
+                    try:
+                        self.drive_manager.service.files().delete(fileId=fid).execute()
+                        eliminados += 1
+                        print(f"   ✅ Eliminado exitosamente")
+                    except Exception as del_err:
+                        print(f"   ❌ Error eliminando {fid}: {del_err}")
+                else:
+                    print(f"   ⏭️ {fname} NO está en Incompletas, se conserva")
+            
+            if eliminados > 0:
+                print(f"✅ Total eliminados de Incompletas para {serial}: {eliminados}")
+            else:
+                print(f"ℹ️ No se encontraron archivos de {serial} en Incompletas")
+            
+            return eliminados
+            
+        except Exception as e:
+            print(f"❌ Error buscando/eliminando de Incompletas para {serial}: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
+    
+    def eliminar_de_incompletas_por_file_id(self, file_id: str) -> bool:
+        """
+        Elimina un archivo específico SOLO si está en Incompletas.
+        Primero verifica que esté en la carpeta correcta.
+        """
+        try:
+            if self.archivo_esta_en_incompletas(file_id):
+                self.drive_manager.service.files().delete(fileId=file_id).execute()
+                print(f"🗑️ Archivo {file_id} eliminado de Incompletas")
+                return True
+            else:
+                print(f"⏭️ Archivo {file_id} NO está en Incompletas, no se elimina")
+                return False
+        except Exception as e:
+            print(f"❌ Error eliminando archivo {file_id}: {e}")
+            return False
+    
     def _extract_file_id(self, drive_link):
         """Extrae file_id de un link de Drive"""
         if '/file/d/' in drive_link:
