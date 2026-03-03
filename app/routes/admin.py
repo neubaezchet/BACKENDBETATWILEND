@@ -651,3 +651,36 @@ async def recent_activity(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/db-tables")
+async def listar_tablas_bd(
+    user: AdminUser = Depends(require_role("superadmin")),
+    db: Session = Depends(get_db)
+):
+    """🔧 Lista todas las tablas de la base de datos (diagnóstico)"""
+    from sqlalchemy import inspect
+    from app.database import engine
+    
+    inspector = inspect(engine)
+    tablas = inspector.get_table_names()
+    
+    resultado = {}
+    for tabla in sorted(tablas):
+        try:
+            count = db.execute(text(f"SELECT COUNT(*) FROM {tabla}")).scalar()
+            resultado[tabla] = {"exists": True, "count": count}
+        except Exception as e:
+            resultado[tabla] = {"exists": True, "error": str(e)}
+    
+    # Verificar tablas críticas
+    tablas_criticas = ['correos_notificacion', 'admin_users', 'companies', 'employees', 'cases']
+    faltantes = [t for t in tablas_criticas if t not in tablas]
+    
+    return {
+        "ok": len(faltantes) == 0,
+        "total_tablas": len(tablas),
+        "tablas": resultado,
+        "tablas_faltantes": faltantes,
+        "mensaje": "✅ Todas las tablas críticas existen" if not faltantes else f"⚠️ Faltan tablas: {faltantes}"
+    }

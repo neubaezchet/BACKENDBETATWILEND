@@ -389,8 +389,31 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db():
     """Crea todas las tablas en la base de datos"""
     try:
+        # ✅ CREAR TODAS LAS TABLAS FALTANTES
         Base.metadata.create_all(bind=engine)
         print("✅ Base de datos inicializada correctamente")
+        
+        # ✅ VERIFICAR QUE TABLAS CRÍTICAS EXISTAN
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        tablas_existentes = inspector.get_table_names()
+        
+        tablas_requeridas = [
+            'correos_notificacion',  # CRÍTICO: Directorio de emails
+            'admin_users',           # CRÍTICO: Usuarios admin
+            'alerta_emails',         # Alertas 180
+            'alertas_180_log',       # Log de alertas 180
+        ]
+        
+        for tabla in tablas_requeridas:
+            if tabla in tablas_existentes:
+                print(f"   ✅ Tabla '{tabla}' existe")
+            else:
+                print(f"   ⚠️ TABLA FALTANTE: '{tabla}' - intentando crear...")
+                # Forzar creación específica
+                Base.metadata.create_all(bind=engine, checkfirst=True)
+        
+        print(f"📊 Total tablas en BD: {len(tablas_existentes)}: {', '.join(sorted(tablas_existentes))}")
         
         # Verificar conexión
         db = SessionLocal()
