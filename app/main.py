@@ -1564,12 +1564,23 @@ async def migrar_excel_a_bd(db: Session = Depends(get_db)):
 
 @app.get("/health/drive-token")
 async def check_drive_token_health():
-    """Verifica el estado del token de Drive"""
+    """
+    📊 Estado completo del token de Google Drive
+    Incluye: estado actual, última renovación, errores, y capacidad de diagnóstico
+    """
     from app.drive_uploader import TOKEN_FILE
     import json
     from datetime import datetime
     
+    result = {
+        "timestamp": datetime.now().isoformat(),
+        "token_file": {},
+        "scheduler_status": {},
+        "recommendation": None
+    }
+    
     try:
+        # 1. Verificar archivo de token en cache
         if TOKEN_FILE.exists():
             with open(TOKEN_FILE, 'r') as f:
                 token_data = json.load(f)
@@ -1580,17 +1591,92 @@ async def check_drive_token_health():
                     now = datetime.now()
                     remaining = (expiry - now).total_seconds()
                     
-                    return {
-                        "status": "healthy" if remaining > 0 else "expired",
+                    result["token_file"] = {
+                        "exists": True,
+                        "status": "healthy" if remaining > 300 else ("expiring_soon" if remaining > 0 else "expired"),
                         "expires_in_minutes": round(remaining / 60, 2),
                         "expires_at": expiry_str,
-                        "last_checked": now.isoformat()
                     }
+                else:
+                    result["token_file"] = {"exists": True, "status": "unknown_expiry"}
+        else:
+            result["token_file"] = {"exists": False, "status": "no_cache"}
         
-        return {"status": "no_cache", "message": "Token se generará en primera petición"}
+        # 2. Obtener estado del scheduler de renovación
+        try:
+            from app.sync_scheduler import get_token_status
+            scheduler_status = get_token_status()
+            result["scheduler_status"] = scheduler_status
+        except Exception as e:
+            result["scheduler_status"] = {"error": str(e)}
+        
+        # 3. Determinar estado general y recomendación
+        token_healthy = result["token_file"].get("status") in ["healthy", "expiring_soon"]
+        scheduler_healthy = result["scheduler_status"].get("is_healthy", False)
+        
+        if token_healthy and scheduler_healthy:
+            result["overall_status"] = "✅ HEALTHY"
+            result["recommendation"] = None
+        elif token_healthy and not scheduler_healthy:
+            result["overall_status"] = "⚠️ WARNING"
+            result["recommendation"] = "Token válido pero scheduler reporta errores. Revisar logs."
+        elif not token_healthy and scheduler_healthy:
+            result["overall_status"] = "⚠️ RECOVERING"
+            result["recommendation"] = "Token expirado pero scheduler intentando renovar. Esperar 2 min."
+        else:
+            result["overall_status"] = "❌ CRITICAL"
+            result["recommendation"] = (
+                "Token y scheduler con problemas. Verificar GOOGLE_REFRESH_TOKEN en variables de entorno. "
+                "Si persiste, regenerar token ejecutando python regenerar_token.py"
+            )
+        
+        return result
         
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {
+            "overall_status": "❌ ERROR",
+            "error": str(e),
+            "recommendation": "Error leyendo estado del token. Revisar logs del servidor."
+        }
+
+
+@app.post("/health/drive-token/force-refresh")
+async def force_refresh_drive_token(x_admin_token: str = Header(None)):
+    """
+    🔄 Fuerza una renovación inmediata del token de Drive.
+    Solo para administradores.
+    """
+    # Verificar token admin
+    ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+    if not x_admin_token or x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Token de administrador requerido")
+    
+    try:
+        from app.drive_uploader import clear_service_cache, clear_token_cache, get_authenticated_service
+        from datetime import datetime
+        
+        # Limpiar todo el cache
+        clear_service_cache()
+        clear_token_cache()
+        
+        # Forzar renovación
+        service = get_authenticated_service()
+        
+        # Verificar que funciona
+        service.files().list(pageSize=1, fields="files(id)").execute()
+        
+        return {
+            "status": "success",
+            "message": "Token renovado exitosamente",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "recommendation": "Si el error persiste, verificar GOOGLE_REFRESH_TOKEN"
+        }
 
 @app.post("/validador/casos/{serial}/cambiar-tipo")
 async def cambiar_tipo_incapacidad(
