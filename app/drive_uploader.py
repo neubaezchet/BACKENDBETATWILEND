@@ -56,14 +56,85 @@ def clear_token_cache():
     except Exception as e:
         print(f"⚠️ Error eliminando token cache: {e}")
 
+
+def force_regenerate_token():
+    """
+    🔄 FUERZA la regeneración completa del token desde REFRESH_TOKEN.
+    Útil cuando todo lo demás falla.
+    """
+    global _service_cache
+    
+    print("🔥 REGENERACIÓN FORZADA del token de Drive...")
+    
+    try:
+        # 1. Limpiar TODO
+        clear_service_cache()
+        clear_token_cache()
+        
+        # 2. Crear credenciales desde cero
+        if not all([CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
+            print("❌ Faltan credenciales de Google en variables de entorno")
+            return None
+        
+        new_creds = Credentials(
+            token=None,
+            refresh_token=REFRESH_TOKEN,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=["https://www.googleapis.com/auth/drive.file"]
+        )
+        
+        # 3. Obtener nuevo access_token
+        new_creds.refresh(Request())
+        
+        # 4. Guardar en cache
+        token_data = {
+            'token': new_creds.token,
+            'refresh_token': new_creds.refresh_token or REFRESH_TOKEN,
+            'token_uri': new_creds.token_uri,
+            'client_id': new_creds.client_id,
+            'client_secret': new_creds.client_secret,
+            'scopes': list(new_creds.scopes) if new_creds.scopes else ["https://www.googleapis.com/auth/drive.file"],
+            'expiry': new_creds.expiry.isoformat() if new_creds.expiry else None
+        }
+        
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(TOKEN_FILE, 'w') as f:
+            json.dump(token_data, f)
+        
+        # 5. Crear servicio nuevo
+        service = build('drive', 'v3', credentials=new_creds)
+        
+        # 6. Verificar que funciona
+        service.files().list(pageSize=1, fields="files(id)").execute()
+        
+        # 7. Guardar en cache global
+        with _service_cache_lock:
+            _service_cache = service
+        
+        print("✅ Token regenerado exitosamente desde cero")
+        return service
+        
+    except Exception as e:
+        print(f"❌ Error en regeneración forzada: {e}")
+        return None
+
+
 # ==================== DECORADOR DE RETRY ====================
 
-def retry_on_error(max_retries=3, delay=2):
-    """Decorator para reintentar automáticamente en caso de error"""
+def retry_on_error(max_retries=5, delay=2):
+    """
+    Decorator para reintentar automáticamente en caso de CUALQUIER error.
+    - Reintenta TODOS los errores (red, auth, timeout, etc.)
+    - Backoff exponencial con límite
+    - Regeneración forzada en último intento
+    """
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             last_exception = None
+            
             for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
@@ -71,23 +142,27 @@ def retry_on_error(max_retries=3, delay=2):
                     last_exception = e
                     error_str = str(e).lower()
                     
-                    print(f"⚠️ Error en {func.__name__} (intento {attempt+1}/{max_retries}): {e}")
+                    print(f"⚠️ Error en {func.__name__} (intento {attempt+1}/{max_retries}): {str(e)[:100]}")
                     
                     # Si es error de autenticación, limpiar cache
-                    if any(x in error_str for x in ['unauthorized', 'invalid', 'expired', 'invalid_grant']):
+                    if any(x in error_str for x in ['unauthorized', 'invalid', 'expired', 'invalid_grant', '401', '403']):
                         print("🔄 Error de autenticación detectado, limpiando cache...")
                         clear_service_cache()
                         clear_token_cache()
-                        
-                        if attempt < max_retries - 1:
-                            wait_time = delay * (2 ** attempt)  # Backoff exponencial
-                            print(f"⏳ Esperando {wait_time}s antes de reintentar...")
-                            time.sleep(wait_time)
-                            continue
                     
-                    # Si no es error de auth, no reintentar
-                    raise
+                    # En el penúltimo intento, intentar regeneración forzada
+                    if attempt == max_retries - 2:
+                        print("🔥 Intentando regeneración forzada...")
+                        force_regenerate_token()
+                    
+                    # Esperar con backoff exponencial (máximo 30 segundos)
+                    if attempt < max_retries - 1:
+                        wait_time = min(delay * (2 ** attempt), 30)
+                        print(f"⏳ Esperando {wait_time}s antes de reintentar...")
+                        time.sleep(wait_time)
             
+            # Si llegamos aquí, todos los intentos fallaron
+            print(f"❌ Todos los {max_retries} intentos fallaron para {func.__name__}")
             raise last_exception
         return wrapper
     return decorator

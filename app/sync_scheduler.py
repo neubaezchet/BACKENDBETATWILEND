@@ -3,6 +3,7 @@ Sincronización automática Excel → PostgreSQL + Token de Drive ULTRA-RESISTEN
 ✅ Token renovado proactivamente cada 2 minutos
 ✅ Auto-recuperación en errores con backoff exponencial
 ✅ Heartbeat continuo para detectar problemas antes de que afecten operaciones
+✅ Recuperación de emergencia automática si todo falla
 """
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -21,12 +22,13 @@ _token_status = {
     "consecutive_errors": 0,
     "total_refreshes": 0,
     "is_healthy": True,
-    "last_error": None
+    "last_error": None,
+    "emergency_mode": False
 }
 _status_lock = threading.Lock()
 
-MAX_CONSECUTIVE_ERRORS = 5  # Después de esto, forzar limpieza total
-REFRESH_INTERVAL_SECONDS = 120  # Renovar cada 2 minutos (más seguro)
+MAX_CONSECUTIVE_ERRORS = 3  # Después de esto, activar modo emergencia
+REFRESH_INTERVAL_SECONDS = 120  # Renovar cada 2 minutos
 
 
 def get_token_status():
@@ -45,11 +47,13 @@ def _update_token_status(success: bool, error: str = None):
             _token_status["is_healthy"] = True
             _token_status["total_refreshes"] += 1
             _token_status["last_error"] = None
+            _token_status["emergency_mode"] = False
         else:
             _token_status["consecutive_errors"] += 1
             _token_status["last_error"] = error
             if _token_status["consecutive_errors"] >= MAX_CONSECUTIVE_ERRORS:
                 _token_status["is_healthy"] = False
+                _token_status["emergency_mode"] = True
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -59,65 +63,81 @@ def _update_token_status(success: bool, error: str = None):
 def verificar_drive_token():
     """
     Verifica y RENUEVA el token de Drive de forma ultra-resistente.
-    - Reintenta hasta 3 veces con backoff exponencial
-    - Limpia cache si hay errores consecutivos
-    - Nunca propaga excepciones (no tumba el scheduler)
+    - Reintenta hasta 5 veces con backoff exponencial
+    - Regeneración forzada si hay errores acumulados
+    - NUNCA propaga excepciones (no tumba el scheduler)
     """
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
     
-    for intento in range(3):
+    # Verificar si estamos en modo emergencia
+    with _status_lock:
+        emergency = _token_status["emergency_mode"]
+        consecutive = _token_status["consecutive_errors"]
+    
+    if emergency or consecutive >= 2:
+        print(f"[{timestamp}] 🚨 MODO EMERGENCIA - Intentando regeneración forzada...")
+        try:
+            from app.drive_uploader import force_regenerate_token
+            service = force_regenerate_token()
+            if service:
+                _update_token_status(success=True)
+                print(f"[{timestamp}] ✅ Recuperación de emergencia EXITOSA")
+                return True
+        except Exception as e:
+            print(f"[{timestamp}] ❌ Regeneración forzada falló: {str(e)[:80]}")
+    
+    # Intento normal de renovación
+    for intento in range(5):
         try:
             from app.drive_uploader import (
                 get_authenticated_service,
                 clear_service_cache,
-                clear_token_cache
+                clear_token_cache,
+                force_regenerate_token
             )
             
-            # Si hay muchos errores consecutivos, limpiar todo primero
-            with _status_lock:
-                if _token_status["consecutive_errors"] >= 3:
-                    print(f"[{timestamp}] 🧹 Limpiando cache por errores acumulados...")
-                    clear_service_cache()
-                    if _token_status["consecutive_errors"] >= MAX_CONSECUTIVE_ERRORS:
-                        clear_token_cache()
+            print(f"[{timestamp}] 🔄 Renovando token (intento {intento+1}/5)...")
             
-            print(f"[{timestamp}] 🔄 Renovando token de Drive (intento {intento+1}/3)...")
+            # En intentos > 2, limpiar cache primero
+            if intento >= 2:
+                print(f"[{timestamp}] 🧹 Limpiando cache por intentos fallidos...")
+                clear_service_cache()
+                if intento >= 3:
+                    clear_token_cache()
             
-            # Obtener servicio (esto renueva el token internamente si es necesario)
+            # En intento 4, intentar regeneración forzada
+            if intento == 4:
+                print(f"[{timestamp}] 🔥 Último intento - regeneración forzada...")
+                service = force_regenerate_token()
+                if service:
+                    _update_token_status(success=True)
+                    print(f"[{timestamp}] ✅ Token regenerado en último intento")
+                    return True
+                continue
+            
+            # Obtener servicio (esto renueva el token internamente)
             service = get_authenticated_service()
             
-            # Test REAL: hacer una operación en Drive para verificar que funciona
-            result = service.files().list(
-                pageSize=1, 
-                fields="files(id, name)"
-            ).execute()
+            # Test REAL: operación en Drive
+            service.files().list(pageSize=1, fields="files(id)").execute()
             
             _update_token_status(success=True)
-            print(f"[{timestamp}] ✅ Token válido y funcionando (renovación #{_token_status['total_refreshes']})")
-            return True  # Éxito
+            print(f"[{timestamp}] ✅ Token válido (renovación #{_token_status['total_refreshes']})")
+            return True
             
         except Exception as e:
-            error_msg = str(e)
-            print(f"[{timestamp}] ⚠️ Error intento {intento+1}/3: {error_msg[:100]}")
+            error_msg = str(e)[:100]
+            print(f"[{timestamp}] ⚠️ Error intento {intento+1}/5: {error_msg}")
             
-            # Si es error de autenticación grave, limpiar cache
-            if any(x in error_msg.lower() for x in ['invalid_grant', 'unauthorized', 'revoked']):
-                try:
-                    from app.drive_uploader import clear_service_cache, clear_token_cache
-                    clear_service_cache()
-                    clear_token_cache()
-                except:
-                    pass
-            
-            # Esperar con backoff exponencial antes de reintentar
-            if intento < 2:
-                wait_time = 2 ** (intento + 1)  # 2, 4 segundos
-                print(f"[{timestamp}] ⏳ Esperando {wait_time}s antes de reintentar...")
+            # Esperar con backoff exponencial (máximo 20 segundos)
+            if intento < 4:
+                wait_time = min(2 ** (intento + 1), 20)
+                print(f"[{timestamp}] ⏳ Esperando {wait_time}s...")
                 time.sleep(wait_time)
     
     # Todos los intentos fallaron
-    _update_token_status(success=False, error=error_msg[:200] if 'error_msg' in dir() else "Unknown error")
-    print(f"[{timestamp}] ❌ Token NO renovado después de 3 intentos")
+    _update_token_status(success=False, error=error_msg if 'error_msg' in dir() else "Unknown")
+    print(f"[{timestamp}] ❌ Token NO renovado - próximo intento en 2 min")
     
     # NO lanzar excepción - el scheduler debe seguir funcionando
     return False
@@ -125,45 +145,63 @@ def verificar_drive_token():
 
 def _heartbeat_drive():
     """
-    Heartbeat silencioso que verifica el estado del token sin hacer logging excesivo.
-    Útil para detectar problemas entre renovaciones.
+    Heartbeat que verifica el estado del token.
+    Si detecta problemas, activa recuperación inmediata.
     """
     try:
         from app.drive_uploader import _service_cache
         
         if _service_cache:
-            # Solo verificar si ya hay servicio en cache
             _service_cache.files().list(pageSize=1, fields="files(id)").execute()
             return True
-    except:
-        # Si falla, la próxima renovación programada lo arreglará
-        pass
+        else:
+            # No hay servicio en cache, forzar renovación
+            with _status_lock:
+                if _token_status["is_healthy"]:
+                    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 💓 Heartbeat: Sin cache, forzando renovación...")
+            verificar_drive_token()
+    except Exception as e:
+        # Problema detectado, activar renovación
+        with _status_lock:
+            _token_status["is_healthy"] = False
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 💔 Heartbeat falló: {str(e)[:50]}")
+        verificar_drive_token()
     return False
 
 
 # ═══════════════════════════════════════════════════════════════════
-# SINCRONIZACIÓN EXCEL (con pre-verificación de token)
+# SINCRONIZACIÓN EXCEL (con protección total)
 # ═══════════════════════════════════════════════════════════════════
 
 def sync_excel_con_verificacion():
     """
-    Sincroniza Excel verificando primero que el token de Drive esté válido.
-    Si el token está caído, intenta recuperarlo antes de sincronizar.
+    Sincroniza Excel con máxima protección.
+    - Verifica token antes de sincronizar
+    - Si falla, recupera y reintenta
+    - NUNCA propaga excepciones
     """
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
     
-    # Pre-verificar estado del token
-    with _status_lock:
-        if not _token_status["is_healthy"]:
-            print(f"[{timestamp}] ⚠️ Token no saludable, intentando recuperar antes de sync...")
-            verificar_drive_token()
-    
     try:
+        # Pre-verificar estado del token
+        with _status_lock:
+            healthy = _token_status["is_healthy"]
+        
+        if not healthy:
+            print(f"[{timestamp}] ⚠️ Token no saludable, recuperando antes de sync...")
+            verificar_drive_token()
+        
         sincronizar_excel_completo()
+        
     except Exception as e:
-        print(f"[{timestamp}] ❌ Error en sync Excel: {str(e)[:100]}")
-        # Si falló por token, intentar recuperar para la próxima vez
-        if any(x in str(e).lower() for x in ['unauthorized', 'invalid', 'token']):
+        error_str = str(e).lower()
+        print(f"[{timestamp}] ❌ Error en sync Excel: {str(e)[:80]}")
+        
+        # Si es error de token, intentar recuperar
+        if any(x in error_str for x in ['unauthorized', 'invalid', 'token', 'credential', '401', '403']):
+            print(f"[{timestamp}] 🔄 Error de token detectado, recuperando...")
+            with _status_lock:
+                _token_status["is_healthy"] = False
             verificar_drive_token()
 
 
@@ -172,17 +210,14 @@ def sync_excel_con_verificacion():
 # ═══════════════════════════════════════════════════════════════════
 
 def ejecutar_vaciado_quincenal():
-    """
-    🗑️ Ejecuta el vaciado de la Hoja Kactus si es día 1 o 16 del mes.
-    La función vaciar_hoja_kactus_quincenal() verifica internamente la fecha.
-    """
+    """Ejecuta la limpieza de Hoja Kactus si es día 1 o 16."""
     try:
         from app.sync_excel import vaciar_hoja_kactus_quincenal
         hoy = datetime.datetime.now()
         print(f"[{hoy.strftime('%H:%M:%S')}] 📋 Verificando limpieza quincenal (día {hoy.day})...")
         vaciar_hoja_kactus_quincenal()
     except Exception as e:
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Error en limpieza quincenal: {e}")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Error en limpieza: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════
