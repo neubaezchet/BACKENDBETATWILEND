@@ -480,18 +480,68 @@ def sincronizar_excel_completo():
         print(f"   • Total activos en BD: {total_filas_excel}")
         print(f"{'='*60}\n")
         
-        # ========== PASO 3: SYNC CASES_KACTUS (Hoja 2) — CREAR CASOS NUEVOS ==========
+        # ========== PASO 3: SYNC CASES_KACTUS (Hoja 2) — IMPORTAR CASOS (INCLUYE HISTÓRICOS) ==========
+        # ═══════════════════════════════════════════════════════════════════════════════════════════════
+        # COLUMNAS SOPORTADAS EN HOJA 2 (Cases_Kactus):
+        # ────────────────────────────────────────────────────────────────────────────────────────────────
+        # OBLIGATORIAS:
+        #   - cedula             : Número de identificación del empleado
+        #   - fecha_inicio       : Fecha de inicio de la incapacidad (DD/MM/YYYY)
+        #
+        # OPCIONALES:
+        #   - fecha_fin          : Fecha de fin de la incapacidad
+        #   - dias / Numero de dias : Días de incapacidad
+        #   - numero_incapacidad : Número de la incapacidad (EPS/ARL)
+        #   - codigo_cie10       : Código diagnóstico CIE-10 (ej: M54.5)
+        #   - diagnostico        : Descripción del diagnóstico
+        #   - tipo               : Tipo de incapacidad:
+        #                          general | laboral | maternidad | paternidad | trafico | hospitalizacion
+        #   - historico          : SI → Dato histórico (no se elimina de la hoja, se marca como histórico)
+        #   - Procesado          : Fecha de procesamiento (se llena automáticamente)
+        # ═══════════════════════════════════════════════════════════════════════════════════════════════
         try:
             df_cases = pd.read_excel(excel_path, sheet_name=1)  # ✅ Hoja 2 = Cases_Kactus (índice 1)
             if len(df_cases) > 0:
                 print(f"📊 PASO 3: Procesando Cases_Kactus ({len(df_cases)} filas)...")
                 cases_creados = 0
                 cases_actualizados = 0
-                filas_procesadas = []  # Para marcar como procesadas
+                cases_historicos = 0
+                filas_procesadas = []  # Para marcar como procesadas (no históricos)
                 filas_ya_procesadas = 0  # Contador de filas que ya estaban procesadas
                 
                 from sqlalchemy import and_, func, or_
                 from app.database import EstadoCaso, TipoIncapacidad
+                
+                # Mapeo de tipos de incapacidad desde texto
+                TIPO_MAP = {
+                    # Enfermedad General
+                    "general": TipoIncapacidad.ENFERMEDAD_GENERAL,
+                    "enfermedad": TipoIncapacidad.ENFERMEDAD_GENERAL,
+                    "enfermedad_general": TipoIncapacidad.ENFERMEDAD_GENERAL,
+                    # Enfermedad Laboral / Accidente de Trabajo
+                    "laboral": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "enfermedad_laboral": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "accidente_trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "arl": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    # Accidente de Tránsito
+                    "trafico": TipoIncapacidad.ACCIDENTE_TRANSITO,
+                    "transito": TipoIncapacidad.ACCIDENTE_TRANSITO,
+                    "accidente_transito": TipoIncapacidad.ACCIDENTE_TRANSITO,
+                    "soat": TipoIncapacidad.ACCIDENTE_TRANSITO,
+                    # Maternidad
+                    "maternidad": TipoIncapacidad.MATERNIDAD,
+                    "licencia_maternidad": TipoIncapacidad.MATERNIDAD,
+                    # Paternidad
+                    "paternidad": TipoIncapacidad.PATERNIDAD,
+                    "licencia_paternidad": TipoIncapacidad.PATERNIDAD,
+                    # Certificados
+                    "hospitalizacion": TipoIncapacidad.CERTIFICADO,
+                    "certificado": TipoIncapacidad.CERTIFICADO,
+                    "certificado_hospitalizacion": TipoIncapacidad.CERTIFICADO,
+                    # Prelicencia
+                    "prelicencia": TipoIncapacidad.PRELICENCIA,
+                }
                 
                 for idx, row in df_cases.iterrows():
                     try:
@@ -507,6 +557,12 @@ def sincronizar_excel_completo():
                         
                         cedula_case = str(int(cedula_raw))
                         
+                        # ═══ VERIFICAR SI ES DATO HISTÓRICO ═══
+                        es_historico = False
+                        historico_val = row.get("historico", "")
+                        if pd.notna(historico_val) and str(historico_val).strip().upper() in ["SI", "SÍ", "YES", "1", "TRUE", "HISTORICO"]:
+                            es_historico = True
+                        
                         # Leer datos de la fila
                         fecha_inicio_raw = row.get("fecha_inicio")
                         fecha_fin_raw = row.get("fecha_fin")
@@ -515,8 +571,17 @@ def sincronizar_excel_completo():
                         
                         num_incap = str(row.get("numero_incapacidad", "")).strip() if pd.notna(row.get("numero_incapacidad")) else None
                         codigo_cie = str(row.get("codigo_cie10", "")).strip() if pd.notna(row.get("codigo_cie10")) else None
+                        
+                        # Días de incapacidad (soportar ambos nombres)
                         dias_raw = row.get("Numero de dias") if "Numero de dias" in row else row.get("dias")
                         dias = int(dias_raw) if pd.notna(dias_raw) else None
+                        
+                        # Diagnóstico textual
+                        diagnostico = str(row.get("diagnostico", "")).strip() if pd.notna(row.get("diagnostico")) else None
+                        
+                        # Tipo de incapacidad
+                        tipo_raw = str(row.get("tipo", "")).strip().lower() if pd.notna(row.get("tipo")) else ""
+                        tipo_incap = TIPO_MAP.get(tipo_raw, TipoIncapacidad.ENFERMEDAD_GENERAL)
                         
                         if not fecha_inicio:
                             print(f"   ⚠️ Fila {idx+2} sin fecha_inicio, saltando...")
@@ -541,8 +606,14 @@ def sincronizar_excel_completo():
                                 caso.numero_incapacidad = num_incap
                             if codigo_cie:
                                 caso.codigo_cie10 = codigo_cie
+                            if diagnostico:
+                                caso.diagnostico = diagnostico
                             if fecha_fin:
                                 caso.fecha_fin_kactus = fecha_fin
+                                if not caso.fecha_fin:  # Si no tenía fecha_fin, asignarla
+                                    caso.fecha_fin = fecha_fin
+                            if dias and not caso.dias_incapacidad:
+                                caso.dias_incapacidad = dias
                             caso.fecha_inicio_kactus = fecha_inicio
                             caso.kactus_sync_at = datetime.now()
                             caso.updated_at = datetime.now()
@@ -551,7 +622,7 @@ def sincronizar_excel_completo():
                             print(f"   🔄 Actualizado: CC {cedula_case} | {fecha_inicio.strftime('%d/%m/%Y')}")
                         else:
                             # ═══ CREAR CASO NUEVO ═══
-                            # Buscar empleado para obtener company_id
+                            # Buscar empleado para obtener company_id y nombre
                             empleado = db.query(Employee).filter(Employee.cedula == cedula_case).first()
                             
                             # Generar serial: CEDULA DD MM YYYY DD MM YYYY
@@ -563,15 +634,19 @@ def sincronizar_excel_completo():
                             serial_existente = db.query(Case).filter(Case.serial == serial).first()
                             if serial_existente:
                                 print(f"   ⚠️ Serial {serial} ya existe, saltando...")
-                                filas_procesadas.append(idx + 2)
+                                if not es_historico:
+                                    filas_procesadas.append(idx + 2)
                                 continue
+                            
+                            # Determinar origen según si es histórico o no
+                            origen = "kactus_historico" if es_historico else "kactus_excel"
                             
                             nuevo_caso = Case(
                                 serial=serial,
                                 cedula=cedula_case,
                                 employee_id=empleado.id if empleado else None,
                                 company_id=empleado.company_id if empleado else None,
-                                tipo=TipoIncapacidad.ENFERMEDAD_GENERAL,  # Default
+                                tipo=tipo_incap,
                                 estado=EstadoCaso.COMPLETA,  # Viene de Kactus = ya validada
                                 fecha_inicio=fecha_inicio,
                                 fecha_fin=fecha_fin,
@@ -580,23 +655,36 @@ def sincronizar_excel_completo():
                                 dias_incapacidad=dias,
                                 numero_incapacidad=num_incap,
                                 codigo_cie10=codigo_cie,
+                                diagnostico=diagnostico,
                                 kactus_sync_at=datetime.now(),
-                                metadata_form={"origen": "kactus_excel", "fila_excel": idx + 2}
+                                metadata_form={
+                                    "origen": origen,
+                                    "fila_excel": idx + 2,
+                                    "importado_en": datetime.now().isoformat(),
+                                    "es_historico": es_historico
+                                }
                             )
                             db.add(nuevo_caso)
                             db.commit()
-                            cases_creados += 1
-                            print(f"   ✅ CREADO: CC {cedula_case} | {serial} | {dias or '?'}d")
+                            
+                            if es_historico:
+                                cases_historicos += 1
+                                print(f"   📜 HISTÓRICO: CC {cedula_case} | {serial} | {dias or '?'}d | {tipo_raw or 'general'}")
+                            else:
+                                cases_creados += 1
+                                print(f"   ✅ CREADO: CC {cedula_case} | {serial} | {dias or '?'}d")
                         
-                        # Marcar fila para eliminar del Excel
-                        filas_procesadas.append(idx + 2)  # +2 porque Excel es 1-indexed + header
+                        # Marcar fila para procesar (NO marcar históricos - permanecen en el Excel como referencia)
+                        if not es_historico:
+                            filas_procesadas.append(idx + 2)  # +2 porque Excel es 1-indexed + header
                         
                     except Exception as e:
                         print(f"   ❌ Error fila {idx+2}: {e}")
                         db.rollback()
                 
                 print(f"\n   📊 Resumen Cases_Kactus:")
-                print(f"      • Casos CREADOS: {cases_creados}")
+                print(f"      • Casos CREADOS (nuevos): {cases_creados}")
+                print(f"      • Casos HISTÓRICOS importados: {cases_historicos}")
                 print(f"      • Casos actualizados: {cases_actualizados}")
                 print(f"      • Filas nuevas procesadas: {len(filas_procesadas)}")
                 print(f"      • Filas ya procesadas (omitidas): {filas_ya_procesadas}")
