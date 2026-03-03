@@ -236,7 +236,7 @@ def verificar_casos_pendientes():
                         empleado.jefe_email,
                         f"📊 Seguimiento - Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
                         html_jefe,
-                        caso=None
+                        caso=caso  # ✅ FIX: Pasar caso para obtener CC empresa del directorio
                     ):
                         alertas_jefe_enviadas += 1
                         print(f"   ✅ Alerta enviada a jefe")

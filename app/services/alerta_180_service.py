@@ -180,6 +180,25 @@ def _enviar_alerta_email(
     html = _generar_html_alerta(nombre, cedula, alerta)
     subject = _generar_subject(tipo, nombre, dias)
     
+    # ✅ FIX: Obtener CC empresa del directorio para incluir en alertas 180
+    cc_empresa = None
+    try:
+        empleado = db.query(Employee).filter(Employee.cedula == cedula).first()
+        if empleado and empleado.company_id:
+            correos_empresa = db.query(CorreoNotificacion).filter(
+                CorreoNotificacion.area == 'empresas',
+                CorreoNotificacion.activo == True
+            ).all()
+            emails_cc = []
+            for c in correos_empresa:
+                if (c.company_id is None or c.company_id == empleado.company_id) and c.email and c.email.strip():
+                    emails_cc.append(c.email.strip())
+            if emails_cc:
+                cc_empresa = ",".join(emails_cc)
+                logger.info(f"📧 CC empresa (directorio) para alerta 180: {cc_empresa}")
+    except Exception as e:
+        logger.warning(f"⚠️ Error obteniendo CC empresa para alerta 180: {e}")
+    
     # Enviar a todos los destinatarios
     exitos = 0
     fallos = 0
@@ -194,7 +213,7 @@ def _enviar_alerta_email(
                 serial=f"ALERTA-180-{cedula}",
                 subject=subject,
                 html_content=html,
-                cc_email=None,
+                cc_email=cc_empresa,  # ✅ FIX: Incluir CC empresa del directorio
                 correo_bd=None,
                 whatsapp=None,
                 whatsapp_message=None,

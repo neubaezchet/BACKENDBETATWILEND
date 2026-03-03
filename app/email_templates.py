@@ -616,7 +616,7 @@ def generar_mensaje_segun_tipo(tipo_email, checks, tipo_incapacidad, serial, qui
         return _bloque_mensaje(
             "#EFF6FC", "#0078D4",
             "&#9989; Documentacion recibida",
-            "Se procedera a realizar la revision correspondiente."
+            "Hemos recibido tu documentacion. Procederemos a validar los soportes y quedamos sujetos a la respuesta ante la EPS."
         )
 
     elif tipo_email == 'recordatorio':
