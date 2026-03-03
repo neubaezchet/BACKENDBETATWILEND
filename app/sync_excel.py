@@ -1,13 +1,13 @@
 """
 Sincronización AUTOMÁTICA Google Sheets → PostgreSQL
 ✅ SYNC EXACTO: La BD refleja el Excel tal cual (misma cantidad, mismo orden)
-✅ Cases_Kactus: Crea casos nuevos si no existen, elimina filas procesadas
+✅ Cases_Kactus: Crea casos, marca procesados con fecha, limpia > 15 días
 """
 
 import os
 import pandas as pd
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.database import SessionLocal, Employee, Company, Case, CorreoNotificacion
 from io import BytesIO
 
@@ -15,43 +15,182 @@ GOOGLE_DRIVE_FILE_ID = os.environ.get("GOOGLE_DRIVE_FILE_ID", "1POt2ytSN61XbSpXU
 EXCEL_DOWNLOAD_URL = f"https://docs.google.com/spreadsheets/d/{GOOGLE_DRIVE_FILE_ID}/export?format=xlsx"
 LOCAL_CACHE_PATH = "/tmp/base_empleados_cache.xlsx"
 
+# Configuración de limpieza automática
+DIAS_ANTIGUEDAD_LIMPIEZA = 15  # Eliminar filas procesadas hace más de 15 días
+COLUMNA_PROCESADO = "Procesado"  # Nombre de la columna de fecha de procesamiento
 
-def _eliminar_filas_sheet_kactus(filas: list):
+
+def _get_sheets_service():
+    """Obtiene el servicio de Google Sheets API."""
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+    import json
+    
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if not creds_json:
+        print("   ⚠️ Sin credenciales de Google")
+        return None
+    
+    creds_dict = json.loads(creds_json)
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=['https://www.googleapis.com/auth/spreadsheets']
+    )
+    return build('sheets', 'v4', credentials=creds)
+
+
+def _marcar_filas_procesadas_kactus(filas: list, columna_procesado_idx: int = None):
     """
-    Elimina filas de la Hoja 2 (Cases_Kactus) del Google Sheet.
-    Las filas deben estar en orden descendente para no afectar los índices.
+    Marca filas como procesadas escribiendo la fecha actual en la columna "Procesado".
+    Si la columna no existe, la crea automáticamente.
+    
+    Args:
+        filas: Lista de números de fila (1-indexed, incluye header, así que fila 2 es primera de datos)
+        columna_procesado_idx: Índice de la columna Procesado (0-indexed). Si es None, se detecta/crea.
     """
+    if not filas:
+        return
+    
     try:
-        from google.oauth2.service_account import Credentials
-        from googleapiclient.discovery import build
-        import json
-        
-        # Obtener credenciales de Drive (las mismas que usa drive_uploader)
-        creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-        if not creds_json:
-            print("   ⚠️ Sin credenciales de Google, no se pueden eliminar filas")
+        service = _get_sheets_service()
+        if not service:
             return
         
-        creds_dict = json.loads(creds_json)
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=['https://www.googleapis.com/auth/spreadsheets']
-        )
-        
-        service = build('sheets', 'v4', credentials=creds)
-        
-        # ID de la hoja 2 (Cases_Kactus) - necesitamos obtenerlo dinámicamente
+        # Obtener info del spreadsheet
         spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
         sheets = spreadsheet.get('sheets', [])
         
         if len(sheets) < 2:
-            print("   ⚠️ No existe Hoja 2 en el Sheet")
+            print("   ⚠️ No existe Hoja 2 (Cases_Kactus) en el Sheet")
             return
         
-        sheet_id = sheets[1]['properties']['sheetId']  # Hoja 2 = índice 1
+        sheet_name = sheets[1]['properties']['title']
         
-        # Ordenar filas descendente para eliminar desde abajo
-        filas_ordenadas = sorted(filas, reverse=True)
+        # Leer la primera fila (headers) para encontrar o crear columna "Procesado"
+        headers_result = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            range=f"'{sheet_name}'!1:1"
+        ).execute()
+        
+        headers = headers_result.get('values', [[]])[0]
+        
+        # Buscar o crear columna "Procesado"
+        if COLUMNA_PROCESADO in headers:
+            col_idx = headers.index(COLUMNA_PROCESADO)
+        else:
+            # Crear columna al final
+            col_idx = len(headers)
+            col_letter = _idx_to_col_letter(col_idx)
+            
+            # Escribir header "Procesado"
+            service.spreadsheets().values().update(
+                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                range=f"'{sheet_name}'!{col_letter}1",
+                valueInputOption='RAW',
+                body={'values': [[COLUMNA_PROCESADO]]}
+            ).execute()
+            print(f"   📝 Creada columna '{COLUMNA_PROCESADO}' en posición {col_letter}")
+        
+        col_letter = _idx_to_col_letter(col_idx)
+        fecha_procesado = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        # Actualizar cada fila con la fecha de procesamiento
+        data = []
+        for fila in filas:
+            data.append({
+                'range': f"'{sheet_name}'!{col_letter}{fila}",
+                'values': [[fecha_procesado]]
+            })
+        
+        if data:
+            service.spreadsheets().values().batchUpdate(
+                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                body={
+                    'valueInputOption': 'RAW',
+                    'data': data
+                }
+            ).execute()
+            print(f"   ✅ {len(filas)} filas marcadas como procesadas ({fecha_procesado})")
+    
+    except Exception as e:
+        print(f"   ⚠️ Error marcando filas procesadas: {e}")
+
+
+def _limpiar_filas_antiguas_kactus(dias_antiguedad: int = None):
+    """
+    Elimina filas de Cases_Kactus que fueron procesadas hace más de X días.
+    
+    Args:
+        dias_antiguedad: Días de antigüedad (default: DIAS_ANTIGUEDAD_LIMPIEZA = 15)
+    
+    Returns:
+        int: Número de filas eliminadas
+    """
+    if dias_antiguedad is None:
+        dias_antiguedad = DIAS_ANTIGUEDAD_LIMPIEZA
+    
+    try:
+        service = _get_sheets_service()
+        if not service:
+            return 0
+        
+        # Obtener info del spreadsheet
+        spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
+        sheets = spreadsheet.get('sheets', [])
+        
+        if len(sheets) < 2:
+            print("   ℹ️ No existe Hoja 2 (Cases_Kactus)")
+            return 0
+        
+        sheet_name = sheets[1]['properties']['title']
+        sheet_id = sheets[1]['properties']['sheetId']
+        
+        # Leer todos los datos de la hoja
+        result = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            range=f"'{sheet_name}'"
+        ).execute()
+        
+        all_values = result.get('values', [])
+        if len(all_values) < 2:  # Solo header o vacío
+            print("   ℹ️ Hoja Cases_Kactus vacía")
+            return 0
+        
+        headers = all_values[0]
+        
+        # Buscar columna "Procesado"
+        if COLUMNA_PROCESADO not in headers:
+            print(f"   ℹ️ Columna '{COLUMNA_PROCESADO}' no encontrada - nada que limpiar")
+            return 0
+        
+        col_idx = headers.index(COLUMNA_PROCESADO)
+        fecha_limite = datetime.now() - timedelta(days=dias_antiguedad)
+        filas_a_eliminar = []
+        
+        # Revisar cada fila (desde la 2 porque la 1 es header)
+        for i, row in enumerate(all_values[1:], start=2):  # i = número de fila en Excel (1-indexed)
+            if len(row) > col_idx and row[col_idx]:
+                try:
+                    # Intentar parsear la fecha
+                    fecha_str = row[col_idx].strip()
+                    if fecha_str:
+                        # Soportar formato "YYYY-MM-DD HH:MM" o "YYYY-MM-DD"
+                        if ' ' in fecha_str:
+                            fecha_procesado = datetime.strptime(fecha_str, "%Y-%m-%d %H:%M")
+                        else:
+                            fecha_procesado = datetime.strptime(fecha_str, "%Y-%m-%d")
+                        
+                        if fecha_procesado < fecha_limite:
+                            filas_a_eliminar.append(i)
+                except ValueError:
+                    pass  # Fecha inválida, ignorar
+        
+        if not filas_a_eliminar:
+            print(f"   ℹ️ No hay filas con más de {dias_antiguedad} días de procesadas")
+            return 0
+        
+        # Ordenar descendente para eliminar desde abajo (no afecta índices)
+        filas_ordenadas = sorted(filas_a_eliminar, reverse=True)
         
         # Crear requests de eliminación
         requests_delete = []
@@ -67,15 +206,26 @@ def _eliminar_filas_sheet_kactus(filas: list):
                 }
             })
         
-        if requests_delete:
-            service.spreadsheets().batchUpdate(
-                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
-                body={'requests': requests_delete}
-            ).execute()
-            print(f"   🗑️ {len(filas_ordenadas)} filas eliminadas del Sheet (Hoja 2)")
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            body={'requests': requests_delete}
+        ).execute()
+        
+        print(f"   🗑️ {len(filas_ordenadas)} filas antiguas eliminadas (> {dias_antiguedad} días)")
+        return len(filas_ordenadas)
     
     except Exception as e:
-        print(f"   ⚠️ Error eliminando filas del Sheet: {e}")
+        print(f"   ⚠️ Error limpiando filas antiguas: {e}")
+        return 0
+
+
+def _idx_to_col_letter(idx: int) -> str:
+    """Convierte índice 0-based a letra de columna Excel (0=A, 1=B, 26=AA, etc.)"""
+    result = ""
+    while idx >= 0:
+        result = chr(idx % 26 + ord('A')) + result
+        idx = idx // 26 - 1
+    return result
 
 def descargar_excel_desde_drive():
     """Descarga el Excel desde Google Drive"""
@@ -337,14 +487,20 @@ def sincronizar_excel_completo():
                 print(f"📊 PASO 3: Procesando Cases_Kactus ({len(df_cases)} filas)...")
                 cases_creados = 0
                 cases_actualizados = 0
-                filas_procesadas = []  # Para eliminar del Excel después
+                filas_procesadas = []  # Para marcar como procesadas
+                filas_ya_procesadas = 0  # Contador de filas que ya estaban procesadas
                 
                 from sqlalchemy import and_, func, or_
-                from datetime import timedelta
                 from app.database import EstadoCaso, TipoIncapacidad
                 
                 for idx, row in df_cases.iterrows():
                     try:
+                        # ═══ VERIFICAR SI YA FUE PROCESADA (tiene fecha en columna "Procesado") ═══
+                        procesado_val = row.get(COLUMNA_PROCESADO)
+                        if pd.notna(procesado_val) and str(procesado_val).strip():
+                            filas_ya_procesadas += 1
+                            continue  # Omitir filas ya procesadas
+                        
                         cedula_raw = row.get("cedula")
                         if pd.isna(cedula_raw):
                             continue
@@ -442,14 +598,21 @@ def sincronizar_excel_completo():
                 print(f"\n   📊 Resumen Cases_Kactus:")
                 print(f"      • Casos CREADOS: {cases_creados}")
                 print(f"      • Casos actualizados: {cases_actualizados}")
-                print(f"      • Filas procesadas: {len(filas_procesadas)}")
+                print(f"      • Filas nuevas procesadas: {len(filas_procesadas)}")
+                print(f"      • Filas ya procesadas (omitidas): {filas_ya_procesadas}")
                 
-                # ═══ ELIMINAR FILAS PROCESADAS DEL GOOGLE SHEET ═══
+                # ═══ MARCAR FILAS COMO PROCESADAS (con fecha) ═══
                 if filas_procesadas:
                     try:
-                        _eliminar_filas_sheet_kactus(filas_procesadas)
+                        _marcar_filas_procesadas_kactus(filas_procesadas)
                     except Exception as e:
-                        print(f"   ⚠️ Error eliminando filas del Sheet: {e}")
+                        print(f"   ⚠️ Error marcando filas procesadas: {e}")
+                
+                # ═══ LIMPIAR FILAS ANTIGUAS (> 15 días) ═══
+                try:
+                    _limpiar_filas_antiguas_kactus()
+                except Exception as e:
+                    print(f"   ⚠️ Error limpiando filas antiguas: {e}")
                 
             else:
                 print(f"   ℹ️ Hoja Cases_Kactus vacía o sin datos")
@@ -540,14 +703,16 @@ def _detectar_traslapos_globales(db):
 
 
 # ══════════════════════════════════════════════════════════════════
-# VACIADO QUINCENAL DE HOJA KACTUS (datos ya están en BD)
+# LIMPIEZA QUINCENAL DE HOJA KACTUS (respaldo)
 # ══════════════════════════════════════════════════════════════════
 
 def vaciar_hoja_kactus_quincenal():
     """
-    Cada quincena (1 y 16 del mes), vacía la Hoja 2 (Cases_Kactus) del Excel.
-    NOTA: Ahora las filas se eliminan inmediatamente al procesarlas,
-    pero esta función sirve como respaldo si alguna fila quedó sin procesar.
+    Cada quincena (1 y 16 del mes), ejecuta una limpieza forzada de la Hoja Kactus.
+    
+    NOTA: Con el nuevo sistema, las filas se marcan como "Procesado" con fecha
+    y se eliminan automáticamente cuando tienen más de 15 días.
+    Esta función es un respaldo que fuerza la limpieza si algo quedó pendiente.
     """
     try:
         from datetime import datetime
@@ -558,110 +723,18 @@ def vaciar_hoja_kactus_quincenal():
         if dia not in (1, 16):
             return
         
-        print(f"\n🗑️ VACIADO QUINCENAL — Hoja 2 (Cases_Kactus) — {hoy.strftime('%d/%m/%Y')}")
+        print(f"\n🗑️ LIMPIEZA QUINCENAL — Hoja 2 (Cases_Kactus) — {hoy.strftime('%d/%m/%Y')}")
+        print(f"   Eliminando filas procesadas hace más de {DIAS_ANTIGUEDAD_LIMPIEZA} días...")
         
-        # Verificar que todos los datos pendientes estén ya sincronizados
-        db = SessionLocal()
-        try:
-            excel_path = descargar_excel_desde_drive()
-            if not excel_path:
-                print("   ❌ No se pudo descargar el Excel para verificar")
-                return
-            
-            try:
-                df_cases = pd.read_excel(excel_path, sheet_name=1)  # ✅ Hoja 2 = índice 1
-            except Exception:
-                print("   ℹ️ Hoja 2 no existe, nada que vaciar")
-                return
-            
-            if len(df_cases) == 0:
-                print("   ℹ️ Hoja 2 ya está vacía")
-                return
-            
-            # Contar cuántas filas están sincronizadas en BD
-            pendientes = 0
-            for _, row in df_cases.iterrows():
-                cedula_raw = row.get("cedula")
-                if pd.isna(cedula_raw):
-                    continue
-                cedula_str = str(int(cedula_raw))
-                
-                from sqlalchemy import func
-                caso_sync = db.query(Case).filter(
-                    Case.cedula == cedula_str,
-                    Case.kactus_sync_at != None
-                ).first()
-                
-                if not caso_sync:
-                    pendientes += 1
-            
-            if pendientes > 0:
-                print(f"   ⚠️ {pendientes} filas aún sin sincronizar en BD — NO se vacía")
-                return
-            
-            print(f"   ✅ Todas las {len(df_cases)} filas ya sincronizadas en BD")
-            
-            # Vaciar la hoja via Google Sheets API
-            try:
-                import gspread
-                from google.oauth2.service_account import Credentials
-                
-                creds_path = os.environ.get("GOOGLE_CREDENTIALS_PATH", "/tmp/google_creds.json")
-                if not os.path.exists(creds_path):
-                    # Intentar con credenciales de Drive existentes
-                    from app.drive_uploader import get_authenticated_service
-                    print("   ℹ️ Usando credenciales de Drive para gspread")
-                    # Vaciar descargando y re-subiendo solo cabeceras
-                    _vaciar_hoja_por_descarga(excel_path, df_cases.columns.tolist())
-                else:
-                    scopes = ['https://www.googleapis.com/auth/spreadsheets']
-                    credentials = Credentials.from_service_account_file(creds_path, scopes=scopes)
-                    gc = gspread.authorize(credentials)
-                    spreadsheet = gc.open_by_key(GOOGLE_DRIVE_FILE_ID)
-                    worksheet = spreadsheet.get_worksheet(1)  # ✅ Hoja 2 = índice 1
-                    
-                    # Borrar todo excepto cabecera
-                    if worksheet.row_count > 1:
-                        worksheet.delete_rows(2, worksheet.row_count)
-                    
-                    print(f"   🗑️ Hoja 2 vaciada — {len(df_cases)} filas eliminadas del Excel")
-                
-            except ImportError:
-                print("   ℹ️ gspread no disponible — vaciado manual requerido")
-                _vaciar_hoja_por_descarga(excel_path, df_cases.columns.tolist())
-            except Exception as e:
-                print(f"   ⚠️ Error al vaciar hoja via API: {e}")
-                print("   ℹ️ Los datos ya están seguros en la BD")
+        filas_eliminadas = _limpiar_filas_antiguas_kactus()
         
-        finally:
-            db.close()
-        
-        print(f"   ✅ Vaciado quincenal completado — datos seguros en PostgreSQL\n")
+        if filas_eliminadas > 0:
+            print(f"   ✅ Limpieza quincenal completada — {filas_eliminadas} filas antiguas eliminadas\n")
+        else:
+            print(f"   ℹ️ No había filas antiguas que limpiar\n")
         
     except Exception as e:
-        print(f"   ❌ Error en vaciado quincenal: {e}")
-
-
-def _vaciar_hoja_por_descarga(excel_path, columnas):
-    """Fallback: reescribe el Excel con solo las cabeceras en Hoja 2"""
-    try:
-        # Leer todas las hojas
-        all_sheets = pd.read_excel(excel_path, sheet_name=None)
-        sheet_names = list(all_sheets.keys())
-        
-        if len(sheet_names) >= 2:
-            # Reemplazar hoja 2 con DataFrame vacío (solo cabeceras)
-            nombre_hoja2 = sheet_names[1]
-            all_sheets[nombre_hoja2] = pd.DataFrame(columns=columnas)
-            
-            # Guardar localmente
-            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-                for nombre, df in all_sheets.items():
-                    df.to_excel(writer, sheet_name=nombre, index=False)
-            
-            print(f"   🗑️ Hoja '{nombre_hoja2}' vaciada localmente (subir manualmente a Drive)")
-    except Exception as e:
-        print(f"   ⚠️ Error en vaciado por descarga: {e}")
+        print(f"   ❌ Error en limpieza quincenal: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════
