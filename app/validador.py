@@ -4144,14 +4144,14 @@ async def limpiar_todos_los_casos(
     - CaseEvent (eventos/historial)
     - CaseNote (notas)
     - SearchHistory (historial de búsquedas)
-    - CorreoNotificacion (correos configurados en Hoja 4)
+    - CorreoNotificacion (correos adicionales)
     - AlertaEmail (alertas de email)
     - Alerta180Log (logs de alertas 180 días)
     - Archivos en Google Drive
     
     NO SE ELIMINA:
-    - Employee (empleados — vienen de Hoja 1)
-    - Company (empresas — vienen de Hoja 2)
+    - Employee (empleados — vienen de Hoja 1 del Excel)
+    - Company (empresas — del directorio)
     
     Requiere contraseña correcta. Operación irreversible.
     """
