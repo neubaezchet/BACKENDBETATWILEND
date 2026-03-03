@@ -249,13 +249,10 @@ class SearchHistory(Base):
 class CorreoNotificacion(Base):
     """
     Correos de notificación por área/departamento.
-    Se sincroniza automáticamente desde la Hoja 4 del Excel.
+    Se gestionan manualmente desde el panel admin o API.
     
-    Áreas soportadas:
-    - talento_humano: Correos de Talento Humano
-    - seguridad_salud: Correos de Seguridad y Salud en el Trabajo (SST)
-    - nomina: Correos de Nómina
-    - incapacidades: Correos del área de Incapacidades
+    NOTA: Los emails CC por empresa están en companies.email_copia (directorio).
+    Esta tabla es para correos adicionales por área específica.
     """
     __tablename__ = 'correos_notificacion'
     

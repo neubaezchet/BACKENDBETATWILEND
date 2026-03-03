@@ -659,7 +659,7 @@ def _vaciar_hoja_por_descarga(excel_path, columnas):
                 for nombre, df in all_sheets.items():
                     df.to_excel(writer, sheet_name=nombre, index=False)
             
-            print(f"   🗑️ Hoja '{nombre_hoja3}' vaciada localmente (subir manualmente a Drive)")
+            print(f"   🗑️ Hoja '{nombre_hoja2}' vaciada localmente (subir manualmente a Drive)")
     except Exception as e:
         print(f"   ⚠️ Error en vaciado por descarga: {e}")
 

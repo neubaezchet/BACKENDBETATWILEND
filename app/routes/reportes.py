@@ -1140,7 +1140,7 @@ async def get_traslapos(
 @router.post("/sync/vaciar-kactus")
 async def vaciar_kactus_manual():
     """
-    🗑️ Vaciar manualmente la Hoja 3 (Cases_Kactus) del Excel.
+    🗑️ Vaciar manualmente la Hoja 2 (Cases_Kactus) del Excel.
     Solo funciona si todos los datos ya están sincronizados en BD.
     """
     try:

@@ -262,7 +262,7 @@ async def listar_empresas(db: Session = Depends(get_db)):
 
 
 # ═══════════════════════════════════════════════════════════
-# CORREOS DE NOTIFICACIÓN (Hoja 4 Excel - solo lectura)
+# CORREOS DE NOTIFICACIÓN (Gestión manual/API)
 # ═══════════════════════════════════════════════════════════
 
 @router.get("/correos-notificacion")
@@ -271,7 +271,7 @@ async def listar_correos_notificacion(
     empresa: str = Query("all"),
     db: Session = Depends(get_db)
 ):
-    """📧 Lista correos de notificación sincronizados desde Hoja 4 del Excel"""
+    """📧 Lista correos de notificación adicionales por área"""
     try:
         query = db.query(CorreoNotificacion)
         
@@ -316,7 +316,7 @@ async def listar_correos_notificacion(
             "total": len(resultado),
             "por_area": areas_resumen,
             "correos": resultado,
-            "nota": "Estos correos se sincronizan automáticamente desde la Hoja 4 del Excel"
+            "nota": "Correos adicionales por área. Los CC de empresa están en el directorio (companies.email_copia)"
         }
     except Exception as e:
         logger.error(f"Error listar correos notificación: {e}")
