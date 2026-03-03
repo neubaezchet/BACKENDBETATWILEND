@@ -460,7 +460,7 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None):
         if hasattr(caso, 'company_id') and caso.company_id:
             emails_dir = obtener_emails_empresa_directorio(caso.company_id, db=db)
             if emails_dir:
-                cc_email = emails_dir[0]  # Primer email del directorio
+                cc_email = ",".join(emails_dir)  # ✅ TODOS los emails del directorio
                 print(f"📧 CC desde DIRECTORIO: {cc_email} (empresa_id={caso.company_id})")
             else:
                 print(f"⚠️ Sin emails en directorio para empresa_id={caso.company_id}")
@@ -1319,7 +1319,7 @@ async def subir_incapacidad(
         if empleado_bd.empresa and hasattr(empleado_bd.empresa, 'id'):
             emails_dir = obtener_emails_empresa_directorio(empleado_bd.empresa.id, db=db)
             if emails_dir:
-                cc_empresa = emails_dir[0]
+                cc_empresa = ",".join(emails_dir)  # ✅ TODOS los emails del directorio
                 print(f"📧 CC empresa (directorio): {cc_empresa}")
         
         # ✅ VERIFICAR SI ES CERTIFICADO DE HOSPITALIZACIÓN (mensaje especial)

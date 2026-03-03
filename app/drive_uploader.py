@@ -396,17 +396,25 @@ def upload_to_drive(
             subfolder_name = 'Con_Licencia' if tiene_licencia else 'Sin_Licencia'
             final_folder_id = create_folder_if_not_exists(service, subfolder_name.encode(), tipo_folder_id)
         
-        # Nombre del archivo - CON FECHAS DE INCAPACIDAD
-        if consecutivo:
-            if fecha_inicio and fecha_fin:
-                filename = f"{consecutivo}_{cedula}_{tipo_normalizado}_{fecha_inicio}_{fecha_fin}_{fecha}.pdf"
-            else:
-                filename = f"{consecutivo}_{cedula}_{tipo_normalizado}_{fecha}.pdf"
+        # Nombre del archivo - CÉDULA + FECHA INICIO + FECHA FIN
+        if fecha_inicio and fecha_fin:
+            # Formatear fechas a DD MM YYYY
+            try:
+                from datetime import date as _date_type
+                if isinstance(fecha_inicio, _date_type):
+                    fi_str = fecha_inicio.strftime("%d %m %Y")
+                else:
+                    fi_str = str(fecha_inicio).replace("-", " ")
+                if isinstance(fecha_fin, _date_type):
+                    ff_str = fecha_fin.strftime("%d %m %Y")
+                else:
+                    ff_str = str(fecha_fin).replace("-", " ")
+            except:
+                fi_str = str(fecha_inicio)
+                ff_str = str(fecha_fin)
+            filename = f"{cedula} {fi_str} {ff_str}.pdf"
         else:
-            if fecha_inicio and fecha_fin:
-                filename = f"{cedula}_{tipo_normalizado}_{fecha_inicio}_{fecha_fin}_{fecha}.pdf"
-            else:
-                filename = f"{cedula}_{tipo_normalizado}_{fecha}.pdf"
+            filename = f"{cedula} {fecha}.pdf"
         
         print(f"📤 Subiendo archivo: {filename}")
         
@@ -654,8 +662,8 @@ def upload_inteligente(
             tiene_soat=kwargs.get('tiene_soat'),
             tiene_licencia=kwargs.get('tiene_licencia'),
             subtipo=kwargs.get('subtipo'),
-            fecha_inicio=kwargs.get('fecha_inicio'),
-            fecha_fin=kwargs.get('fecha_fin')
+            fecha_inicio=fecha_inicio,   # ✅ FIX: Usar parámetro directo, no kwargs
+            fecha_fin=fecha_fin          # ✅ FIX: Usar parámetro directo, no kwargs
         )
 
 

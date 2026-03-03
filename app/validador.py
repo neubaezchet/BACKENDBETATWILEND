@@ -1396,11 +1396,11 @@ async def exportar_casos_zip(
                     errores += 1
                     continue
                 
-                # Nombre del archivo: empresa/cedula_fechaInicio_fechaFin.pdf
-                fecha_inicio_str = caso.fecha_inicio.strftime("%d%m%Y") if caso.fecha_inicio else "sin_inicio"
-                fecha_fin_str = caso.fecha_fin.strftime("%d%m%Y") if caso.fecha_fin else "sin_fin"
+                # Nombre del archivo: empresa/cedula fechaInicio fechaFin.pdf
+                fecha_inicio_str = caso.fecha_inicio.strftime("%d %m %Y") if caso.fecha_inicio else "sin_inicio"
+                fecha_fin_str = caso.fecha_fin.strftime("%d %m %Y") if caso.fecha_fin else "sin_fin"
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "otra"
-                filename = f"{empresa_nombre}/{caso.cedula}_{fecha_inicio_str}_{fecha_fin_str}.pdf"
+                filename = f"{empresa_nombre}/{caso.cedula} {fecha_inicio_str} {fecha_fin_str}.pdf"
                 
                 zf.writestr(filename, response.content)
                 descargados += 1
@@ -1860,11 +1860,11 @@ async def exportar_a_drive_temporal(
                     errores += 1
                     continue
                 
-                # Nombre descriptivo para la copia: cedula_fechaInicio_fechaFin.pdf
-                fecha_inicio_str = caso.fecha_inicio.strftime("%d%m%Y") if caso.fecha_inicio else "sin_inicio"
-                fecha_fin_str = caso.fecha_fin.strftime("%d%m%Y") if caso.fecha_fin else "sin_fin"
+                # Nombre descriptivo para la copia: cedula fechaInicio fechaFin.pdf
+                fecha_inicio_str = caso.fecha_inicio.strftime("%d %m %Y") if caso.fecha_inicio else "sin_inicio"
+                fecha_fin_str = caso.fecha_fin.strftime("%d %m %Y") if caso.fecha_fin else "sin_fin"
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "otra"
-                nuevo_nombre = f"{caso.cedula}_{fecha_inicio_str}_{fecha_fin_str}.pdf"
+                nuevo_nombre = f"{caso.cedula} {fecha_inicio_str} {fecha_fin_str}.pdf"
                 
                 # COPIAR archivo (no mover) al folder temporal
                 copy_metadata = {
@@ -2718,17 +2718,46 @@ async def validar_caso_con_checks(
             fechas_str_tthh = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
             asunto_tthh = f"CC {caso.cedula} - {serial}{fechas_str_tthh} - PRESUNTO FRAUDE - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             
-            for email_dest in emails_fraude:
-                enviar_email_con_adjuntos(
-                    email_dest,
-                    asunto_tthh,
-                    email_tthh,
-                    adjuntos_paths,
-                    caso=caso
-                )
-                print(f"🚨 Presunto fraude enviado a: {email_dest}")
+            # ✅ CORREO 1: Alerta a directorio presunto fraude — CON CC empresa
+            import base64 as _b64_fraude
+            adjuntos_b64_fraude = []
+            for _path in adjuntos_paths:
+                if os.path.exists(_path):
+                    try:
+                        with open(_path, 'rb') as _f:
+                            _content = _b64_fraude.b64encode(_f.read()).decode('utf-8')
+                            adjuntos_b64_fraude.append({
+                                'filename': os.path.basename(_path),
+                                'content': _content,
+                                'mimetype': 'application/pdf'
+                            })
+                    except Exception as _e:
+                        print(f"⚠️ Error procesando adjunto fraude {_path}: {_e}")
             
-            # Email confirmación a la empleada (plantilla estática)
+            # Obtener CC empresa del directorio
+            cc_empresa_fraude = None
+            if caso.company_id:
+                emails_dir_fraude = obtener_emails_empresa_directorio(caso.company_id, db=db)
+                if emails_dir_fraude:
+                    cc_empresa_fraude = ",".join(emails_dir_fraude)
+            
+            for email_dest in emails_fraude:
+                enviar_a_n8n(
+                    tipo_notificacion='tthh',
+                    email=email_dest,
+                    serial=serial,
+                    subject=asunto_tthh,
+                    html_content=email_tthh,
+                    cc_email=cc_empresa_fraude,  # ✅ CC empresa (en TODOS va)
+                    correo_bd=None,      # ✅ SIN CC empleado
+                    whatsapp=None,       # ✅ SIN WhatsApp
+                    whatsapp_message=None,
+                    adjuntos_base64=adjuntos_b64_fraude,
+                    drive_link=caso.drive_link
+                )
+                print(f"🚨 Presunto fraude enviado a: {email_dest} (CC empresa: {cc_empresa_fraude or 'N/A'})")
+            
+            # ✅ CORREO 2: Confirmación NORMAL al empleado — CON CC empresa (como cualquier otro correo)
             email_empleada_falsa = get_email_template_universal(
                 tipo_email='falsa',
                 nombre=empleado.nombre if empleado else 'Colaborador/a',
@@ -2746,7 +2775,7 @@ async def validar_caso_con_checks(
                 caso.email_form,
                 asunto_confirmacion,
                 email_empleada_falsa,
-                caso=caso  # ✅ COPIA AUTOMÁTICA
+                caso=caso  # ✅ CC empresa va aquí (normal como cualquier correo)
             )
         
         elif accion in ['completa', 'eps', 'falsa']:
