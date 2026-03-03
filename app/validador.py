@@ -4058,8 +4058,8 @@ async def eliminar_caso_completo(
 ):
     """
     Elimina una incapacidad del sistema completamente:
-    - Base de datos
-    - Google Drive (todos los archivos con ese serial)
+    - Base de datos (caso, documentos, eventos, notas)
+    - Google Drive (TODOS los archivos asociados)
     
     Solo para administradores.
     """
@@ -4075,50 +4075,89 @@ async def eliminar_caso_completo(
     
     archivos_eliminados = []
     errores = []
+    drive_service = None
     
+    # Obtener servicio de Drive una sola vez
     try:
-        # 1. Eliminar archivo de Drive (si existe drive_link)
-        if caso.drive_link:
-            try:
-                # Extraer file_id del link
-                file_id_match = re.search(r'/d/([a-zA-Z0-9_-]+)', caso.drive_link)
+        from app.drive_uploader import get_drive_service
+        drive_service = get_drive_service()
+        print(f"🗑️ Iniciando eliminación completa del caso {serial}")
+    except Exception as e:
+        errores.append(f"No se pudo conectar a Drive: {str(e)}")
+        print(f"⚠️ Error conectando a Drive: {e}")
+    
+    # Función auxiliar para eliminar archivo de Drive
+    def eliminar_archivo_drive(url_or_id):
+        if not drive_service or not url_or_id:
+            return False
+        try:
+            # Extraer file_id del link si es URL completa
+            if 'drive.google.com' in str(url_or_id):
+                file_id_match = re.search(r'/d/([a-zA-Z0-9_-]+)', url_or_id)
                 if file_id_match:
                     file_id = file_id_match.group(1)
-                    
-                    from app.drive_uploader import get_drive_service
-                    service = get_drive_service()
-                    
-                    # Eliminar archivo
-                    service.files().delete(fileId=file_id).execute()
-                    archivos_eliminados.append(file_id)
-                    print(f"Archivo eliminado de Drive: {file_id}")
-            except Exception as e:
-                error_msg = f"Error eliminando archivo de Drive: {str(e)}"
+                else:
+                    return False
+            else:
+                file_id = url_or_id
+            
+            drive_service.files().delete(fileId=file_id).execute()
+            archivos_eliminados.append(file_id)
+            print(f"   ✅ Archivo eliminado de Drive: {file_id}")
+            return True
+        except Exception as e:
+            error_msg = f"Error eliminando {url_or_id}: {str(e)}"
+            if "File not found" not in str(e):  # Ignorar si ya no existe
                 errores.append(error_msg)
-                print(f"Error: {error_msg}")
+            print(f"   ⚠️ {error_msg}")
+            return False
+    
+    try:
+        # 1. Eliminar archivo principal de Drive (drive_link del caso)
+        if caso.drive_link:
+            print(f"   📁 Eliminando archivo principal: {caso.drive_link}")
+            eliminar_archivo_drive(caso.drive_link)
         
-        # 2. Eliminar de la base de datos
+        # 2. Eliminar todos los documentos asociados de case_documents
+        from app.database import CaseDocument
+        documentos = db.query(CaseDocument).filter(CaseDocument.case_id == caso.id).all()
+        
+        for doc in documentos:
+            if doc.drive_urls:
+                # drive_urls puede ser un JSON con lista de URLs
+                urls = doc.drive_urls if isinstance(doc.drive_urls, list) else [doc.drive_urls]
+                for url in urls:
+                    if url:
+                        print(f"   📄 Eliminando documento {doc.doc_tipo}: {url}")
+                        eliminar_archivo_drive(url)
+        
+        # 3. Guardar info del caso antes de eliminar (para el response)
+        caso_info = {
+            "serial": caso.serial,
+            "cedula": caso.cedula,
+            "tipo": str(caso.tipo.value) if caso.tipo else None,
+            "estado": str(caso.estado.value) if caso.estado else None,
+            "fecha_inicio": caso.fecha_inicio.isoformat() if caso.fecha_inicio else None,
+            "fecha_fin": caso.fecha_fin.isoformat() if caso.fecha_fin else None,
+        }
+        
+        # 4. Eliminar de la base de datos (cascade eliminará documentos, eventos, notas)
         db.delete(caso)
         db.commit()
-        print(f"Caso {serial} eliminado de BD")
+        print(f"   ✅ Caso {serial} eliminado de BD")
         
         return {
             "status": "ok",
-            "mensaje": f"Incapacidad {serial} eliminada completamente",
-            "caso": {
-                "serial": caso.serial,
-                "cedula": caso.cedula,
-                "nombre": caso.nombre,
-                "empresa": caso.empresa,
-                "tipo": caso.tipo
-            },
-            "archivos_eliminados": len(archivos_eliminados),
-            "errores": errores
+            "mensaje": f"Incapacidad {serial} eliminada completamente del sistema y Drive",
+            "caso": caso_info,
+            "archivos_eliminados_drive": len(archivos_eliminados),
+            "archivos_ids": archivos_eliminados,
+            "errores": errores if errores else None
         }
         
     except Exception as e:
         db.rollback()
-        print(f"Error eliminando caso {serial}: {str(e)}")
+        print(f"❌ Error eliminando caso {serial}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error al eliminar la incapacidad: {str(e)}"
