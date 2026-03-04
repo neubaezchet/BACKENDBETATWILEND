@@ -56,6 +56,17 @@ ALERTA_CRITICA_DIAS = 170      # Alerta crítica a los 170 días
 # Ventana de corte: >30 días sin incapacidad CORTA la cadena de prórroga
 VENTANA_CORTE_PRORROGA = 30    # Máximo días de brecha para mantener cadena activa
 
+# ═══════════════════════════════════════════════════════════
+# CONSTANTES MATERNIDAD / PRELICENCIA — Regla especial
+# ═══════════════════════════════════════════════════════════
+# Códigos CIE-10 relacionados con embarazo (Capítulo XV: O00-O9A)
+# Si una persona tiene licencia/prelicencia de maternidad Y tenía cadena de
+# prórrogas ANTES, una incapacidad durante/antes de la licencia puede ser
+# prórroga SI el diagnóstico correlaciona con la cadena previa.
+CODIGOS_EMBARAZO_PREFIJOS = ["O"]  # Capítulo XV del CIE-10
+TIPOS_MATERNIDAD = ["maternidad", "prelicencia"]  # Tipos que activan la regla especial
+MINIMO_PRORROGAS_PREVIAS_MATERNIDAD = 2  # Mínimo incapacidades prorrogadas antes
+
 
 # ═══════════════════════════════════════════════════════════
 # VALIDACIÓN RUPTURA DE PRÓRROGA: OMS + REGLAS LOCALES
@@ -157,6 +168,185 @@ def _validar_ruptura_prorroga(codigo_a: str, codigo_b: str, dias_entre: int) -> 
     
     except Exception as e:
         pass
+    
+    return resultado
+
+
+# ═════════════════════════════════════════════════════════════
+# REGLA ESPECIAL: PRÓRROGA EN CONTEXTO DE MATERNIDAD/PRELICENCIA
+# ═════════════════════════════════════════════════════════════
+
+def verificar_prorroga_contexto_maternidad(db: Session, caso_nuevo: Case) -> dict:
+    """
+    Verifica si una incapacidad puede ser prórroga de una cadena anterior
+    cuando hay una licencia/prelicencia de maternidad de por medio.
+    
+    REGLA:
+    Si una persona:
+    1. Tiene licencia de maternidad O prelicencia
+    2. Tenía una cadena de prórrogas ANTES de la licencia (mínimo 2 incapacidades)
+    3. Se incapacita durante o justo antes de la licencia
+    4. El diagnóstico CORRELACIONA con la cadena previa
+    
+    → La incapacidad cuenta como PRÓRROGA de la cadena anterior,
+      aunque haya una licencia de maternidad en medio.
+    
+    Retorna:
+        {
+            "aplica_regla_maternidad": bool,
+            "es_prorroga_cadena_previa": bool,
+            "cadena_previa": {...} | None,
+            "correlacion": {...} | None,
+            "explicacion": str
+        }
+    """
+    from app.database import TipoIncapacidad
+    
+    resultado = {
+        "aplica_regla_maternidad": False,
+        "es_prorroga_cadena_previa": False,
+        "cadena_previa": None,
+        "correlacion": None,
+        "explicacion": ""
+    }
+    
+    if not caso_nuevo or not caso_nuevo.cedula:
+        return resultado
+    
+    cedula = caso_nuevo.cedula
+    codigo_nuevo = _normalizar_codigo(caso_nuevo.codigo_cie10 or "")
+    
+    # ─── 1. Buscar licencias/prelicencias de maternidad del empleado ───
+    licencias_maternidad = db.query(Case).filter(
+        Case.cedula == cedula,
+        Case.tipo.in_([TipoIncapacidad.MATERNIDAD, TipoIncapacidad.PRELICENCIA])
+    ).order_by(Case.fecha_inicio.desc()).all()
+    
+    if not licencias_maternidad:
+        resultado["explicacion"] = "No hay licencia/prelicencia de maternidad registrada"
+        return resultado
+    
+    # ─── 2. Para cada licencia, buscar cadena de prórrogas ANTERIORES ───
+    for licencia in licencias_maternidad:
+        fecha_licencia = licencia.fecha_inicio
+        if not fecha_licencia:
+            continue
+        
+        # Incapacidades ANTERIORES a la licencia (excluir la propia licencia y maternidad)
+        incapacidades_previas = db.query(Case).filter(
+            Case.cedula == cedula,
+            Case.fecha_inicio < fecha_licencia,
+            ~Case.tipo.in_([TipoIncapacidad.MATERNIDAD, TipoIncapacidad.PRELICENCIA, TipoIncapacidad.PATERNIDAD])
+        ).order_by(Case.fecha_inicio.asc()).all()
+        
+        if len(incapacidades_previas) < MINIMO_PRORROGAS_PREVIAS_MATERNIDAD:
+            continue  # No hay suficientes incapacidades previas
+        
+        # ─── 3. Detectar cadenas de prórroga en las incapacidades previas ───
+        # Usar el detector existente pero solo con las incapacidades previas
+        cadenas_previas = _detectar_cadenas_prorroga(incapacidades_previas)
+        
+        # Buscar cadena activa (con al menos MINIMO_PRORROGAS_PREVIAS incapacidades)
+        cadena_activa = None
+        for cadena in cadenas_previas:
+            if cadena["es_cadena_prorroga"] and cadena["total_incapacidades_cadena"] >= MINIMO_PRORROGAS_PREVIAS_MATERNIDAD:
+                # La más reciente que cumpla el criterio
+                if cadena_activa is None:
+                    cadena_activa = cadena
+                else:
+                    # Comparar fechas para tomar la más reciente
+                    fecha_actual = cadena.get("fecha_fin_cadena")
+                    fecha_mejor = cadena_activa.get("fecha_fin_cadena")
+                    if fecha_actual and fecha_mejor and fecha_actual > fecha_mejor:
+                        cadena_activa = cadena
+        
+        if not cadena_activa:
+            continue  # No hay cadena de prórrogas relevante
+        
+        # ─── 4. Verificar si el caso nuevo está cerca de la licencia ───
+        fecha_inicio_nuevo = caso_nuevo.fecha_inicio
+        fecha_fin_licencia = licencia.fecha_fin or licencia.fecha_inicio
+        
+        if fecha_inicio_nuevo and fecha_fin_licencia:
+            # El caso debe ser durante la licencia o hasta 30 días antes/después
+            dias_diferencia = abs((fecha_inicio_nuevo.date() - fecha_fin_licencia.date()).days)
+            dias_antes_licencia = (fecha_licencia.date() - fecha_inicio_nuevo.date()).days if fecha_inicio_nuevo < fecha_licencia else -1
+            
+            en_rango = (
+                # Durante la licencia
+                (fecha_inicio_nuevo >= fecha_licencia and fecha_inicio_nuevo <= fecha_fin_licencia) or
+                # Hasta 30 días antes de la licencia
+                (0 <= dias_antes_licencia <= 30) or
+                # Hasta 30 días después de la licencia
+                (fecha_inicio_nuevo > fecha_fin_licencia and dias_diferencia <= 30)
+            )
+            
+            if not en_rango:
+                continue
+        
+        resultado["aplica_regla_maternidad"] = True
+        
+        # ─── 5. Verificar correlación con la cadena previa ───
+        codigos_cadena = cadena_activa.get("codigos_cie10", [])
+        
+        if not codigo_nuevo or not codigos_cadena:
+            resultado["explicacion"] = (
+                f"Aplica regla maternidad pero sin códigos CIE-10 para verificar correlación. "
+                f"Cadena previa: {cadena_activa['total_incapacidades_cadena']} incapacidades, "
+                f"{cadena_activa['dias_acumulados']} días acumulados."
+            )
+            continue
+        
+        # Verificar correlación con CUALQUIER código de la cadena previa
+        mejor_correlacion = None
+        for codigo_previo in codigos_cadena:
+            corr = son_correlacionados(codigo_previo, codigo_nuevo, dias_entre=0)
+            if corr["correlacionados"]:
+                if mejor_correlacion is None or corr.get("asertividad", 0) > mejor_correlacion.get("asertividad", 0):
+                    mejor_correlacion = corr
+                    mejor_correlacion["codigo_correlacionado"] = codigo_previo
+        
+        if mejor_correlacion and mejor_correlacion["correlacionados"]:
+            resultado["es_prorroga_cadena_previa"] = True
+            resultado["cadena_previa"] = {
+                "total_incapacidades": cadena_activa["total_incapacidades_cadena"],
+                "dias_acumulados": cadena_activa["dias_acumulados"],
+                "codigos_cie10": codigos_cadena,
+                "fecha_inicio": cadena_activa["fecha_inicio_cadena"],
+                "fecha_fin": cadena_activa["fecha_fin_cadena"]
+            }
+            resultado["correlacion"] = mejor_correlacion
+            resultado["explicacion"] = (
+                f"✅ PRÓRROGA MATERNIDAD: El diagnóstico {codigo_nuevo} correlaciona con "
+                f"{mejor_correlacion['codigo_correlacionado']} de la cadena previa "
+                f"({cadena_activa['total_incapacidades_cadena']} incapacidades, "
+                f"{cadena_activa['dias_acumulados']} días). "
+                f"Asertividad: {mejor_correlacion.get('asertividad', 0):.0f}%. "
+                f"La licencia de maternidad NO rompe la cadena de prórroga."
+            )
+            
+            # ─── 6. Marcar el caso como prórroga ───
+            if caso_nuevo.id:
+                try:
+                    caso_nuevo.es_prorroga = True
+                    # Guardar metadata
+                    metadata = caso_nuevo.metadata_form or {}
+                    metadata["prorroga_contexto_maternidad"] = True
+                    metadata["cadena_previa_dias"] = cadena_activa["dias_acumulados"]
+                    metadata["correlacion_maternidad"] = mejor_correlacion.get("codigo_correlacionado")
+                    caso_nuevo.metadata_form = metadata
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    print(f"⚠️ Error actualizando caso como prórroga maternidad: {e}")
+            
+            return resultado
+        else:
+            resultado["explicacion"] = (
+                f"Aplica regla maternidad pero el diagnóstico {codigo_nuevo} "
+                f"NO correlaciona con la cadena previa ({codigos_cadena}). "
+                f"No se considera prórroga."
+            )
     
     return resultado
 
