@@ -120,6 +120,12 @@ def verificar_casos_pendientes():
                 if not empleado:
                     continue
 
+                # ✅ VERIFICAR SI EL EMPLEADO SIGUE ACTIVO EN LA EMPRESA
+                # Si se retiró (activo=False), no enviar recordatorios
+                if not empleado.activo:
+                    print(f"   ⏭️ {caso.serial}: Empleado {empleado.nombre} ya no está activo, omitiendo recordatorios")
+                    continue
+
                 dias_sin_respuesta = (ahora - caso.updated_at).days
                 count = caso.recordatorios_count or 0
 
