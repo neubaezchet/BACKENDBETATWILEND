@@ -1050,10 +1050,12 @@ async def verificar_duplicado(
     cedula: str,
     fecha_inicio: str,
     fecha_fin: str,
+    tipo: str = None,  # Opcional para compatibilidad
     db: Session = Depends(get_db)
 ):
     """
-    ✅ Verifica si ya existe una incapacidad con las mismas fechas para esa cédula.
+    ✅ Verifica si ya existe una incapacidad con las mismas fechas Y MISMO TIPO para esa cédula.
+    Un certificado de hospitalización y una incapacidad normal pueden tener las mismas fechas.
     El frontend debe llamar esto ANTES de permitir enviar.
     Retorna: {duplicado: true/false, serial, estado, mensaje}
     """
@@ -1063,22 +1065,28 @@ async def verificar_duplicado(
     except ValueError:
         return {"duplicado": False, "error": "Formato de fecha inválido"}
     
-    # Buscar caso con MISMA cédula, misma fecha_inicio Y misma fecha_fin
+    # Buscar caso con MISMA cédula, misma fecha_inicio, misma fecha_fin Y MISMO TIPO
     from sqlalchemy import and_
-    caso_existente = db.query(Case).filter(
-        and_(
-            Case.cedula == cedula,
-            Case.fecha_inicio == fi,
-            Case.fecha_fin == ff
-        )
-    ).first()
+    
+    # Construir filtros base
+    filtros = [
+        Case.cedula == cedula,
+        Case.fecha_inicio == fi,
+        Case.fecha_fin == ff
+    ]
+    
+    # Si se proporciona tipo, incluirlo en el filtro (permite mismas fechas para distintos tipos)
+    if tipo:
+        filtros.append(Case.tipo == tipo)
+    
+    caso_existente = db.query(Case).filter(and_(*filtros)).first()
     
     if caso_existente:
         return {
             "duplicado": True,
             "serial": caso_existente.serial,
             "estado": caso_existente.estado.value if caso_existente.estado else None,
-            "mensaje": f"Ya existe una incapacidad con estas fechas (Serial: {caso_existente.serial}). No puedes enviar la misma incapacidad dos veces."
+            "mensaje": f"Ya existe una incapacidad de este tipo con estas fechas (Serial: {caso_existente.serial}). No puedes enviar la misma incapacidad dos veces."
         }
     
     return {"duplicado": False}
