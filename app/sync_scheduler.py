@@ -4,6 +4,7 @@ Sincronización automática Excel → PostgreSQL + Token de Drive ULTRA-RESISTEN
 ✅ Auto-recuperación en errores con backoff exponencial
 ✅ Heartbeat continuo para detectar problemas antes de que afecten operaciones
 ✅ Recuperación de emergencia automática si todo falla
+✅ Lock global para evitar race conditions SSL entre threads
 """
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -11,6 +12,14 @@ from app.sync_excel import sincronizar_excel_completo
 import datetime
 import time
 import threading
+
+# ═══════════════════════════════════════════════════════════════════
+# LOCK GLOBAL PARA OPERACIONES DE GOOGLE API
+# Previene segmentation faults por SSL race conditions
+# ═══════════════════════════════════════════════════════════════════
+
+_google_api_lock = threading.Lock()
+_api_in_progress = False  # Flag para heartbeat (evita esperar)
 
 # ═══════════════════════════════════════════════════════════════════
 # ESTADO GLOBAL DEL TOKEN (para diagnóstico y recuperación)
@@ -63,11 +72,25 @@ def _update_token_status(success: bool, error: str = None):
 def verificar_drive_token():
     """
     Verifica y RENUEVA el token de Drive de forma ultra-resistente.
+    - Usa lock global para evitar race conditions SSL
     - Reintenta hasta 5 veces con backoff exponencial
     - Regeneración forzada si hay errores acumulados
     - NUNCA propaga excepciones (no tumba el scheduler)
     """
+    global _api_in_progress
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+    
+    # Usar lock global para evitar SSL race conditions
+    with _google_api_lock:
+        _api_in_progress = True
+        try:
+            return _verificar_drive_token_internal(timestamp)
+        finally:
+            _api_in_progress = False
+
+
+def _verificar_drive_token_internal(timestamp):
+    """Implementación interna de verificación de token (ya con lock)"""
     
     # Verificar si estamos en modo emergencia
     with _status_lock:
@@ -146,9 +169,20 @@ def verificar_drive_token():
 def _heartbeat_drive():
     """
     Heartbeat que verifica el estado del token.
-    Si detecta problemas, activa recuperación inmediata.
+    Si otra operación está en progreso, salta este heartbeat.
     """
+    global _api_in_progress
+    
+    # Si hay otra operación de API en progreso, saltar heartbeat
+    if _api_in_progress:
+        return True  # No es un error, simplemente omitimos
+    
+    # Intentar obtener el lock sin bloquear
+    if not _google_api_lock.acquire(blocking=False):
+        return True  # Otra operación tiene el lock, omitir
+    
     try:
+        _api_in_progress = True
         from app.drive_uploader import _service_cache
         
         if _service_cache:
@@ -159,13 +193,17 @@ def _heartbeat_drive():
             with _status_lock:
                 if _token_status["is_healthy"]:
                     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 💓 Heartbeat: Sin cache, forzando renovación...")
-            verificar_drive_token()
+            # Llamar a la implementación interna porque ya tenemos el lock
+            _verificar_drive_token_internal(datetime.datetime.now().strftime('%H:%M:%S'))
     except Exception as e:
         # Problema detectado, activar renovación
         with _status_lock:
             _token_status["is_healthy"] = False
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 💔 Heartbeat falló: {str(e)[:50]}")
-        verificar_drive_token()
+        _verificar_drive_token_internal(datetime.datetime.now().strftime('%H:%M:%S'))
+    finally:
+        _api_in_progress = False
+        _google_api_lock.release()
     return False
 
 
@@ -176,33 +214,40 @@ def _heartbeat_drive():
 def sync_excel_con_verificacion():
     """
     Sincroniza Excel con máxima protección.
+    - Usa lock global para evitar race conditions SSL
     - Verifica token antes de sincronizar
     - Si falla, recupera y reintenta
     - NUNCA propaga excepciones
     """
+    global _api_in_progress
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
     
-    try:
-        # Pre-verificar estado del token
-        with _status_lock:
-            healthy = _token_status["is_healthy"]
-        
-        if not healthy:
-            print(f"[{timestamp}] ⚠️ Token no saludable, recuperando antes de sync...")
-            verificar_drive_token()
-        
-        sincronizar_excel_completo()
-        
-    except Exception as e:
-        error_str = str(e).lower()
-        print(f"[{timestamp}] ❌ Error en sync Excel: {str(e)[:80]}")
-        
-        # Si es error de token, intentar recuperar
-        if any(x in error_str for x in ['unauthorized', 'invalid', 'token', 'credential', '401', '403']):
-            print(f"[{timestamp}] 🔄 Error de token detectado, recuperando...")
+    # Usar lock global para evitar SSL race conditions
+    with _google_api_lock:
+        _api_in_progress = True
+        try:
+            # Pre-verificar estado del token
             with _status_lock:
-                _token_status["is_healthy"] = False
-            verificar_drive_token()
+                healthy = _token_status["is_healthy"]
+            
+            if not healthy:
+                print(f"[{timestamp}] ⚠️ Token no saludable, recuperando antes de sync...")
+                _verificar_drive_token_internal(timestamp)
+            
+            sincronizar_excel_completo()
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            print(f"[{timestamp}] ❌ Error en sync Excel: {str(e)[:80]}")
+            
+            # Si es error de token, intentar recuperar
+            if any(x in error_str for x in ['unauthorized', 'invalid', 'token', 'credential', '401', '403']):
+                print(f"[{timestamp}] 🔄 Error de token detectado, recuperando...")
+                with _status_lock:
+                    _token_status["is_healthy"] = False
+                _verificar_drive_token_internal(timestamp)
+        finally:
+            _api_in_progress = False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -211,13 +256,20 @@ def sync_excel_con_verificacion():
 
 def ejecutar_vaciado_quincenal():
     """Ejecuta la limpieza de Hoja Kactus si es día 1 o 16."""
-    try:
-        from app.sync_excel import vaciar_hoja_kactus_quincenal
-        hoy = datetime.datetime.now()
-        print(f"[{hoy.strftime('%H:%M:%S')}] 📋 Verificando limpieza quincenal (día {hoy.day})...")
-        vaciar_hoja_kactus_quincenal()
-    except Exception as e:
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Error en limpieza: {e}")
+    global _api_in_progress
+    
+    # Usar lock global para evitar SSL race conditions
+    with _google_api_lock:
+        _api_in_progress = True
+        try:
+            from app.sync_excel import vaciar_hoja_kactus_quincenal
+            hoy = datetime.datetime.now()
+            print(f"[{hoy.strftime('%H:%M:%S')}] 📋 Verificando limpieza quincenal (día {hoy.day})...")
+            vaciar_hoja_kactus_quincenal()
+        except Exception as e:
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ⚠️ Error en limpieza: {e}")
+        finally:
+            _api_in_progress = False
 
 
 # ═══════════════════════════════════════════════════════════════════
