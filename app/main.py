@@ -1315,6 +1315,18 @@ async def subir_incapacidad(
     except Exception as e:
         print(f"⚠️ Error sincronizando con Sheets: {e}")
     
+    # ✅ VERIFICAR SI ES PRÓRROGA EN CONTEXTO DE MATERNIDAD/PRELICENCIA
+    # Si hay licencia de maternidad y cadena de prórrogas previa, verificar correlación
+    try:
+        from app.services.prorroga_detector import verificar_prorroga_contexto_maternidad
+        resultado_maternidad = verificar_prorroga_contexto_maternidad(db, nuevo_caso)
+        if resultado_maternidad.get("es_prorroga_cadena_previa"):
+            print(f"✅ PRÓRROGA MATERNIDAD: {resultado_maternidad['explicacion']}")
+        elif resultado_maternidad.get("aplica_regla_maternidad"):
+            print(f"ℹ️ Regla maternidad aplicada pero sin correlación: {resultado_maternidad['explicacion']}")
+    except Exception as e:
+        print(f"⚠️ Error verificando prórroga maternidad: {e}")
+    
     quinzena_actual = get_current_quinzena()
     
     if empleado_encontrado and empleado_bd:

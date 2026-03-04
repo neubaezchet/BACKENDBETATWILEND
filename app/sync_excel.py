@@ -667,6 +667,15 @@ def sincronizar_excel_completo():
                             db.add(nuevo_caso)
                             db.commit()
                             
+                            # ✅ VERIFICAR SI ES PRÓRROGA EN CONTEXTO DE MATERNIDAD/PRELICENCIA
+                            try:
+                                from app.services.prorroga_detector import verificar_prorroga_contexto_maternidad
+                                resultado_maternidad = verificar_prorroga_contexto_maternidad(db, nuevo_caso)
+                                if resultado_maternidad.get("es_prorroga_cadena_previa"):
+                                    print(f"   ✅ PRÓRROGA MATERNIDAD: {nuevo_caso.serial}")
+                            except Exception as e:
+                                pass  # No bloquear sync si falla verificación
+                            
                             if es_historico:
                                 cases_historicos += 1
                                 print(f"   📜 HISTÓRICO: CC {cedula_case} | {serial} | {dias or '?'}d | {tipo_raw or 'general'}")
