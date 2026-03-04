@@ -547,17 +547,15 @@ def sincronizar_excel_completo():
                     try:
                         # ═══ VERIFICAR SI YA FUE PROCESADA (tiene fecha en columna "Procesado" o "procesado") ═══
                         # Buscar columna procesado case-insensitive
-                        procesado_val = None
-                        for col in row.index:
-                            if str(col).lower() == "procesado":
-                                procesado_val = row.get(col)
-                                break
+                        # Crear diccionario con claves en minúsculas para búsqueda case-insensitive
+                        row_lower = {str(k).lower(): v for k, v in row.items()}
                         
+                        procesado_val = row_lower.get("procesado")
                         if pd.notna(procesado_val) and str(procesado_val).strip():
                             filas_ya_procesadas += 1
                             continue  # Omitir filas ya procesadas
                         
-                        cedula_raw = row.get("cedula")
+                        cedula_raw = row_lower.get("cedula")
                         if pd.isna(cedula_raw):
                             continue
                         
@@ -565,43 +563,28 @@ def sincronizar_excel_completo():
                         
                         # ═══ VERIFICAR SI ES DATO HISTÓRICO ═══
                         es_historico = False
-                        # Buscar columna historico case-insensitive
-                        historico_val = None
-                        for col in row.index:
-                            if str(col).lower() == "historico":
-                                historico_val = row.get(col)
-                                break
+                        historico_val = row_lower.get("historico")
                         if pd.notna(historico_val) and str(historico_val).strip().upper() in ["SI", "SÍ", "YES", "1", "TRUE", "HISTORICO"]:
                             es_historico = True
                         
                         # Leer datos de la fila
-                        fecha_inicio_raw = row.get("fecha_inicio")
-                        fecha_fin_raw = row.get("fecha_fin")
+                        fecha_inicio_raw = row_lower.get("fecha_inicio")
+                        fecha_fin_raw = row_lower.get("fecha_fin")
                         fecha_inicio = pd.to_datetime(fecha_inicio_raw) if pd.notna(fecha_inicio_raw) else None
                         fecha_fin = pd.to_datetime(fecha_fin_raw) if pd.notna(fecha_fin_raw) else None
                         
-                        num_incap = str(row.get("numero_incapacidad", "")).strip() if pd.notna(row.get("numero_incapacidad")) else None
-                        codigo_cie = str(row.get("codigo_cie10", "")).strip() if pd.notna(row.get("codigo_cie10")) else None
+                        num_incap = str(row_lower.get("numero_incapacidad", "")).strip() if pd.notna(row_lower.get("numero_incapacidad")) else None
+                        codigo_cie = str(row_lower.get("codigo_cie10", "")).strip() if pd.notna(row_lower.get("codigo_cie10")) else None
                         
-                        # Días de incapacidad (soportar ambos nombres, case-insensitive)
-                        dias_raw = None
-                        for col in row.index:
-                            if str(col).lower() in ["numero de dias", "dias"]:
-                                dias_raw = row.get(col)
-                                if pd.notna(dias_raw):
-                                    break
+                        # Días de incapacidad (soportar ambos nombres)
+                        dias_raw = row_lower.get("numero de dias") or row_lower.get("dias")
                         dias = int(dias_raw) if pd.notna(dias_raw) else None
                         
-                        # Diagnóstico textual
-                        diagnostico = str(row.get("diagnostico", "")).strip() if pd.notna(row.get("diagnostico")) else None
+                        # Diagnóstico textual (opcional - si no hay, se busca por código CIE-10)
+                        diagnostico = str(row_lower.get("diagnostico", "")).strip() if pd.notna(row_lower.get("diagnostico")) else None
                         
-                        # Tipo de incapacidad (case-insensitive)
-                        tipo_raw = None
-                        for col in row.index:
-                            if str(col).lower() == "tipo":
-                                tipo_raw = row.get(col)
-                                break
-                        tipo_raw = str(tipo_raw).strip().lower() if pd.notna(tipo_raw) else ""
+                        # Tipo de incapacidad
+                        tipo_raw = str(row_lower.get("tipo", "")).strip().lower() if pd.notna(row_lower.get("tipo")) else ""
                         tipo_incap = TIPO_MAP.get(tipo_raw, TipoIncapacidad.ENFERMEDAD_GENERAL)
                         
                         if not fecha_inicio:
