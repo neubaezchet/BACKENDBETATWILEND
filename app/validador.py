@@ -395,12 +395,24 @@ async def listar_casos(
     q: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
+    incluir_historicos: bool = False,  # ✅ NUEVO: parámetro para incluir históricos en búsquedas
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
-    """Lista casos con filtros avanzados"""
+    """
+    Lista casos con filtros avanzados
+    
+    ✅ FILTRO HISTÓRICO:
+    - Por defecto (incluir_historicos=False): solo casos actuales (es_historico=False)
+    - Con incluir_historicos=True: incluye casos históricos en la búsqueda manual
+    - Casos históricos = sin PDF, solo registros base de datos para control quincenal
+    """
     
     query = db.query(Case)
+    
+    # ✅ FILTRO HISTÓRICO - Excluir casos históricos por defecto
+    if not incluir_historicos:
+        query = query.filter(Case.es_historico == False)
     
     if empresa and empresa != "all" and empresa != "undefined":
         company = db.query(Company).filter(Company.nombre == empresa).first()
@@ -479,6 +491,67 @@ async def listar_casos(
         "page": page,
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size
+    }
+
+@router.get("/casos/tabla-viva")
+async def obtener_tabla_viva(
+    empresa: Optional[str] = None,
+    periodo: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Endpoint para Tabla Viva (Dashboard en tiempo real)
+    
+    ✅ FILTRO HISTÓRICO:
+    - Solo muestra casos actuales (es_historico=False)
+    - Excluye los 20,686+ registros históricos sin PDF
+    - Los registros históricos siguen siendo buscables manualmente
+    
+    Parámetros:
+    - empresa: Filtrar por empresa ("all" = todas)
+    - periodo: mes_actual, trimestre, etc. (por ahora no implementado)
+    
+    Retorna:
+    {
+        "total": 123,
+        "estadisticas": {
+            "INCOMPLETA": 10,
+            "EPS_TRANSCRIPCION": 5,
+            "NUEVO": 20,
+            ...
+        }
+    }
+    """
+    
+    # Base query: solo casos actuales (no históricos)
+    query = db.query(Case).filter(Case.es_historico == False)
+    
+    # Filtro por empresa
+    if empresa and empresa != "all" and empresa != "undefined":
+        company = db.query(Company).filter(Company.nombre == empresa).first()
+        if company:
+            query = query.filter(Case.company_id == company.id)
+    
+    # Total de casos actuales
+    total = query.count()
+    
+    # Estadísticas por estado
+    estadisticas = {
+        "INCOMPLETA": query.filter(Case.estado == EstadoCaso.INCOMPLETA).count(),
+        "EPS_TRANSCRIPCION": query.filter(Case.estado == EstadoCaso.EPS_TRANSCRIPCION).count(),
+        "DERIVADO_TTHH": query.filter(Case.estado == EstadoCaso.DERIVADO_TTHH).count(),
+        "COMPLETA": query.filter(Case.estado == EstadoCaso.COMPLETA).count(),
+        "NUEVO": query.filter(Case.estado == EstadoCaso.NUEVO).count(),
+        "CAUSA_EXTRA": query.filter(Case.estado == EstadoCaso.CAUSA_EXTRA).count(),
+        "VALIDADA": query.filter(Case.estado == EstadoCaso.VALIDADA).count(),
+        "ENVIADA": query.filter(Case.estado == EstadoCaso.ENVIADA).count(),
+        "ERROR": query.filter(Case.estado == EstadoCaso.ERROR).count(),
+    }
+    
+    return {
+        "total": total,
+        "estadisticas": estadisticas
     }
 
 @router.get("/casos/{serial}")
@@ -872,9 +945,15 @@ async def obtener_estadisticas(
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
-    """Obtiene estadísticas para el dashboard"""
+    """
+    Obtiene estadísticas para el dashboard
     
-    query = db.query(Case)
+    ✅ FILTRO HISTÓRICO:
+    - Solo cuenta casos actuales (es_historico=False)
+    - Excluye los 20,686+ registros históricos sin PDF
+    """
+    
+    query = db.query(Case).filter(Case.es_historico == False)  # ✅ Solo casos actuales
     
     if empresa and empresa != "all" and empresa != "undefined":
         company = db.query(Company).filter(Company.nombre == empresa).first()
@@ -974,7 +1053,14 @@ async def busqueda_relacional(
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
-    """Búsqueda relacional avanzada"""
+    """
+    Búsqueda relacional avanzada
+    
+    ✅ REGISTROS HISTÓRICOS:
+    - INCLUYE registros históricos (es_historico=True) por defecto
+    - Este es un endpoint de búsqueda manual explícita
+    - Los usuarios deben poder encontrar casos antiguos sin PDF cuando buscan activamente
+    """
     
     resultados = []
     filtros_globales = request.filtros_globales or {}
@@ -1175,12 +1261,23 @@ async def exportar_casos(
     desde: Optional[str] = None,
     hasta: Optional[str] = None,
     q: Optional[str] = None,
+    incluir_historicos: bool = False,
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
-    """Exportar casos a Excel — respeta TODOS los filtros activos"""
+    """
+    Exportar casos a Excel — respeta TODOS los filtros activos
+    
+    ✅ FILTRO HISTÓRICO:
+    - Por defecto excluye registros históricos sin PDF (es_historico=False)
+    - Usar incluir_historicos=true para exportar también históricos
+    """
     
     query = db.query(Case).join(Employee, Case.employee_id == Employee.id, isouter=True)
+    
+    # Filtrar históricos por defecto
+    if not incluir_historicos:
+        query = query.filter(Case.es_historico == False)
     
     if empresa and empresa != "all":
         company = db.query(Company).filter(Company.nombre == empresa).first()
