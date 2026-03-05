@@ -584,11 +584,10 @@ def sincronizar_excel_completo():
                         
                         cedula_case = str(int(cedula_raw))
                         
-                        # ═══ VERIFICAR SI ES DATO HISTÓRICO ═══
-                        es_historico = False
-                        historico_val = row_lower.get("historico")
-                        if pd.notna(historico_val) and str(historico_val).strip().upper() in ["SI", "SÍ", "YES", "1", "TRUE", "HISTORICO"]:
-                            es_historico = True
+                        # ═══ MARCAR COMO HISTÓRICO ═══
+                        # Todos los casos de Kactus Excel son datos históricos (no tienen PDF/soportes)
+                        # Solo casos enviados por el portal web/WhatsApp tienen es_historico=False
+                        es_historico = True
                         
                         # Leer datos de la fila
                         fecha_inicio_raw = row_lower.get("fecha_inicio")
