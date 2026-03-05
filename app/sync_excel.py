@@ -605,7 +605,14 @@ def sincronizar_excel_completo():
                             ).first()
                         
                         if caso:
-                            # ═══ ACTUALIZAR CASO EXISTENTE ═══
+                            # ═══ CASO YA EXISTE EN BD ═══
+                            # Si ya está procesado y no cambió nada relevante, solo marcar fila en Excel
+                            if caso.procesado and caso.es_historico == es_historico:
+                                filas_ya_procesadas += 1
+                                filas_procesadas.append(idx + 2)  # Asegurar que se marque en Excel
+                                continue
+                            
+                            # Actualizar datos que puedan haber cambiado
                             if num_incap:
                                 caso.numero_incapacidad = num_incap
                             if codigo_cie:
