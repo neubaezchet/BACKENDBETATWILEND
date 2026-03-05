@@ -147,6 +147,9 @@ class Case(Base):
     numero_incapacidad = Column(String(50))
     # dias_kactus, medico_tratante, institucion_origen, diagnostico_kactus eliminados - no vienen del Excel Kactus
     
+    # ✅ COLUMNA HISTÓRICO - Marca casos históricos que no deben aparecer en dashboard/reportes en vivo
+    es_historico = Column(Boolean, default=False, index=True)  # True = registro histórico (sin PDF), False = actual (con PDF)
+    
     # ✅ COLUMNAS TRASLAPO - Fechas ajustadas Kactus y detección de solapamiento
     fecha_inicio_kactus = Column(DateTime, nullable=True)
     fecha_fin_kactus = Column(DateTime, nullable=True)
@@ -169,6 +172,7 @@ class Case(Base):
     __table_args__ = (
         Index('idx_cedula_fecha_inicio', 'cedula', 'fecha_inicio'),
         Index('idx_cedula_fecha_estado', 'cedula', 'fecha_inicio', 'estado'),
+        Index('idx_estado_historico', 'estado', 'es_historico'),  # Índice para filtrar dashboard/reportes
     )
 
 class CaseDocument(Base):
