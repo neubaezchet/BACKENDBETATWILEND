@@ -910,6 +910,107 @@ async def historial_notificaciones(
     }
 
 
+@router.post("/casos/{serial}/marcar-procesado")
+async def marcar_caso_procesado(
+    serial: str,
+    usuario: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Marca un caso como procesado (para tracking en Excel exports).
+    
+    Útil cuando exportas casos a Excel, los procesas, y quieres marcar
+    cuáles ya fueron manejados para no procesar duplicados.
+    
+    Parámetros:
+    - serial: Serial del caso a marcar
+    - usuario: Nombre del usuario que procesó (opcional)
+    
+    Retorna:
+    {
+        "serial": "INC-2026-001",
+        "procesado": True,
+        "fecha_procesado": "2026-03-04T15:30:45",
+        "usuario": "Admin"
+    }
+    """
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        raise HTTPException(status_code=404, detail=f"Caso {serial} no encontrado")
+    
+    caso.procesado = True
+    caso.fecha_procesado = datetime.now()
+    caso.usuario_procesado = usuario or "Sistema"
+    db.commit()
+    
+    return {
+        "serial": caso.serial,
+        "procesado": caso.procesado,
+        "fecha_procesado": caso.fecha_procesado.isoformat() if caso.fecha_procesado else None,
+        "usuario": caso.usuario_procesado
+    }
+
+@router.post("/casos/{serial}/desmarcar-procesado")
+async def desmarcar_caso_procesado(
+    serial: str,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """Desmarca un caso como procesado (revierte la marca)"""
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        raise HTTPException(status_code=404, detail=f"Caso {serial} no encontrado")
+    
+    caso.procesado = False
+    caso.fecha_procesado = None
+    caso.usuario_procesado = None
+    db.commit()
+    
+    return {
+        "serial": caso.serial,
+        "procesado": caso.procesado,
+        "mensaje": "Caso desmarcado como procesado"
+    }
+
+@router.get("/casos/sin-procesar")
+async def listar_casos_sin_procesar(
+    empresa: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Lista SOLO casos que NO han sido procesados aún.
+    Útil para saber cuáles faltan por procesar del Excel.
+    """
+    query = db.query(Case).filter(Case.procesado == False)
+    
+    if empresa and empresa != "all" and empresa != "undefined":
+        company = db.query(Company).filter(Company.nombre == empresa).first()
+        if company:
+            query = query.filter(Case.company_id == company.id)
+    
+    total = query.count()
+    offset = (page - 1) * page_size
+    casos = query.order_by(Case.created_at.desc()).offset(offset).limit(page_size).all()
+    
+    return {
+        "sin_procesar": total,
+        "items": [
+            {
+                "serial": c.serial,
+                "cedula": c.cedula,
+                "estado": c.estado.value,
+                "fecha_creacion": c.created_at.isoformat() if c.created_at else None
+            }
+            for c in casos
+        ],
+        "page": page,
+        "total_pages": (total + page_size - 1) // page_size
+    }
+
 @router.post("/casos/{serial}/nota")
 async def agregar_nota(
     serial: str,
@@ -1329,7 +1430,10 @@ async def exportar_casos(
             "Fecha Fin": caso.fecha_fin.strftime("%Y-%m-%d") if caso.fecha_fin else None,
             "Diagnóstico": caso.diagnostico,
             "Link Drive": caso.drive_link,
-            "Fecha Registro": caso.created_at.strftime("%Y-%m-%d %H:%M")
+            "Fecha Registro": caso.created_at.strftime("%Y-%m-%d %H:%M"),
+            "✅ Procesado": "SÍ" if caso.procesado else "NO",  # ✅ NUEVA COLUMNA para tracking
+            "Fecha Procesado": caso.fecha_procesado.strftime("%Y-%m-%d %H:%M") if caso.fecha_procesado else None,
+            "Usuario Procesado": caso.usuario_procesado
         })
     
     df = pd.DataFrame(data)
