@@ -544,9 +544,9 @@ async def obtener_tabla_viva(
         "COMPLETA": query.filter(Case.estado == EstadoCaso.COMPLETA).count(),
         "NUEVO": query.filter(Case.estado == EstadoCaso.NUEVO).count(),
         "CAUSA_EXTRA": query.filter(Case.estado == EstadoCaso.CAUSA_EXTRA).count(),
-        "VALIDADA": query.filter(Case.estado == EstadoCaso.VALIDADA).count(),
-        "ENVIADA": query.filter(Case.estado == EstadoCaso.ENVIADA).count(),
-        "ERROR": query.filter(Case.estado == EstadoCaso.ERROR).count(),
+        "EN_REVISION": query.filter(Case.estado == EstadoCaso.EN_REVISION).count(),
+        "EN_RADICACION": query.filter(Case.estado == EstadoCaso.EN_RADICACION).count(),
+        "ILEGIBLE": query.filter(Case.estado == EstadoCaso.ILEGIBLE).count(),
     }
     
     return {

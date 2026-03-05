@@ -305,13 +305,14 @@ async def get_dashboard_completo(
     try:
         fecha_inicio, fecha_fin = _calcular_fechas_periodo(periodo, fecha_desde, fecha_hasta)
         
-        # Query base con joins
+        # Query base con joins (excluir históricos = datos Kactus sin PDF)
         query = db.query(Case).options(
             joinedload(Case.empresa),
             joinedload(Case.empleado),
             joinedload(Case.documentos),
             joinedload(Case.eventos),
         ).filter(
+            Case.es_historico == False,
             Case.created_at >= fecha_inicio,
             Case.created_at <= fecha_fin
         )
@@ -466,6 +467,9 @@ async def get_dashboard_completo(
                 "kactus_sync_at": c.kactus_sync_at.isoformat() if c.kactus_sync_at else None,
                 "dias_traslapo": c.dias_traslapo or 0,
                 "traslapo_con_serial": c.traslapo_con_serial,
+                "procesado": getattr(c, 'procesado', False) or False,
+                "fecha_procesado": c.fecha_procesado.isoformat() if getattr(c, 'fecha_procesado', None) else None,
+                "usuario_procesado": getattr(c, 'usuario_procesado', None),
             })
         
         # ═══ 3. INCOMPLETAS / OBSERVACIÓN ═══
@@ -495,6 +499,7 @@ async def get_dashboard_completo(
         # ═══ 4. FRECUENCIA POR EMPLEADO (reincidencia) ═══
         # Agrupar por cédula para detectar personas con múltiples incapacidades
         freq_query = db.query(Case).filter(
+            Case.es_historico == False,
             Case.created_at >= datetime(ahora.year, 1, 1)  # Año actual completo
         )
         if empresa != "all":
