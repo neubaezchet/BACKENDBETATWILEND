@@ -518,23 +518,33 @@ def sincronizar_excel_completo():
                     "general": TipoIncapacidad.ENFERMEDAD_GENERAL,
                     "enfermedad": TipoIncapacidad.ENFERMEDAD_GENERAL,
                     "enfermedad_general": TipoIncapacidad.ENFERMEDAD_GENERAL,
+                    "i - incapacidad enfermedad general": TipoIncapacidad.ENFERMEDAD_GENERAL,
+                    "incapacidad enfermedad general": TipoIncapacidad.ENFERMEDAD_GENERAL,
                     # Enfermedad Laboral / Accidente de Trabajo
                     "laboral": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     "enfermedad_laboral": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     "accidente_trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     "trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     "arl": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "l - incapacidad accidente trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "incapacidad accidente trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "l - enfermedad laboral": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     # Accidente de Tránsito
                     "trafico": TipoIncapacidad.ACCIDENTE_TRANSITO,
                     "transito": TipoIncapacidad.ACCIDENTE_TRANSITO,
                     "accidente_transito": TipoIncapacidad.ACCIDENTE_TRANSITO,
                     "soat": TipoIncapacidad.ACCIDENTE_TRANSITO,
+                    "t - accidente de transito": TipoIncapacidad.ACCIDENTE_TRANSITO,
                     # Maternidad
                     "maternidad": TipoIncapacidad.MATERNIDAD,
                     "licencia_maternidad": TipoIncapacidad.MATERNIDAD,
+                    "m - licencia maternidad": TipoIncapacidad.MATERNIDAD,
+                    "licencia maternidad": TipoIncapacidad.MATERNIDAD,
                     # Paternidad
                     "paternidad": TipoIncapacidad.PATERNIDAD,
                     "licencia_paternidad": TipoIncapacidad.PATERNIDAD,
+                    "p - licencia paternidad": TipoIncapacidad.PATERNIDAD,
+                    "licencia paternidad": TipoIncapacidad.PATERNIDAD,
                     # Certificados
                     "hospitalizacion": TipoIncapacidad.CERTIFICADO,
                     "certificado": TipoIncapacidad.CERTIFICADO,
