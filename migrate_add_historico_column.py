@@ -95,8 +95,7 @@ def migrar():
         result = session.execute(text("""
             UPDATE cases 
             SET es_historico = TRUE
-            WHERE (drive_link IS NULL OR drive_link = '' OR drive_link = 'null')
-            AND estado = 'VALIDADA';
+            WHERE (drive_link IS NULL OR drive_link = '' OR drive_link = 'null');
         """))
         historicos_sin_pdf = result.rowcount
         session.commit()
