@@ -529,6 +529,14 @@ def sincronizar_excel_completo():
                     "l - incapacidad accidente trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     "incapacidad accidente trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     "l - enfermedad laboral": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "i - incapacidad accidente de trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "incapacidad accidente de trabajo": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    # Enfermedad Profesional
+                    "i- incapacidad enfermedad profesional": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "i -incapacidad enfermedad profesional": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "i - incapacidad enfermedad profesional": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "incapacidad enfermedad profesional": TipoIncapacidad.ENFERMEDAD_LABORAL,
+                    "enfermedad profesional": TipoIncapacidad.ENFERMEDAD_LABORAL,
                     # Accidente de Tránsito
                     "trafico": TipoIncapacidad.ACCIDENTE_TRANSITO,
                     "transito": TipoIncapacidad.ACCIDENTE_TRANSITO,
@@ -540,11 +548,16 @@ def sincronizar_excel_completo():
                     "licencia_maternidad": TipoIncapacidad.MATERNIDAD,
                     "m - licencia maternidad": TipoIncapacidad.MATERNIDAD,
                     "licencia maternidad": TipoIncapacidad.MATERNIDAD,
-                    # Paternidad
+                    "i - licencia de maternidad": TipoIncapacidad.MATERNIDAD,
+                    "licencia de maternidad": TipoIncapacidad.MATERNIDAD,
+                    # Ley María (Paternidad)
                     "paternidad": TipoIncapacidad.PATERNIDAD,
                     "licencia_paternidad": TipoIncapacidad.PATERNIDAD,
                     "p - licencia paternidad": TipoIncapacidad.PATERNIDAD,
                     "licencia paternidad": TipoIncapacidad.PATERNIDAD,
+                    "i - licencia ley maria": TipoIncapacidad.PATERNIDAD,
+                    "licencia ley maria": TipoIncapacidad.PATERNIDAD,
+                    "ley maria": TipoIncapacidad.PATERNIDAD,
                     # Certificados
                     "hospitalizacion": TipoIncapacidad.CERTIFICADO,
                     "certificado": TipoIncapacidad.CERTIFICADO,
