@@ -68,6 +68,25 @@ def migrar():
             session.commit()
             print("✅ Columna agregada correctamente")
         
+        # 2b. Verificar y agregar columnas procesado
+        for col_name, col_def in [
+            ("procesado", "BOOLEAN DEFAULT FALSE"),
+            ("fecha_procesado", "TIMESTAMP NULL"),
+            ("usuario_procesado", "VARCHAR(200) NULL"),
+        ]:
+            result = session.execute(text(f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='cases' AND column_name='{col_name}';
+            """))
+            if result.fetchone():
+                print(f"⚠️  La columna '{col_name}' ya existe. Saltando...")
+            else:
+                print(f"   ➕ Agregando columna '{col_name}'...")
+                session.execute(text(f"ALTER TABLE cases ADD COLUMN {col_name} {col_def};"))
+                session.commit()
+                print(f"   ✅ Columna '{col_name}' agregada")
+        
         # 3. Marcar casos históricos (sin PDF y antiguos)
         print("\n📊 Paso 2: Identificando y marcando casos históricos...")
         print("   Criterio: drive_link IS NULL o vacío = HISTÓRICO")
@@ -83,6 +102,19 @@ def migrar():
         session.commit()
         print(f"   ✅ {historicos_sin_pdf} casos marcados como históricos (sin PDF)")
         
+        # 3b. Marcar TODOS los casos existentes como procesados (ya están en BD)
+        print("\n📊 Paso 2b: Marcando todos los casos existentes como procesados...")
+        result = session.execute(text("""
+            UPDATE cases 
+            SET procesado = TRUE,
+                fecha_procesado = NOW(),
+                usuario_procesado = 'migracion_historico'
+            WHERE procesado = FALSE OR procesado IS NULL;
+        """))
+        procesados_marcados = result.rowcount
+        session.commit()
+        print(f"   ✅ {procesados_marcados} casos marcados como procesados")
+        
         # 4. Crear índice para optimizar consultas
         print("\n📊 Paso 3: Creando índice idx_estado_historico...")
         try:
@@ -94,6 +126,18 @@ def migrar():
             print("✅ Índice creado correctamente")
         except Exception as e:
             print(f"⚠️  Índice ya existe o error: {e}")
+            session.rollback()
+        
+        # Índice para procesado
+        try:
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_procesado 
+                ON cases(procesado);
+            """))
+            session.commit()
+            print("✅ Índice idx_procesado creado")
+        except Exception as e:
+            print(f"⚠️  Índice idx_procesado ya existe o error: {e}")
             session.rollback()
         
         # 5. Estadísticas finales

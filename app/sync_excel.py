@@ -619,6 +619,10 @@ def sincronizar_excel_completo():
                             if dias and not caso.dias_incapacidad:
                                 caso.dias_incapacidad = dias
                             caso.fecha_inicio_kactus = fecha_inicio
+                            caso.es_historico = es_historico
+                            caso.procesado = True
+                            caso.fecha_procesado = datetime.now()
+                            caso.usuario_procesado = "sync_kactus"
                             caso.kactus_sync_at = datetime.now()
                             caso.updated_at = datetime.now()
                             db.commit()
@@ -638,8 +642,7 @@ def sincronizar_excel_completo():
                             serial_existente = db.query(Case).filter(Case.serial == serial).first()
                             if serial_existente:
                                 print(f"   ⚠️ Serial {serial} ya existe, saltando...")
-                                if not es_historico:
-                                    filas_procesadas.append(idx + 2)
+                                filas_procesadas.append(idx + 2)
                                 continue
                             
                             # Determinar origen según si es histórico o no
@@ -660,6 +663,10 @@ def sincronizar_excel_completo():
                                 numero_incapacidad=num_incap,
                                 codigo_cie10=codigo_cie,
                                 diagnostico=diagnostico,
+                                es_historico=es_historico,
+                                procesado=True,
+                                fecha_procesado=datetime.now(),
+                                usuario_procesado="sync_kactus",
                                 kactus_sync_at=datetime.now(),
                                 metadata_form={
                                     "origen": origen,
@@ -687,9 +694,9 @@ def sincronizar_excel_completo():
                                 cases_creados += 1
                                 print(f"   ✅ CREADO: CC {cedula_case} | {serial} | {dias or '?'}d")
                         
-                        # Marcar fila para procesar (NO marcar históricos - permanecen en el Excel como referencia)
-                        if not es_historico:
-                            filas_procesadas.append(idx + 2)  # +2 porque Excel es 1-indexed + header
+                        # Marcar TODAS las filas como procesadas (incluye históricos)
+                        # Así el usuario sabe que ya se guardó en BD y puede eliminar la fila
+                        filas_procesadas.append(idx + 2)  # +2 porque Excel es 1-indexed + header
                         
                     except Exception as e:
                         print(f"   ❌ Error fila {idx+2}: {e}")

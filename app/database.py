@@ -157,6 +157,11 @@ class Case(Base):
     traslapo_con_serial = Column(String(50), nullable=True)
     kactus_sync_at = Column(DateTime, nullable=True)  # Cuándo se sincronizó este caso con Kactus
     
+    # ✅ COLUMNAS PROCESADO - Tracking para Excel exports
+    procesado = Column(Boolean, default=False)  # True = caso ya procesado/eliminado en flujo manual
+    fecha_procesado = Column(DateTime, nullable=True)  # Cuándo se marcó como procesado
+    usuario_procesado = Column(String(200), nullable=True)  # Quién procesó el caso
+    
     # Auditoría
     created_at = Column(DateTime, default=get_utc_now, index=True)
     updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
@@ -173,6 +178,7 @@ class Case(Base):
         Index('idx_cedula_fecha_inicio', 'cedula', 'fecha_inicio'),
         Index('idx_cedula_fecha_estado', 'cedula', 'fecha_inicio', 'estado'),
         Index('idx_estado_historico', 'estado', 'es_historico'),  # Índice para filtrar dashboard/reportes
+        Index('idx_procesado', 'procesado'),  # Índice para encontrar casos no procesados rápidamente
     )
 
 class CaseDocument(Base):
