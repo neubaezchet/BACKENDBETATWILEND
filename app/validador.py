@@ -370,6 +370,30 @@ def obtener_emails_presunto_fraude(empresa_nombre, db=None):
 
 # ==================== ENDPOINTS ====================
 
+@router.get("/diagnostico-directorio")
+async def diagnostico_directorio(
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """Diagnóstico del directorio de correos y empresas"""
+    empresas = db.query(Company).filter(Company.activa == True).all()
+    correos = db.query(CorreoNotificacion).all()
+    
+    return {
+        "empresas": [{
+            "id": e.id, "nombre": e.nombre, "nit": e.nit,
+            "contacto_email": e.contacto_email, "email_copia": e.email_copia
+        } for e in empresas],
+        "correos_notificacion": [{
+            "id": c.id, "area": c.area, "email": c.email,
+            "company_id": c.company_id, "activo": c.activo,
+            "nombre_contacto": c.nombre_contacto
+        } for c in correos],
+        "total_empresas": len(empresas),
+        "total_correos": len(correos)
+    }
+
+
 @router.get("/empresas")
 async def listar_empresas(
     db: Session = Depends(get_db),
