@@ -341,43 +341,44 @@ def sincronizar_excel_completo():
         # Limpiar nombres con \n, espacios extra, y merge duplicados
         print(f"📊 PASO 1: Limpieza de empresas duplicadas...")
         try:
-            todas_empresas = db.query(Company).all()
-            empresas_limpias = {}  # nombre_limpio -> Company principal
+            todas_empresas = db.query(Company).order_by(Company.id).all()
+            seen = {}  # nombre_limpio -> Company (el de menor ID)
+            to_delete = []
+            
+            # Paso 1a: Identificar duplicados por nombre limpio (keep lowest ID)
             for emp in todas_empresas:
-                nombre_limpio = emp.nombre.strip()
-                if nombre_limpio != emp.nombre:
-                    # Nombre tiene espacios/newlines extra
-                    principal = empresas_limpias.get(nombre_limpio)
-                    if principal:
-                        # Migrar empleados y casos de la duplicada a la principal
-                        db.query(Employee).filter(Employee.company_id == emp.id).update(
-                            {Employee.company_id: principal.id}, synchronize_session=False)
-                        db.query(Case).filter(Case.company_id == emp.id).update(
-                            {Case.company_id: principal.id}, synchronize_session=False)
-                        db.query(CorreoNotificacion).filter(CorreoNotificacion.company_id == emp.id).update(
-                            {CorreoNotificacion.company_id: principal.id}, synchronize_session=False)
-                        db.delete(emp)
-                        print(f"   🧹 Empresa duplicada '{repr(emp.nombre)}' → mergeada con '{principal.nombre}'")
-                    else:
-                        emp.nombre = nombre_limpio
-                        empresas_limpias[nombre_limpio] = emp
-                        print(f"   ✏️ Empresa '{repr(emp.nombre)}' → limpiada a '{nombre_limpio}'")
+                nombre_limpio = emp.nombre.strip().replace('\n', '').replace('\r', '')
+                if nombre_limpio in seen:
+                    # Duplicado → migrar referencias al principal
+                    principal = seen[nombre_limpio]
+                    db.query(Employee).filter(Employee.company_id == emp.id).update(
+                        {Employee.company_id: principal.id}, synchronize_session=False)
+                    db.query(Case).filter(Case.company_id == emp.id).update(
+                        {Case.company_id: principal.id}, synchronize_session=False)
+                    db.query(CorreoNotificacion).filter(CorreoNotificacion.company_id == emp.id).update(
+                        {CorreoNotificacion.company_id: principal.id}, synchronize_session=False)
+                    to_delete.append(emp)
+                    print(f"   🧹 Duplicada '{emp.nombre}' (id={emp.id}) → mergeada con id={principal.id}")
                 else:
-                    if nombre_limpio not in empresas_limpias:
-                        empresas_limpias[nombre_limpio] = emp
-                    else:
-                        # Duplicado exacto
-                        principal = empresas_limpias[nombre_limpio]
-                        db.query(Employee).filter(Employee.company_id == emp.id).update(
-                            {Employee.company_id: principal.id}, synchronize_session=False)
-                        db.query(Case).filter(Case.company_id == emp.id).update(
-                            {Case.company_id: principal.id}, synchronize_session=False)
-                        db.query(CorreoNotificacion).filter(CorreoNotificacion.company_id == emp.id).update(
-                            {CorreoNotificacion.company_id: principal.id}, synchronize_session=False)
-                        db.delete(emp)
-                        print(f"   🧹 Empresa duplicada exacta '{emp.nombre}' (id={emp.id}) → mergeada con id={principal.id}")
+                    seen[nombre_limpio] = emp
+            
+            # Paso 1b: BORRAR duplicados primero (antes de renombrar, evita UniqueViolation)
+            for emp in to_delete:
+                db.delete(emp)
+            if to_delete:
+                db.flush()  # Ejecutar DELETEs antes de UPDATEs
+            
+            # Paso 1c: Ahora renombrar los que quedan (ya no hay conflicto)
+            for nombre_limpio, emp in seen.items():
+                if emp.nombre != nombre_limpio:
+                    print(f"   ✏️ Empresa id={emp.id} '{emp.nombre}' → '{nombre_limpio}'")
+                    emp.nombre = nombre_limpio
+            
             db.commit()
-            print(f"   ✅ Limpieza completada")
+            if to_delete:
+                print(f"   ✅ {len(to_delete)} duplicadas eliminadas")
+            else:
+                print(f"   ✅ Sin duplicados")
         except Exception as e:
             db.rollback()
             print(f"   ⚠️ Error limpiando empresas: {e}")
