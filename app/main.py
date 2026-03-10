@@ -289,15 +289,12 @@ def startup_event():
         # ⭐ LIMPIEZA: Empresas duplicadas (nombres con \n o espacios)
         try:
             with engine.connect() as conn:
-                # 1. Strip todos los nombres
-                conn.execute(text("UPDATE companies SET nombre = TRIM(BOTH FROM REPLACE(nombre, E'\\n', ''))"))
-                conn.commit()
-                
-                # 2. Encontrar duplicados (mismo nombre, quedarse con el ID más bajo)
+                # 1. Encontrar duplicados por nombre limpio (ANTES de renombrar)
                 dupes = conn.execute(text("""
-                    SELECT nombre, MIN(id) as keep_id, ARRAY_AGG(id) as all_ids
+                    SELECT TRIM(BOTH FROM REPLACE(nombre, E'\\n', '')) as nombre_limpio,
+                           MIN(id) as keep_id, ARRAY_AGG(id ORDER BY id) as all_ids
                     FROM companies
-                    GROUP BY nombre
+                    GROUP BY TRIM(BOTH FROM REPLACE(nombre, E'\\n', ''))
                     HAVING COUNT(*) > 1
                 """)).fetchall()
                 
@@ -320,6 +317,10 @@ def startup_event():
                             conn.execute(text(f"DELETE FROM companies WHERE id = {rid}"))
                         conn.commit()
                         print(f"   🧹 Empresa '{nombre}': mergeado IDs {remove_ids} → {keep_id}")
+                
+                # 2. Ahora que no hay duplicados, strip los nombres restantes
+                conn.execute(text("UPDATE companies SET nombre = TRIM(BOTH FROM REPLACE(nombre, E'\\n', ''))"))
+                conn.commit()
                 
                 if not dupes:
                     print("   ✅ Sin empresas duplicadas")

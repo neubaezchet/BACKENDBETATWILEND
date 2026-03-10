@@ -210,7 +210,7 @@ class CompletesManager:
             casos_completa = db.query(Case).filter(
                 and_(
                     Case.estado == EstadoCaso.COMPLETA,
-                    Case.empresa_id == empresa.id
+                    Case.company_id == empresa.id
                 )
             ).all()
             
