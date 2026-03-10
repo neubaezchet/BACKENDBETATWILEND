@@ -4265,7 +4265,10 @@ async def eliminar_caso_completo(
     Solo para administradores.
     """
     # Validar token de administrador
-    if not x_admin_token or x_admin_token != ADMIN_TOKEN:
+    admin_token = os.environ.get("ADMIN_TOKEN")
+    if not admin_token:
+        raise HTTPException(status_code=500, detail="ADMIN_TOKEN no configurado en el servidor")
+    if not x_admin_token or x_admin_token != admin_token:
         raise HTTPException(status_code=403, detail="Token de administrador requerido")
     
     # Buscar caso en BD
@@ -4332,7 +4335,17 @@ async def eliminar_caso_completo(
                         print(f"   📄 Eliminando documento {doc.doc_tipo}: {url}")
                         eliminar_archivo_drive(url)
         
-        # 3. Guardar info del caso antes de eliminar (para el response)
+        # 3. Eliminar archivos de carpeta Incompletas en Drive (si los hay)
+        try:
+            from app.drive_manager import IncompleteFileManager
+            incomplete_mgr = IncompleteFileManager()
+            eliminados_inc = incomplete_mgr.eliminar_de_incompletas_por_serial(serial)
+            if eliminados_inc > 0:
+                print(f"   ✅ {eliminados_inc} archivo(s) eliminados de Incompletas")
+        except Exception as e:
+            print(f"   ⚠️ Error limpiando Incompletas: {e}")
+        
+        # 5. Guardar info del caso antes de eliminar (para el response)
         caso_info = {
             "serial": caso.serial,
             "cedula": caso.cedula,
@@ -4342,7 +4355,7 @@ async def eliminar_caso_completo(
             "fecha_fin": caso.fecha_fin.isoformat() if caso.fecha_fin else None,
         }
         
-        # 4. Eliminar de la base de datos (cascade eliminará documentos, eventos, notas)
+        # 6. Eliminar de la base de datos (cascade eliminará documentos, eventos, notas)
         db.delete(caso)
         db.commit()
         print(f"   ✅ Caso {serial} eliminado de BD")
