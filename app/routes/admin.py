@@ -542,6 +542,14 @@ async def listar_empresas(
 ):
     """📋 Lista empresas para dropdowns del admin"""
     empresas = db.query(Company).filter(Company.activa == True).order_by(Company.nombre).all()
+    
+    # Contar correos por empresa
+    for emp in empresas:
+        emp._correos_count = db.query(func.count(CorreoNotificacion.id)).filter(
+            CorreoNotificacion.company_id == emp.id,
+            CorreoNotificacion.activo == True
+        ).scalar() or 0
+    
     return {
         "ok": True,
         "empresas": [{
@@ -550,8 +558,34 @@ async def listar_empresas(
             "nit": e.nit,
             "contacto_email": e.contacto_email,
             "email_copia": e.email_copia,
+            "correos_configurados": e._correos_count,
         } for e in empresas]
     }
+
+
+@router.put("/empresas/{empresa_id}")
+async def actualizar_empresa(
+    empresa_id: int,
+    data: dict,
+    user: AdminUser = Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db)
+):
+    """✏️ Actualiza datos de una empresa (nit, contacto_email, email_copia)"""
+    empresa = db.query(Company).filter(Company.id == empresa_id).first()
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    
+    if "nit" in data:
+        empresa.nit = data["nit"]
+    if "contacto_email" in data:
+        empresa.contacto_email = data["contacto_email"]
+    if "contacto_telefono" in data:
+        empresa.contacto_telefono = data["contacto_telefono"]
+    if "nombre" in data and data["nombre"]:
+        empresa.nombre = data["nombre"].strip()
+    
+    db.commit()
+    return {"ok": True, "mensaje": f"Empresa '{empresa.nombre}' actualizada"}
 
 
 # ═══════════════════════════════════════════════════════════
