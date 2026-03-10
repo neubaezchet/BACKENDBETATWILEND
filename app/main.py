@@ -286,6 +286,47 @@ def startup_event():
             conn.commit()
         print("✅ Tabla correos_notificacion verificada")
         
+        # ⭐ LIMPIEZA: Empresas duplicadas (nombres con \n o espacios)
+        try:
+            with engine.connect() as conn:
+                # 1. Strip todos los nombres
+                conn.execute(text("UPDATE companies SET nombre = TRIM(BOTH FROM REPLACE(nombre, E'\\n', ''))"))
+                conn.commit()
+                
+                # 2. Encontrar duplicados (mismo nombre, quedarse con el ID más bajo)
+                dupes = conn.execute(text("""
+                    SELECT nombre, MIN(id) as keep_id, ARRAY_AGG(id) as all_ids
+                    FROM companies
+                    GROUP BY nombre
+                    HAVING COUNT(*) > 1
+                """)).fetchall()
+                
+                for row in dupes:
+                    nombre = row[0]
+                    keep_id = row[1]
+                    all_ids = row[2]
+                    remove_ids = [i for i in all_ids if i != keep_id]
+                    
+                    if remove_ids:
+                        # Mover empleados, casos, correos al ID que se conserva
+                        for rid in remove_ids:
+                            conn.execute(text(f"UPDATE employees SET company_id = {keep_id} WHERE company_id = {rid}"))
+                            conn.execute(text(f"UPDATE cases SET company_id = {keep_id} WHERE company_id = {rid}"))
+                            conn.execute(text(f"UPDATE correos_notificacion SET company_id = {keep_id} WHERE company_id = {rid}"))
+                            try:
+                                conn.execute(text(f"UPDATE alerta_emails SET company_id = {keep_id} WHERE company_id = {rid}"))
+                            except Exception:
+                                pass
+                            conn.execute(text(f"DELETE FROM companies WHERE id = {rid}"))
+                        conn.commit()
+                        print(f"   🧹 Empresa '{nombre}': mergeado IDs {remove_ids} → {keep_id}")
+                
+                if not dupes:
+                    print("   ✅ Sin empresas duplicadas")
+        except Exception as e:
+            print(f"   ⚠️ Error limpiando duplicados: {e}")
+        print("✅ Limpieza empresas duplicadas completada")
+        
         # ⭐ AUTO-MIGRACIÓN: Tablas CIE-10 / Alertas 180 días
         with engine.connect() as conn:
             tablas_cie10 = [

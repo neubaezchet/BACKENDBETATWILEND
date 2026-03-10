@@ -97,9 +97,9 @@ def registrar_evento(db: Session, case_id: int, accion: str, actor: str = "Siste
 
 
 def obtener_emails_empresa_directorio(company_id, db=None):
-    """Obtiene emails de copia del DIRECTORIO (correos_notificacion area='empresas').
-    Ya NO usa Company.email_copia — todo viene del directorio del admin portal."""
-    emails = []
+    """Obtiene emails CC por empresa.
+    Busca en: 1) correos_notificacion area='empresas', 2) Company.email_copia como fallback."""
+    emails = set()
     close_db = False
     try:
         if not db:
@@ -107,6 +107,7 @@ def obtener_emails_empresa_directorio(company_id, db=None):
             db = SessionLocal()
             close_db = True
         
+        # Fuente 1: tabla correos_notificacion (directorio admin)
         correos = db.query(CorreoNotificacion).filter(
             CorreoNotificacion.area == 'empresas',
             CorreoNotificacion.activo == True
@@ -115,14 +116,24 @@ def obtener_emails_empresa_directorio(company_id, db=None):
         for c in correos:
             if c.company_id is None or c.company_id == company_id:
                 if c.email and c.email.strip():
-                    emails.append(c.email.strip())
+                    emails.add(c.email.strip().lower())
         
+        # Fuente 2: Company.email_copia (fallback directo)
+        if company_id:
+            company = db.query(Company).filter(Company.id == company_id).first()
+            if company and company.email_copia:
+                for em in company.email_copia.split(","):
+                    em = em.strip().lower()
+                    if em and "@" in em:
+                        emails.add(em)
+        
+        emails = list(emails)
         if emails:
-            print(f"📧 Directorio empresas → {len(emails)} emails para company_id={company_id}: {emails}")
+            print(f"📧 CC empresa → {len(emails)} emails para company_id={company_id}: {emails}")
         else:
-            print(f"⚠️ Directorio empresas → Sin emails para company_id={company_id}")
+            print(f"⚠️ CC empresa → Sin emails para company_id={company_id}")
     except Exception as e:
-        print(f"⚠️ Error obteniendo emails del directorio: {e}")
+        print(f"⚠️ Error obteniendo emails CC empresa: {e}")
     finally:
         if close_db and db:
             db.close()
@@ -391,6 +402,30 @@ async def diagnostico_directorio(
         } for c in correos],
         "total_empresas": len(empresas),
         "total_correos": len(correos)
+    }
+
+
+@router.put("/empresa/{empresa_id}/email-copia")
+async def configurar_email_copia(
+    empresa_id: int,
+    datos: dict,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """Configura email(s) de copia CC para una empresa. Separa múltiples con coma."""
+    empresa = db.query(Company).filter(Company.id == empresa_id).first()
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    
+    email_copia = datos.get("email_copia", "").strip()
+    empresa.email_copia = email_copia if email_copia else None
+    db.commit()
+    
+    return {
+        "status": "ok",
+        "empresa": empresa.nombre,
+        "email_copia": empresa.email_copia,
+        "mensaje": f"Email CC para '{empresa.nombre}' actualizado a: {empresa.email_copia or '(vacío)'}"
     }
 
 
