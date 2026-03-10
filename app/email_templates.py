@@ -111,12 +111,12 @@ def _base_template(titulo, color_header, contenido_body, serial="", telefono="",
                     </td>
                 </tr>"""
 
-    # Botones de contacto (llamada + WhatsApp)
+    # Botones de contacto (llamada + WhatsApp) - Número fijo de contacto empresa
+    TELEFONO_CONTACTO = "3173391828"
     contacto_btns = ""
-    if telefono:
-        tel_limpio = re.sub(r'[^0-9+]', '', telefono)
-        wa_link = f"https://wa.me/57{tel_limpio}" if not tel_limpio.startswith('+') else f"https://wa.me/{tel_limpio.replace('+','')}"
-        tel_link = f"tel:+57{tel_limpio}" if not tel_limpio.startswith('+') else f"tel:{tel_limpio}"
+    if True:
+        wa_link = f"https://wa.me/57{TELEFONO_CONTACTO}"
+        tel_link = f"tel:+57{TELEFONO_CONTACTO}"
         contacto_btns = f"""
                 <tr>
                     <td style="padding:14px 24px;">
