@@ -279,7 +279,7 @@ def sincronizar_empleado_desde_excel(cedula: str):
             return None
         
         row = empleado_excel.iloc[0]
-        empresa_nombre = row["empresa"]
+        empresa_nombre = str(row["empresa"]).strip()
         company = db.query(Company).filter(Company.nombre == empresa_nombre).first()
         if not company:
             company = Company(nombre=empresa_nombre, activa=True)
@@ -337,12 +337,52 @@ def sincronizar_excel_completo():
             print(f"❌ No se pudo descargar el Excel, sync cancelado\n")
             return
         
-        # ========== PASO 1: EMPRESAS (Hoja 2) — OMITIDO ==========
-        # ✅ Los emails de copia por empresa ahora se gestionan desde el DIRECTORIO
-        # del admin portal (correos_notificacion area='empresas').
-        # Ya NO se sincronizan desde el Excel Hoja 2.
-        print(f"📊 PASO 1: Emails empresas → Se gestionan desde el Directorio del Admin Portal (omitido)")
-        print(f"   ℹ️ Si necesita cambiar emails, use el Directorio en el portal admin\n")
+        # ========== PASO 1: LIMPIEZA EMPRESAS DUPLICADAS ==========
+        # Limpiar nombres con \n, espacios extra, y merge duplicados
+        print(f"📊 PASO 1: Limpieza de empresas duplicadas...")
+        try:
+            todas_empresas = db.query(Company).all()
+            empresas_limpias = {}  # nombre_limpio -> Company principal
+            for emp in todas_empresas:
+                nombre_limpio = emp.nombre.strip()
+                if nombre_limpio != emp.nombre:
+                    # Nombre tiene espacios/newlines extra
+                    principal = empresas_limpias.get(nombre_limpio)
+                    if principal:
+                        # Migrar empleados y casos de la duplicada a la principal
+                        db.query(Employee).filter(Employee.company_id == emp.id).update(
+                            {Employee.company_id: principal.id}, synchronize_session=False)
+                        db.query(Case).filter(Case.company_id == emp.id).update(
+                            {Case.company_id: principal.id}, synchronize_session=False)
+                        db.query(CorreoNotificacion).filter(CorreoNotificacion.company_id == emp.id).update(
+                            {CorreoNotificacion.company_id: principal.id}, synchronize_session=False)
+                        db.delete(emp)
+                        print(f"   🧹 Empresa duplicada '{repr(emp.nombre)}' → mergeada con '{principal.nombre}'")
+                    else:
+                        emp.nombre = nombre_limpio
+                        empresas_limpias[nombre_limpio] = emp
+                        print(f"   ✏️ Empresa '{repr(emp.nombre)}' → limpiada a '{nombre_limpio}'")
+                else:
+                    if nombre_limpio not in empresas_limpias:
+                        empresas_limpias[nombre_limpio] = emp
+                    else:
+                        # Duplicado exacto
+                        principal = empresas_limpias[nombre_limpio]
+                        db.query(Employee).filter(Employee.company_id == emp.id).update(
+                            {Employee.company_id: principal.id}, synchronize_session=False)
+                        db.query(Case).filter(Case.company_id == emp.id).update(
+                            {Case.company_id: principal.id}, synchronize_session=False)
+                        db.query(CorreoNotificacion).filter(CorreoNotificacion.company_id == emp.id).update(
+                            {CorreoNotificacion.company_id: principal.id}, synchronize_session=False)
+                        db.delete(emp)
+                        print(f"   🧹 Empresa duplicada exacta '{emp.nombre}' (id={emp.id}) → mergeada con id={principal.id}")
+            db.commit()
+            print(f"   ✅ Limpieza completada")
+        except Exception as e:
+            db.rollback()
+            print(f"   ⚠️ Error limpiando empresas: {e}")
+
+        print(f"   ℹ️ Emails de copia se gestionan desde el Directorio del Admin Portal\n")
         
         # ========== PASO 2: SYNC EMPLEADOS EXACTO ==========
         print(f"📊 PASO 2: Sincronizando empleados (MODO EXACTO)...")
@@ -372,7 +412,7 @@ def sincronizar_excel_completo():
                 correo = row.get("correo", "")
                 telefono = str(row.get("telefono", "")) if pd.notna(row.get("telefono")) else None
                 eps = row.get("eps", None)
-                empresa_nombre = row["empresa"]
+                empresa_nombre = str(row["empresa"]).strip()
                 
                 jefe_nombre = row.get("jefe_nombre", None)
                 jefe_email = row.get("jefe_email", None)
@@ -393,7 +433,7 @@ def sincronizar_excel_completo():
                 # dias_kactus eliminado: ya no se usa en empleados
                 ciudad = row.get("ciudad", None) if pd.notna(row.get("ciudad", None)) else None
                 
-                # Buscar o crear empresa
+                # Buscar o crear empresa (strip para evitar duplicados)
                 company = db.query(Company).filter(Company.nombre == empresa_nombre).first()
                 if not company:
                     company = Company(nombre=empresa_nombre, activa=True)
