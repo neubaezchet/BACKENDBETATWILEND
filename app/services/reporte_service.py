@@ -74,7 +74,8 @@ class ReporteService:
             # Calcular estadísticas por estado
             estadisticas = {}
             for caso in casos:
-                estado = caso.estado.value if caso.estado else "NUEVO"
+                es_adulterada = caso.metadata_form.get('fraude_confirmado', False) if caso.metadata_form and isinstance(caso.metadata_form, dict) else False
+                estado = 'ADULTERADA' if es_adulterada else (caso.estado.value if caso.estado else "NUEVO")
                 estadisticas[estado] = estadisticas.get(estado, 0) + 1
             
             # Convertir a porcentajes
@@ -102,7 +103,7 @@ class ReporteService:
                     "empresa": empresa_nombre,
                     "empleado": empleado_nombre,
                     "tipo": caso.tipo.value if caso.tipo else "general",
-                    "estado": caso.estado.value if caso.estado else "NUEVO",
+                    "estado": 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO"),
                     "fecha_creacion": caso.created_at.strftime("%Y-%m-%d %H:%M:%S") if caso.created_at else "N/A",
                     "dias": caso.dias_incapacidad or None
                 })
@@ -175,7 +176,7 @@ class ReporteService:
                     "empresa": empresa_nombre,
                     "empleado": empleado_nombre,
                     "tipo": caso.tipo.value if caso.tipo else "general",
-                    "estado": caso.estado.value if caso.estado else "NUEVO",
+                    "estado": 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO"),
                     "fecha_creacion": caso.created_at.strftime("%Y-%m-%d") if caso.created_at else "N/A"
                 })
             
@@ -247,7 +248,7 @@ class ReporteService:
                     "Empresa": empresa_nombre,
                     "Empleado": empleado_nombre,
                     "Tipo": caso.tipo.value if caso.tipo else "general",
-                    "Estado": caso.estado.value if caso.estado else "NUEVO",
+                    "Estado": 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO"),
                     "Días": caso.dias_incapacidad or 0,
                     "Fecha Creación": caso.created_at.strftime("%Y-%m-%d %H:%M:%S") if caso.created_at else "N/A",
                     "Fecha Actualización": caso.updated_at.strftime("%Y-%m-%d %H:%M:%S") if caso.updated_at else "N/A"

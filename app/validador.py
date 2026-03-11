@@ -541,7 +541,8 @@ async def listar_casos(
             "fecha_inicio": caso.fecha_inicio.isoformat() if caso.fecha_inicio else None,
             "fecha_fin": caso.fecha_fin.isoformat() if caso.fecha_fin else None,
             "total_reenvios": total_reenvios,
-            "recordatorios_count": caso.recordatorios_count or 0
+            "recordatorios_count": caso.recordatorios_count or 0,
+            "fraude_confirmado": bool(caso.metadata_form.get('fraude_confirmado')) if caso.metadata_form and isinstance(caso.metadata_form, dict) else False,
         })
     
     return {
@@ -2606,7 +2607,8 @@ async def validar_caso_con_checks(
         'tthh': EstadoCaso.DERIVADO_TTHH,
         'falsa': EstadoCaso.DERIVADO_TTHH,
         'solicitar_epicrisis': EstadoCaso.EPS_TRANSCRIPCION,
-        'enviar_validar': EstadoCaso.EPS_TRANSCRIPCION,
+        'enviar_validar': EstadoCaso.DERIVADO_TTHH,
+        'falsa_confirmada': EstadoCaso.DERIVADO_TTHH,
     }
     nuevo_estado = estado_map[accion]
 
@@ -3095,10 +3097,32 @@ async def validar_caso_con_checks(
             )
         
         elif accion == 'enviar_validar':
-            # ✅ ENVIAR A VALIDAR: Email al validador EPS del directorio con info del caso y adjuntos
+            # ✅ ENVIAR A VALIDAR: Email normal al trabajador + Email al directorio fraude con adjuntos
             print(f"🔍 Enviando a validar con EPS para {serial}...")
             
-            # Obtener emails del directorio de presunto fraude (validadores EPS)
+            # ── CORREO 1: Mensaje neutro al colaborador (con CC empresa) ──
+            email_empleada_neutro = get_email_template_universal(
+                tipo_email='falsa',
+                nombre=empleado.nombre if empleado else 'Colaborador/a',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link
+            )
+            
+            fechas_str_conf = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto_confirmacion = f"CC {caso.cedula} - {serial}{fechas_str_conf} - Confirmación - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            send_html_email(
+                caso.email_form,
+                asunto_confirmacion,
+                email_empleada_neutro,
+                caso=caso  # ✅ CC empresa automático
+            )
+            print(f"📧 Correo neutro enviado al colaborador: {caso.email_form}")
+            
+            # ── CORREO 2: Alerta al directorio de presunto fraude con adjuntos ──
             emails_validador = obtener_emails_presunto_fraude(caso.empresa.nombre if caso.empresa else 'Default', db=db)
             
             email_validar = get_email_template_universal(
@@ -3131,7 +3155,7 @@ async def validar_caso_con_checks(
                     except Exception as _e:
                         print(f"⚠️ Error procesando adjunto validar {_path}: {_e}")
             
-            # CC empresa
+            # CC empresa para el correo al validador
             cc_empresa_validar = None
             if caso.company_id:
                 emails_dir_validar = obtener_emails_empresa_directorio(caso.company_id, db=db)
@@ -3153,6 +3177,59 @@ async def validar_caso_con_checks(
                     drive_link=caso.drive_link
                 )
                 print(f"🔍 Enviado a validar EPS: {email_dest} (CC empresa: {cc_empresa_validar or 'N/A'})")
+        
+        elif accion == 'falsa_confirmada':
+            # ✅ FALSA CONFIRMADA: Marcar como incapacidad adulterada definitiva
+            print(f"🚫 Marcando como FALSA CONFIRMADA: {serial}")
+            
+            # Guardar metadata de fraude confirmado
+            if not caso.metadata_form:
+                caso.metadata_form = {}
+            caso.metadata_form['fraude_confirmado'] = True
+            caso.metadata_form['fraude_resultado'] = 'adulterada'
+            caso.metadata_form['fecha_fraude_confirmado'] = datetime.now().isoformat()
+            flag_modified(caso, 'metadata_form')
+            
+            # Notificar al área encargada (directorio presunto fraude)
+            emails_fraude = obtener_emails_presunto_fraude(caso.empresa.nombre if caso.empresa else 'Default', db=db)
+            
+            email_fraude_conf = get_email_template_universal(
+                tipo_email='tthh',
+                nombre='Encargado de Presunto Fraude',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link,
+                contenido_ia=f"Se confirma que la incapacidad {serial} del colaborador/a {empleado.nombre if empleado else 'N/A'} ha sido verificada como **ADULTERADA/FALSA**. Se notifica al area encargada para los tramites correspondientes."
+            )
+            
+            fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto_fraude = f"CC {caso.cedula} - {serial}{fechas_str} - INCAPACIDAD ADULTERADA CONFIRMADA - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            
+            # CC empresa
+            cc_empresa_fraude = None
+            if caso.company_id:
+                emails_dir_fraude = obtener_emails_empresa_directorio(caso.company_id, db=db)
+                if emails_dir_fraude:
+                    cc_empresa_fraude = ",".join(emails_dir_fraude)
+            
+            for email_dest in emails_fraude:
+                enviar_a_n8n(
+                    tipo_notificacion='tthh',
+                    email=email_dest,
+                    serial=serial,
+                    subject=asunto_fraude,
+                    html_content=email_fraude_conf,
+                    cc_email=cc_empresa_fraude,
+                    correo_bd=None,
+                    whatsapp=None,
+                    whatsapp_message=None,
+                    adjuntos_base64=[],
+                    drive_link=caso.drive_link
+                )
+                print(f"🚫 Fraude confirmado notificado a: {email_dest}")
         
         # Limpiar adjuntos temporales
         for temp_file in adjuntos_paths:
