@@ -616,7 +616,30 @@ def generar_mensaje_segun_tipo(tipo_email, checks, tipo_incapacidad, serial, qui
         return _bloque_mensaje(
             "#EFF6FC", "#0078D4",
             "&#9989; Documentacion recibida",
-            "Hemos recibido tu documentacion. Procederemos a validar los soportes y quedamos sujetos a la respuesta ante la EPS."
+            "Hemos recibido tu documentacion. Tu incapacidad aun no ha sido confirmada por la EPS. "
+            "Estamos a la espera de la respuesta de la EPS para poder subirla al sistema. "
+            "Nos comunicaremos contigo si se requiere algun paso adicional."
+        )
+
+    elif tipo_email == 'solicitar_epicrisis':
+        fecha_texto = f" {fechas}" if fechas else ""
+        return _bloque_mensaje(
+            "#EFF6FC", "#2563EB",
+            "&#128203; Solicitud de Epicrisis",
+            f"Para tu incapacidad{fecha_texto}, la EPS requiere la <strong>epicrisis</strong> "
+            "como soporte adicional para la validacion. "
+            "Por favor solicita la epicrisis en tu IPS o centro medico donde fuiste atendido/a "
+            "y subela al sistema lo antes posible."
+        )
+
+    elif tipo_email == 'enviar_validar':
+        fecha_texto = f" {fechas}" if fechas else ""
+        return _bloque_mensaje(
+            "#F5F3FF", "#7C3AED",
+            "&#128269; Solicitud de Validacion con EPS",
+            f"Se solicita validar con la EPS la siguiente incapacidad{fecha_texto}. "
+            "Adjunto encontrara los soportes del caso y la informacion del colaborador/a. "
+            "Por favor confirmar la autenticidad de esta incapacidad."
         )
 
     elif tipo_email == 'recordatorio':
@@ -747,6 +770,20 @@ def get_email_template_universal_con_ia(
             'mostrar_boton': False,
             'mostrar_plazo': False,
         },
+        'solicitar_epicrisis': {
+            'color': '#2563EB',
+            'titulo': '&#128203; Solicitud de Epicrisis',
+            'mostrar_requisitos': False,
+            'mostrar_boton': True,
+            'mostrar_plazo': False,
+        },
+        'enviar_validar': {
+            'color': '#7C3AED',
+            'titulo': '&#128269; Solicitud de Validacion con EPS',
+            'mostrar_requisitos': False,
+            'mostrar_boton': False,
+            'mostrar_plazo': False,
+        },
         'recordatorio': {
             'color': '#D97706',
             'titulo': '&#9200; Recordatorio',
@@ -775,6 +812,14 @@ def get_email_template_universal_con_ia(
                                     </td>
                                 </tr>
 """
+    elif tipo_email == 'enviar_validar':
+        body += f"""
+                                <tr>
+                                    <td style="padding:0 0 10px 0;">
+                                        <p style="margin:0; font-size:14px; color:#323130; font-family:Arial,sans-serif;">Estimado/a <strong style="color:#7C3AED;">Validador/a EPS</strong>,</p>
+                                    </td>
+                                </tr>
+"""
     else:
         body += f"""
                                 <tr>
@@ -791,8 +836,8 @@ def get_email_template_universal_con_ia(
     else:
         body += generar_mensaje_segun_tipo(tipo_email, checks_seleccionados, tipo_incapacidad, serial, quinzena, archivos_nombres)
 
-    # DETALLES (TTHH)
-    if tipo_email == 'tthh':
+    # DETALLES (TTHH y ENVIAR_VALIDAR)
+    if tipo_email in ('tthh', 'enviar_validar'):
         body += generar_detalles_caso(serial, nombre, empresa, tipo_incapacidad, telefono, email)
 
     # CHECKLIST REQUISITOS
@@ -899,6 +944,22 @@ def get_tthh_template(nombre, serial, empresa, tipo_incapacidad, telefono, email
 def get_falsa_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
     return get_email_template_universal(
         tipo_email='falsa', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive
+    )
+
+
+def get_solicitar_epicrisis_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
+    return get_email_template_universal(
+        tipo_email='solicitar_epicrisis', nombre=nombre, serial=serial,
+        empresa=empresa, tipo_incapacidad=tipo_incapacidad,
+        telefono=telefono, email=email, link_drive=link_drive
+    )
+
+
+def get_enviar_validar_template(nombre, serial, empresa, tipo_incapacidad, telefono, email, link_drive):
+    return get_email_template_universal(
+        tipo_email='enviar_validar', nombre=nombre, serial=serial,
         empresa=empresa, tipo_incapacidad=tipo_incapacidad,
         telefono=telefono, email=email, link_drive=link_drive
     )
