@@ -543,6 +543,7 @@ async def listar_casos(
             "total_reenvios": total_reenvios,
             "recordatorios_count": caso.recordatorios_count or 0,
             "fraude_confirmado": bool(caso.metadata_form.get('fraude_confirmado')) if caso.metadata_form and isinstance(caso.metadata_form, dict) else False,
+            "drive_link": caso.drive_link,
         })
     
     return {
@@ -2940,6 +2941,9 @@ async def validar_caso_con_checks(
                     wa_lineas.append(f"• {s}")
                 wa_lineas.append("")
             wa_lineas.append("Enviar en *PDF escaneado*, completo y legible.")
+            if caso.drive_link:
+                wa_lineas.append("")
+                wa_lineas.append(f"📄 Ver documento actual: {caso.drive_link}")
             wa_lineas.append("")
             wa_lineas.append("Subir documentos: https://repogemin.vercel.app/")
             wa_lineas.append("")

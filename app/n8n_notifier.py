@@ -287,6 +287,9 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
         lineas.append("Documentacion recibida. Esta siendo revisada.")
         lineas.append("")
         lineas.append("Nos comunicaremos si se requiere algo adicional.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
 
     elif tipo_notificacion in ('incompleta', 'ilegible', 'incompleta_ilegible'):
         if motivos:
@@ -300,6 +303,9 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
                 lineas.append(f"• {s}")
             lineas.append("")
         lineas.append("Enviar en *PDF escaneado*, completo y legible.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento actual: {drive_link}")
         lineas.append("")
         lineas.append("Subir documentos: https://repogemin.vercel.app/")
 
@@ -308,10 +314,16 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
         lineas.append("Procederemos a subirla al sistema.")
         lineas.append("")
         lineas.append("Nos comunicaremos contigo si se requiere algo adicional.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
 
     elif tipo_notificacion in ('eps', 'eps_transcripcion'):
         lineas.append(f"Tu incapacidad{fecha_texto} requiere transcripcion en tu EPS.")
         lineas.append("Dirigete con tu documento de identidad.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
 
     elif tipo_notificacion == 'recordatorio':
         lineas.append(f"Tu incapacidad{fecha_texto} aun tiene documentacion pendiente.")
@@ -320,6 +332,9 @@ def generar_mensaje_whatsapp(tipo_notificacion: str, serial: str, subject: str, 
             lineas.append("*Motivo:*")
             for m in motivos[:3]:
                 lineas.append(f"• {m}")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
         lineas.append("")
         lineas.append("Subir documentos: https://repogemin.vercel.app/")
 
