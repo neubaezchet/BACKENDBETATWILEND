@@ -2604,7 +2604,9 @@ async def validar_caso_con_checks(
         'ilegible': EstadoCaso.ILEGIBLE,
         'eps': EstadoCaso.EPS_TRANSCRIPCION,
         'tthh': EstadoCaso.DERIVADO_TTHH,
-        'falsa': EstadoCaso.DERIVADO_TTHH
+        'falsa': EstadoCaso.DERIVADO_TTHH,
+        'solicitar_epicrisis': EstadoCaso.EPS_TRANSCRIPCION,
+        'enviar_validar': EstadoCaso.EPS_TRANSCRIPCION,
     }
     nuevo_estado = estado_map[accion]
 
@@ -3067,6 +3069,90 @@ async def validar_caso_con_checks(
                 email_empleada,
                 caso=caso  # ✅ COPIA AUTOMÁTICA
             )
+        
+        elif accion == 'solicitar_epicrisis':
+            # ✅ SOLICITAR EPICRISIS: Email al trabajador pidiendo epicrisis (como si EPS lo pidiera)
+            print(f"📋 Solicitando epicrisis para {serial}...")
+            
+            email_empleada = get_email_template_universal(
+                tipo_email='solicitar_epicrisis',
+                nombre=empleado.nombre if empleado else 'Colaborador/a',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link
+            )
+            
+            fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto = f"CC {caso.cedula} - {serial}{fechas_str} - Solicitud Epicrisis - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            send_html_email(
+                caso.email_form,
+                asunto,
+                email_empleada,
+                caso=caso  # ✅ COPIA AUTOMÁTICA con CC empresa
+            )
+        
+        elif accion == 'enviar_validar':
+            # ✅ ENVIAR A VALIDAR: Email al validador EPS del directorio con info del caso y adjuntos
+            print(f"🔍 Enviando a validar con EPS para {serial}...")
+            
+            # Obtener emails del directorio de presunto fraude (validadores EPS)
+            emails_validador = obtener_emails_presunto_fraude(caso.empresa.nombre if caso.empresa else 'Default', db=db)
+            
+            email_validar = get_email_template_universal(
+                tipo_email='enviar_validar',
+                nombre='Validador/a EPS',
+                serial=serial,
+                empresa=caso.empresa.nombre if caso.empresa else 'N/A',
+                tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
+                telefono=caso.telefono_form,
+                email=caso.email_form,
+                link_drive=caso.drive_link
+            )
+            
+            fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
+            asunto_validar = f"CC {caso.cedula} - {serial}{fechas_str} - Validar con EPS - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
+            
+            # Preparar adjuntos en base64
+            import base64 as _b64_validar
+            adjuntos_b64_validar = []
+            for _path in adjuntos_paths:
+                if os.path.exists(_path):
+                    try:
+                        with open(_path, 'rb') as _f:
+                            _content = _b64_validar.b64encode(_f.read()).decode('utf-8')
+                            adjuntos_b64_validar.append({
+                                'filename': os.path.basename(_path),
+                                'content': _content,
+                                'mimetype': 'application/pdf'
+                            })
+                    except Exception as _e:
+                        print(f"⚠️ Error procesando adjunto validar {_path}: {_e}")
+            
+            # CC empresa
+            cc_empresa_validar = None
+            if caso.company_id:
+                emails_dir_validar = obtener_emails_empresa_directorio(caso.company_id, db=db)
+                if emails_dir_validar:
+                    cc_empresa_validar = ",".join(emails_dir_validar)
+            
+            for email_dest in emails_validador:
+                enviar_a_n8n(
+                    tipo_notificacion='enviar_validar',
+                    email=email_dest,
+                    serial=serial,
+                    subject=asunto_validar,
+                    html_content=email_validar,
+                    cc_email=cc_empresa_validar,
+                    correo_bd=None,
+                    whatsapp=None,
+                    whatsapp_message=None,
+                    adjuntos_base64=adjuntos_b64_validar,
+                    drive_link=caso.drive_link
+                )
+                print(f"🔍 Enviado a validar EPS: {email_dest} (CC empresa: {cc_empresa_validar or 'N/A'})")
         
         # Limpiar adjuntos temporales
         for temp_file in adjuntos_paths:
