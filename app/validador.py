@@ -1479,22 +1479,24 @@ async def exportar_casos(
         empresa_obj = caso.empresa
         
         data.append({
-            "Serial": caso.serial,
-            "Cédula": caso.cedula,
-            "Nombre": empleado.nombre if empleado else "No registrado",
-            "Empresa": empresa_obj.nombre if empresa_obj else "Otra",
-            "Tipo": caso.tipo.value if caso.tipo else None,
-            "Días": caso.dias_incapacidad,
-            "Estado": caso.estado.value,
+            "SERIAL": caso.serial,
+            "CEDULA": caso.cedula,
+            "NOMBRE": empleado.nombre if empleado else "NO REGISTRADO",
+            "EMPRESA": empresa_obj.nombre if empresa_obj else "OTRA",
+            "TIPO": caso.tipo.value if caso.tipo else None,
+            "DIAS": caso.dias_incapacidad,
+            "ESTADO": caso.estado.value if caso.estado else None,
             "EPS": caso.eps,
-            "Fecha Inicio": caso.fecha_inicio.strftime("%Y-%m-%d") if caso.fecha_inicio else None,
-            "Fecha Fin": caso.fecha_fin.strftime("%Y-%m-%d") if caso.fecha_fin else None,
-            "Diagnóstico": caso.diagnostico,
-            "Link Drive": caso.drive_link,
-            "Fecha Registro": caso.created_at.strftime("%Y-%m-%d %H:%M"),
-            "✅ Procesado": "SÍ" if caso.procesado else "NO",  # ✅ NUEVA COLUMNA para tracking
-            "Fecha Procesado": caso.fecha_procesado.strftime("%Y-%m-%d %H:%M") if caso.fecha_procesado else None,
-            "Usuario Procesado": caso.usuario_procesado
+            "FECHA INICIO": caso.fecha_inicio.strftime("%Y-%m-%d") if caso.fecha_inicio else None,
+            "FECHA FIN": caso.fecha_fin.strftime("%Y-%m-%d") if caso.fecha_fin else None,
+            "DIAGNOSTICO": caso.diagnostico,
+            "CODIGO CIE10": caso.codigo_cie10,
+            "LINK DRIVE": caso.drive_link,
+            "FECHA ADJUNTADO": caso.created_at.strftime("%Y-%m-%d") if caso.created_at else None,
+            "HORA ADJUNTADO": caso.created_at.strftime("%H:%M") if caso.created_at else None,
+            "PROCESADO": "SI" if caso.procesado else "NO",
+            "FECHA PROCESADO": caso.fecha_procesado.strftime("%Y-%m-%d") if caso.fecha_procesado else None,
+            "USUARIO PROCESADO": caso.usuario_procesado,
         })
     
     df = pd.DataFrame(data)
