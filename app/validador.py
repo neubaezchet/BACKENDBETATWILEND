@@ -29,6 +29,7 @@ from app.drive_manager import CaseFileOrganizer
 from app.n8n_notifier import enviar_a_n8n  # ✅ NUEVO
 from app.completes_manager import completes_mgr  # ✅ NUEVO - Sincronización Completes
 from app.notification_queue import notification_queue, NotificacionPendiente  # ✅ Cola de notificaciones
+from app.services.prorroga_detector import analizar_historial_empleado  # ✅ Detección de prórrogas por cadenas
 
 router = APIRouter(prefix="/validador", tags=["Portal de Validadores"])
 
@@ -1473,6 +1474,19 @@ async def exportar_casos(
     
     casos = query.all()
     
+    # Detectar prórrogas reales por análisis de cadenas (no solo BD)
+    cedulas_unicas = list(set(c.cedula for c in casos if c.cedula))
+    seriales_prorroga = set()
+    for ced in cedulas_unicas:
+        try:
+            analisis = analizar_historial_empleado(db, ced)
+            for cadena in analisis.get("cadenas_prorroga", []):
+                for p in cadena.get("prorrogas", []):
+                    if p.get("serial"):
+                        seriales_prorroga.add(p["serial"])
+        except Exception:
+            pass
+    
     data = []
     for caso in casos:
         empleado = caso.empleado
@@ -1486,11 +1500,12 @@ async def exportar_casos(
             "TIPO": caso.tipo.value if caso.tipo else None,
             "DIAS": caso.dias_incapacidad,
             "ESTADO": caso.estado.value if caso.estado else None,
-            "EPS": caso.eps,
+            "EPS": caso.eps or (empleado.eps if empleado else None),
             "FECHA INICIO": caso.fecha_inicio.strftime("%Y-%m-%d") if caso.fecha_inicio else None,
             "FECHA FIN": caso.fecha_fin.strftime("%Y-%m-%d") if caso.fecha_fin else None,
-            "DIAGNOSTICO": caso.diagnostico,
             "CODIGO CIE10": caso.codigo_cie10,
+            "DIAGNOSTICO": caso.diagnostico,
+            "ES PRORROGA": "SI" if (caso.serial in seriales_prorroga or caso.es_prorroga) else "NO",
             "LINK DRIVE": caso.drive_link,
             "FECHA ADJUNTADO": caso.created_at.strftime("%Y-%m-%d") if caso.created_at else None,
             "HORA ADJUNTADO": caso.created_at.strftime("%H:%M") if caso.created_at else None,
@@ -3001,7 +3016,15 @@ async def validar_caso_con_checks(
                     cc_empresa_fraude = ",".join(emails_dir_fraude)
             print(f"📧 CC empresa para tthh: {cc_empresa_fraude or 'N/A'}")
             
-            # ✅ CORREO 1: Alerta a directorio presunto fraude — CON CC empresa
+            # ✅ Agregar emails del directorio empresa como destinatarios DIRECTOS
+            if cc_empresa_fraude:
+                for _em in cc_empresa_fraude.split(","):
+                    _em = _em.strip()
+                    if _em and "@" in _em and _em.lower() not in [e.lower() for e in emails_fraude]:
+                        emails_fraude.append(_em)
+            print(f"📧 Destinatarios finales tthh: {emails_fraude}")
+            
+            # ✅ CORREO 1: Alerta a directorio presunto fraude + empresa
             try:
                 import base64 as _b64_fraude
                 adjuntos_b64_fraude = []
@@ -3019,20 +3042,25 @@ async def validar_caso_con_checks(
                             print(f"⚠️ Error procesando adjunto fraude {_path}: {_e}")
                 
                 for email_dest in emails_fraude:
-                    enviar_a_n8n(
+                    _cc_para_dest = cc_empresa_fraude
+                    if _cc_para_dest:
+                        _cc_filtrado = [e.strip() for e in _cc_para_dest.split(",") if e.strip().lower() != email_dest.lower()]
+                        _cc_para_dest = ",".join(_cc_filtrado) if _cc_filtrado else None
+                    
+                    resultado = enviar_a_n8n(
                         tipo_notificacion='tthh',
                         email=email_dest,
                         serial=serial,
                         subject=asunto_tthh,
                         html_content=email_tthh,
-                        cc_email=cc_empresa_fraude,  # ✅ CC empresa
+                        cc_email=_cc_para_dest,
                         correo_bd=None,
                         whatsapp=None,
                         whatsapp_message=None,
                         adjuntos_base64=adjuntos_b64_fraude,
                         drive_link=caso.drive_link
                     )
-                    print(f"🚨 Presunto fraude enviado a: {email_dest} (CC empresa: {cc_empresa_fraude or 'N/A'})")
+                    print(f"🚨 Presunto fraude enviado a: {email_dest} → resultado={resultado} (CC: {_cc_para_dest or 'N/A'})")
             except Exception as e:
                 print(f"⚠️ Error enviando CORREO 1 (alerta fraude) tthh: {e}")
             
@@ -3152,9 +3180,18 @@ async def validar_caso_con_checks(
             except Exception as e:
                 print(f"⚠️ Error enviando CORREO 1 (neutro colaborador) enviar_validar: {e}")
             
-            # ── CORREO 2: Alerta al directorio de presunto fraude con adjuntos ──
+            # ── CORREO 2: Alerta al directorio + empresa para validar con EPS ──
             try:
                 emails_validador = obtener_emails_presunto_fraude(caso.empresa.nombre if caso.empresa else 'Default', db=db)
+                
+                # ✅ Agregar emails del directorio empresa como destinatarios DIRECTOS (TO)
+                # Antes solo iban como BCC y podían no llegar
+                if cc_empresa_validar:
+                    for _em in cc_empresa_validar.split(","):
+                        _em = _em.strip()
+                        if _em and "@" in _em and _em.lower() not in [e.lower() for e in emails_validador]:
+                            emails_validador.append(_em)
+                print(f"📧 Destinatarios finales enviar_validar: {emails_validador}")
                 
                 email_validar = get_email_template_universal(
                     tipo_email='enviar_validar',
@@ -3187,20 +3224,26 @@ async def validar_caso_con_checks(
                             print(f"⚠️ Error procesando adjunto validar {_path}: {_e}")
                 
                 for email_dest in emails_validador:
-                    enviar_a_n8n(
+                    # Evitar CC duplicado si este email ya es destinatario directo
+                    _cc_para_dest = cc_empresa_validar
+                    if _cc_para_dest:
+                        _cc_filtrado = [e.strip() for e in _cc_para_dest.split(",") if e.strip().lower() != email_dest.lower()]
+                        _cc_para_dest = ",".join(_cc_filtrado) if _cc_filtrado else None
+                    
+                    resultado = enviar_a_n8n(
                         tipo_notificacion='enviar_validar',
                         email=email_dest,
                         serial=serial,
                         subject=asunto_validar,
                         html_content=email_validar,
-                        cc_email=cc_empresa_validar,  # ✅ CC empresa
+                        cc_email=_cc_para_dest,
                         correo_bd=None,
                         whatsapp=None,
                         whatsapp_message=None,
                         adjuntos_base64=adjuntos_b64_validar,
                         drive_link=caso.drive_link
                     )
-                    print(f"🔍 Enviado a validar EPS: {email_dest} (CC empresa: {cc_empresa_validar or 'N/A'})")
+                    print(f"🔍 Enviado a validar EPS: {email_dest} → resultado={resultado} (CC: {_cc_para_dest or 'N/A'})")
             except Exception as e:
                 print(f"⚠️ Error enviando CORREO 2 (presunto fraude) enviar_validar: {e}")
                 import traceback

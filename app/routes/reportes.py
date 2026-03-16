@@ -685,6 +685,16 @@ async def powerbi_analisis_persona(
         # Análisis de prórrogas completo
         analisis = analizar_historial_empleado(db, cedula)
         
+        # Determinar qué seriales son prórroga según el análisis de cadenas
+        seriales_prorroga = set()
+        for cadena in analisis.get("cadenas_prorroga", []):
+            for p in cadena.get("prorrogas", []):
+                if p.get("serial"):
+                    seriales_prorroga.add(p["serial"])
+        
+        # EPS del empleado como fallback
+        eps_empleado = empleado.eps if empleado else ""
+        
         # Construir timeline de incapacidades
         timeline = []
         for c in casos:
@@ -694,42 +704,60 @@ async def powerbi_analisis_persona(
             fi = c.fecha_inicio
             ff = c.fecha_fin or c.fecha_inicio
             
-            timeline.append({
+            # EPS: primero del caso, luego del empleado
+            eps_valor = c.eps or eps_empleado or ""
+            
+            # Lógica para mostrar datos de Kactus solo si el caso fue sincronizado y los valores difieren
+            fecha_inicio_val = c.fecha_inicio
+            fecha_fin_val = c.fecha_fin
+            dias_val = c.dias_incapacidad
+            if subido_kactus:
+                # Si existen fechas/días de Kactus y difieren, usar los de Kactus
+                if c.fecha_inicio_kactus and c.fecha_inicio_kactus != c.fecha_inicio:
+                    fecha_inicio_val = c.fecha_inicio_kactus
+                if c.fecha_fin_kactus and c.fecha_fin_kactus != c.fecha_fin:
+                    fecha_fin_val = c.fecha_fin_kactus
+                # Calcular días según Kactus si difieren
+                if c.fecha_inicio_kactus and c.fecha_fin_kactus:
+                    dias_kactus_calc = (c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1
+                    if dias_kactus_calc != c.dias_incapacidad:
+                        dias_val = dias_kactus_calc
+            tabla_principal.append({
                 "serial": c.serial,
-                "fecha_inicio": fi.strftime("%Y-%m-%d") if fi else None,
-                "fecha_fin": ff.strftime("%Y-%m-%d") if ff else None,
-                "dias": c.dias_incapacidad or 0,
-                "dias_traslapo": c.dias_traslapo or 0,
-                "dias_efectivos": (c.dias_incapacidad or 0) - (c.dias_traslapo or 0),
-                "traslapo_con": c.traslapo_con_serial or None,
-                "tipo": c.tipo.value if c.tipo else "",
-                "estado": c.estado.value if c.estado else "",
-                "diagnostico": c.diagnostico or "",
-                "codigo_cie10": c.codigo_cie10 or "",
-                "cie10_descripcion": cie_info["descripcion"] if cie_info and cie_info.get("encontrado") else "",
-                "cie10_grupo": cie_info["grupo"] if cie_info and cie_info.get("encontrado") else "",
-                "empresa": empresa_obj.nombre if empresa_obj else "",
-                "eps": c.eps or "",
-                "es_prorroga": c.es_prorroga or False,
-                "numero_incapacidad": c.numero_incapacidad or "",
-                "drive_link": c.drive_link or "",
-                "created_at": c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
+                "cedula": c.cedula,
+                "nombre": emp_nombre,
+                "empresa": empresa_nombre,
+                "area": emp_area,
+                "cargo": emp_cargo,
+                "centro_costo": emp_centro_costo,
+                "ciudad": emp_ciudad,
+                "tipo_contrato": emp_tipo_contrato,
+                "fecha_ingreso": emp_fecha_ingreso,
+                "eps": emp_eps or c.eps,
+                "tipo": c.tipo.value if c.tipo else "N/A",
+                "subtipo": c.subtipo,
+                "estado": c.estado.value if c.estado else "NUEVO",
+                "diagnostico": c.diagnostico if c.diagnostico else ("En Proceso" if not subido_kactus else None),
+                "codigo_cie10": c.codigo_cie10 if c.codigo_cie10 else ("En Proceso" if not subido_kactus else None),
+                "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else ("En Proceso" if not subido_kactus else None),
+                "cie10_grupo": cie10_info.get("grupo") if cie10_info else None,
+                "dias_incapacidad": dias_val,
+                "dias_validacion": dias_validacion,
+                "es_prorroga": prorroga_auto.get("es_prorroga", c.es_prorroga),
+                "es_prorroga_db": c.es_prorroga,
+                "prorroga_confianza": prorroga_auto.get("confianza"),
+                "prorroga_explicacion": prorroga_auto.get("explicacion"),
+                "prorroga_caso_original": prorroga_auto.get("caso_original_serial"),
+                "numero_incapacidad": c.numero_incapacidad if c.numero_incapacidad else ("En Proceso" if not subido_kactus else None),
+                "fecha_inicio": fecha_inicio_val.isoformat() if fecha_inicio_val else None,
+                "fecha_fin": fecha_fin_val.isoformat() if fecha_fin_val else None,
+                "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
+                "dias_en_portal": dias_en_portal,
+                "observacion": ultimo_motivo,
+                "observacion_detalle": observacion_detalle,
+                "docs_faltantes": docs_faltantes,
+                "docs_ilegibles": docs_ilegibles,
             })
-        
-        # Detectar TODOS los gaps (huecos) entre incapacidades consecutivas
-        gaps = []
-        for i in range(len(casos) - 1):
-            caso_a = casos[i]
-            caso_b = casos[i + 1]
-            
-            fin_a = caso_a.fecha_fin or caso_a.fecha_inicio
-            inicio_b = caso_b.fecha_inicio
-            
-            if fin_a and inicio_b:
-                brecha = (inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b) - \
-                         (fin_a.date() if hasattr(fin_a, 'date') else fin_a)
-                dias_gap = brecha.days
-                
                 if dias_gap > 1:  # Hay un hueco (más de 1 día entre fin e inicio)
                     fecha_gap_inicio = fin_a.date() if hasattr(fin_a, 'date') else fin_a
                     fecha_gap_fin = inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b
