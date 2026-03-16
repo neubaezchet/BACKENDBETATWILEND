@@ -5,12 +5,18 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+
 from datetime import datetime
 import os
 import enum
 
 # Base para modelos
 Base = declarative_base()
+
+# Helper para timestamps - compatible con Python 3.12+
+def get_utc_now():
+    """Retorna datetime actual en UTC - compatible con Python 3.12+"""
+    return datetime.now()
 
 class PendienteEnvio(Base):
     __tablename__ = "pendientes_envio"
@@ -39,10 +45,6 @@ import enum
 # Base para modelos
 Base = declarative_base()
 
-# Helper para timestamps - compatible con Python 3.12+
-def get_utc_now():
-    """Retorna datetime actual en UTC - compatible con Python 3.12+"""
-    return datetime.now()
 
 # Enums para estados
 class EstadoCaso(str, enum.Enum):
