@@ -2,6 +2,16 @@
 # MODELO: PendienteEnvio
 # =====================
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+from datetime import datetime
+import os
+import enum
+
+# Base para modelos
+Base = declarative_base()
+
 class PendienteEnvio(Base):
     __tablename__ = "pendientes_envio"
     id = Column(Integer, primary_key=True)
