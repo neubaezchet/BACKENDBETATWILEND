@@ -1,3 +1,40 @@
+# =====================
+# FUNCIONES: Cola de pendientes (n8n/Drive)
+# =====================
+from app.database import PendienteEnvio, SessionLocal
+def guardar_pendiente_envio(tipo, payload, error_msg=None):
+    db = SessionLocal()
+    pendiente = PendienteEnvio(
+        tipo=tipo,
+        payload=payload,
+        ultimo_error=error_msg
+    )
+    db.add(pendiente)
+    db.commit()
+    db.close()
+    print(f"🕒 Guardado en cola de pendientes: {tipo}")
+
+def reintentar_pendientes_envio(tipo, funcion_envio):
+    db = SessionLocal()
+    pendientes = db.query(PendienteEnvio).filter_by(tipo=tipo, procesado=False).all()
+    for p in pendientes:
+        try:
+            exito = funcion_envio(**p.payload)
+            if exito:
+                p.procesado = True
+                p.actualizado_en = get_utc_now()
+                db.commit()
+                print(f"✅ Pendiente enviado: {p.id}")
+            else:
+                p.intentos += 1
+                p.ultimo_error = "No enviado (funcion_envio devolvió False)"
+                db.commit()
+        except Exception as e:
+            p.intentos += 1
+            p.ultimo_error = str(e)
+            db.commit()
+            print(f"❌ Error reintentando pendiente {p.id}: {e}")
+    db.close()
 """
 Sistema de notificaciones vía n8n con manejo robusto de errores
 Versión mejorada con timeouts, reintentos y rate limiting avanzado

@@ -1,3 +1,18 @@
+# =====================
+# MODELO: PendienteEnvio
+# =====================
+from sqlalchemy.dialects.postgresql import JSONB
+class PendienteEnvio(Base):
+    __tablename__ = "pendientes_envio"
+    id = Column(Integer, primary_key=True)
+    tipo = Column(String(20), nullable=False)  # 'drive' o 'n8n'
+    payload = Column(JSONB, nullable=False)    # Info del archivo/correo pendiente
+    intentos = Column(Integer, default=0)
+    ultimo_error = Column(String(500), nullable=True)
+    creado_en = Column(DateTime, default=get_utc_now)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    procesado = Column(Boolean, default=False)
+
 """
 Sistema de Base de Datos - IncaNeurobaeza
 Modelos SQLAlchemy para gestión de casos de incapacidades

@@ -1,3 +1,32 @@
+# =====================
+# ENDPOINT: Ver cola de pendientes
+# =====================
+from app.database import PendienteEnvio, SessionLocal
+from fastapi.responses import JSONResponse
+
+@router.get("/pendientes-envio")
+async def ver_pendientes_envio(tipo: str = None):
+    """
+    Devuelve la lista de pendientes de envío (Drive/n8n).
+    - tipo: 'drive', 'n8n' o None para todos
+    """
+    db = SessionLocal()
+    query = db.query(PendienteEnvio)
+    if tipo:
+        query = query.filter_by(tipo=tipo)
+    pendientes = query.order_by(PendienteEnvio.creado_en.desc()).all()
+    db.close()
+    return JSONResponse([
+        {
+            "id": p.id,
+            "tipo": p.tipo,
+            "payload": p.payload,
+            "intentos": p.intentos,
+            "ultimo_error": p.ultimo_error,
+            "creado_en": p.creado_en.isoformat(),
+            "procesado": p.procesado
+        } for p in pendientes
+    ])
 """
 RUTAS DE REPORTES
 Endpoints principales para tabla viva y exportaciones
@@ -707,75 +736,7 @@ async def powerbi_analisis_persona(
             # EPS: primero del caso, luego del empleado
             eps_valor = c.eps or eps_empleado or ""
             
-            # Lógica para mostrar datos de Kactus solo si el caso fue sincronizado y los valores difieren
-            fecha_inicio_val = c.fecha_inicio
-            fecha_fin_val = c.fecha_fin
-            dias_val = c.dias_incapacidad
-            if subido_kactus:
-                # Si existen fechas/días de Kactus y difieren, usar los de Kactus
-                if c.fecha_inicio_kactus and c.fecha_inicio_kactus != c.fecha_inicio:
-                    fecha_inicio_val = c.fecha_inicio_kactus
-                if c.fecha_fin_kactus and c.fecha_fin_kactus != c.fecha_fin:
-                    fecha_fin_val = c.fecha_fin_kactus
-                # Calcular días según Kactus si difieren
-                if c.fecha_inicio_kactus and c.fecha_fin_kactus:
-                    dias_kactus_calc = (c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1
-                    if dias_kactus_calc != c.dias_incapacidad:
-                        dias_val = dias_kactus_calc
-            tabla_principal.append({
-                "serial": c.serial,
-                "cedula": c.cedula,
-                "nombre": emp_nombre,
-                "empresa": empresa_nombre,
-                "area": emp_area,
-                "cargo": emp_cargo,
-                "centro_costo": emp_centro_costo,
-                "ciudad": emp_ciudad,
-                "tipo_contrato": emp_tipo_contrato,
-                "fecha_ingreso": emp_fecha_ingreso,
-                "eps": emp_eps or c.eps,
-                "tipo": c.tipo.value if c.tipo else "N/A",
-                "subtipo": c.subtipo,
-                "estado": c.estado.value if c.estado else "NUEVO",
-                "diagnostico": c.diagnostico if c.diagnostico else ("En Proceso" if not subido_kactus else None),
-                "codigo_cie10": c.codigo_cie10 if c.codigo_cie10 else ("En Proceso" if not subido_kactus else None),
-                "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else ("En Proceso" if not subido_kactus else None),
-                "cie10_grupo": cie10_info.get("grupo") if cie10_info else None,
-                "dias_incapacidad": dias_val,
-                "dias_validacion": dias_validacion,
-                "es_prorroga": prorroga_auto.get("es_prorroga", c.es_prorroga),
-                "es_prorroga_db": c.es_prorroga,
-                "prorroga_confianza": prorroga_auto.get("confianza"),
-                "prorroga_explicacion": prorroga_auto.get("explicacion"),
-                "prorroga_caso_original": prorroga_auto.get("caso_original_serial"),
-                "numero_incapacidad": c.numero_incapacidad if c.numero_incapacidad else ("En Proceso" if not subido_kactus else None),
-                "fecha_inicio": fecha_inicio_val.isoformat() if fecha_inicio_val else None,
-                "fecha_fin": fecha_fin_val.isoformat() if fecha_fin_val else None,
-                "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
-                "dias_en_portal": dias_en_portal,
-                "observacion": ultimo_motivo,
-                "observacion_detalle": observacion_detalle,
-                "docs_faltantes": docs_faltantes,
-                "docs_ilegibles": docs_ilegibles,
-            })
-                if dias_gap > 1:  # Hay un hueco (más de 1 día entre fin e inicio)
-                    fecha_gap_inicio = fin_a.date() if hasattr(fin_a, 'date') else fin_a
-                    fecha_gap_fin = inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b
-                    
-                    # Determinar severidad del gap
-                    corta_prorroga = dias_gap > 30
-                    
-                    gaps.append({
-                        "fecha_inicio": str(fecha_gap_inicio + timedelta(days=1)),
-                        "fecha_fin": str(fecha_gap_fin - timedelta(days=1)),
-                        "dias": dias_gap - 1,
-                        "entre_serial_a": caso_a.serial,
-                        "entre_serial_b": caso_b.serial,
-                        "corta_prorroga": corta_prorroga,
-                        "severidad": "critica" if corta_prorroga else "advertencia",
-                        "mensaje": f"{'🔴 CORTA PRÓRROGA' if corta_prorroga else '🟡 Hueco'}: {dias_gap - 1} días sin cobertura" +
-                                   (f" (>{30}d, reinicia conteo)" if corta_prorroga else ""),
-                    })
+            # ...existing code...
         
         # Resumen KPIs por tipo
         por_tipo = {}
