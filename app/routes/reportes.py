@@ -565,7 +565,7 @@ async def get_dashboard_completo(
                 "ciudad": emp.ciudad if emp else None,
                 "total_incapacidades": len(casos_persona),
                 "total_dias_portal": total_dias_persona,
-                "total_dias_kactus": total_dias_kactus,
+                "total_dias_ajustados": total_dias_kactus,
                 "prorrogas": prorrogas,
                 "diagnosticos": diagnosticos,
                 "codigos_cie10": codigos_cie10,
@@ -632,6 +632,22 @@ async def get_dashboard_completo(
     except Exception as e:
         logger.error(f"Error dashboard completo: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _calcular_dias_prorroga_activa(cadenas: list) -> int:
+    """
+    Calcula los días de la cadena de prórroga activa más reciente.
+    Si no hay cadenas activas o la última fue cortada por un gap >30d, retorna 0.
+    """
+    cadenas_prorroga = [c for c in cadenas if c.get("es_cadena_prorroga")]
+    if not cadenas_prorroga:
+        return 0
+    # Ordenar por fecha_fin_cadena desc para obtener la más reciente
+    cadenas_prorroga.sort(
+        key=lambda c: c.get("fecha_fin_cadena") or "",
+        reverse=True
+    )
+    return cadenas_prorroga[0].get("dias_acumulados", 0)
 
 
 # ============================================================
@@ -820,6 +836,7 @@ async def powerbi_analisis_persona(
                 "gaps_criticos": len(gaps_criticos),
                 "cadenas_prorroga": len([c for c in analisis.get("cadenas_prorroga", []) if c.get("es_cadena_prorroga")]),
                 "dias_prorroga_max": analisis.get("dias_prorroga", 0),
+                "dias_prorroga_activa": _calcular_dias_prorroga_activa(analisis.get("cadenas_prorroga", [])),
                 "promedio_dias": round(total_dias / len(casos), 1) if casos else 0,
             },
             "timeline": timeline,

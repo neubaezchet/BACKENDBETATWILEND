@@ -1,7 +1,7 @@
 """
 Sincronización AUTOMÁTICA Google Sheets → PostgreSQL
-✅ SYNC EXACTO: La BD refleja el Excel tal cual (misma cantidad, mismo orden)
-✅ Cases_Kactus: Crea casos, marca procesados con fecha, limpia > 15 días
+✅ EMPLEADOS: Sync por CÉDULA — ediciones, altas y bajas se reflejan automáticamente
+✅ Cases_Kactus: Crea casos, elimina filas procesadas del Excel inmediatamente
 """
 
 import os
@@ -114,6 +114,131 @@ def _marcar_filas_procesadas_kactus(filas: list, columna_procesado_idx: int = No
     
     except Exception as e:
         print(f"   ⚠️ Error marcando filas procesadas: {e}")
+
+
+def _eliminar_filas_procesadas_kactus(filas: list):
+    """
+    Elimina filas ya procesadas de la Hoja 2 (Cases_Kactus) INMEDIATAMENTE.
+    Las filas se eliminan de abajo hacia arriba para no afectar los índices.
+    
+    Args:
+        filas: Lista de números de fila en Excel (1-indexed, fila 2 = primera de datos)
+    
+    Returns:
+        int: Número de filas eliminadas exitosamente
+    """
+    if not filas:
+        return 0
+    
+    try:
+        service = _get_sheets_service()
+        if not service:
+            print("   ⚠️ Sin servicio Google, no se pudieron eliminar filas del Excel")
+            return 0
+        
+        spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
+        sheets = spreadsheet.get('sheets', [])
+        
+        if len(sheets) < 2:
+            return 0
+        
+        sheet_id = sheets[1]['properties']['sheetId']
+        
+        # Ordenar descendente para eliminar desde abajo (no afecta índices superiores)
+        filas_ordenadas = sorted(set(filas), reverse=True)
+        
+        requests_delete = []
+        for fila in filas_ordenadas:
+            requests_delete.append({
+                'deleteDimension': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'ROWS',
+                        'startIndex': fila - 1,  # 0-indexed
+                        'endIndex': fila
+                    }
+                }
+            })
+        
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            body={'requests': requests_delete}
+        ).execute()
+        
+        print(f"   🗑️ {len(filas_ordenadas)} filas eliminadas del Excel (ya procesadas en BD)")
+        return len(filas_ordenadas)
+    
+    except Exception as e:
+        print(f"   ⚠️ Error eliminando filas del Excel: {e}")
+        return 0
+
+
+def _marcar_filas_error_kactus(filas_error: list):
+    """
+    Marca filas que NO se pudieron procesar con un indicador de error en la columna Procesado.
+    Así el usuario sabe cuáles fallaron y puede revisarlas.
+    
+    Args:
+        filas_error: Lista de tuplas (numero_fila, mensaje_error)
+    """
+    if not filas_error:
+        return
+    
+    try:
+        service = _get_sheets_service()
+        if not service:
+            return
+        
+        spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
+        sheets = spreadsheet.get('sheets', [])
+        
+        if len(sheets) < 2:
+            return
+        
+        sheet_name = sheets[1]['properties']['title']
+        
+        # Buscar o crear columna Procesado
+        headers_result = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            range=f"'{sheet_name}'!1:1"
+        ).execute()
+        headers = headers_result.get('values', [[]])[0]
+        
+        if COLUMNA_PROCESADO in headers:
+            col_idx = headers.index(COLUMNA_PROCESADO)
+        else:
+            col_idx = len(headers)
+            col_letter = _idx_to_col_letter(col_idx)
+            service.spreadsheets().values().update(
+                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                range=f"'{sheet_name}'!{col_letter}1",
+                valueInputOption='RAW',
+                body={'values': [[COLUMNA_PROCESADO]]}
+            ).execute()
+        
+        col_letter = _idx_to_col_letter(col_idx)
+        
+        data = []
+        for fila, error_msg in filas_error:
+            # Truncar mensaje de error para que quepa en la celda
+            error_corto = str(error_msg)[:100]
+            data.append({
+                'range': f"'{sheet_name}'!{col_letter}{fila}",
+                'values': [[f"ERROR: {error_corto}"]]
+            })
+        
+        if data:
+            service.spreadsheets().values().batchUpdate(
+                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                body={
+                    'valueInputOption': 'RAW',
+                    'data': data
+                }
+            ).execute()
+            print(f"   ⚠️ {len(filas_error)} filas marcadas con ERROR en Excel")
+    
+    except Exception as e:
+        print(f"   ⚠️ Error marcando filas con error: {e}")
 
 
 def _limpiar_filas_antiguas_kactus(dias_antiguedad: int = None):
@@ -320,11 +445,19 @@ def sincronizar_empleado_desde_excel(cedula: str):
 
 def sincronizar_excel_completo():
     """
-    ✅ SYNC EXACTO POR POSICIÓN
-    - Fila 1 Excel = ID 1 en BD
-    - Fila 2 Excel = ID 2 en BD
-    - Si editas Fila 3, actualiza ID 3 (NO crea ID 9)
-    - Si Excel tiene 8 filas, BD tiene 8 empleados activos
+    ✅ SYNC POR CÉDULA (empleados) + ELIMINAR AL PROCESAR (casos)
+    
+    EMPLEADOS (Hoja 1):
+    - Busca cada empleado por CÉDULA (no por posición)
+    - Si editas nombre/correo/etc en Excel → se actualiza en BD
+    - Si eliminas una fila del Excel → el empleado se desactiva en BD
+    - Si agregas una fila nueva → se crea el empleado
+    - Si un empleado desactivado reaparece → se reactiva
+    
+    CASOS (Hoja 2 - Cases_Kactus):
+    - Procesa fila por fila
+    - Si se procesó OK → elimina esa fila del Excel inmediatamente
+    - Si falló → deja la fila con indicador "ERROR: [motivo]" en col Procesado
     """
     db = SessionLocal()
     try:
@@ -385,23 +518,26 @@ def sincronizar_excel_completo():
 
         print(f"   ℹ️ Emails de copia se gestionan desde el Directorio del Admin Portal\n")
         
-        # ========== PASO 2: SYNC EMPLEADOS EXACTO ==========
-        print(f"📊 PASO 2: Sincronizando empleados (MODO EXACTO)...")
+        # ========== PASO 2: SYNC EMPLEADOS POR CÉDULA ==========
+        # ✅ SYNC INTELIGENTE: Usa la cédula como identificador único
+        # - Si editas nombre/correo/etc en Excel → se actualiza en BD
+        # - Si eliminas una fila del Excel → se desactiva en BD
+        # - Si agregas una fila nueva → se crea en BD
+        # - No depende de la posición, es robusto ante inserciones/eliminaciones
+        print(f"📊 PASO 2: Sincronizando empleados (POR CÉDULA)...")
         
         df = pd.read_excel(excel_path, sheet_name=0)
         print(f"   📋 Excel tiene {len(df)} filas")
         
-        # Obtener TODOS los empleados de BD ordenados por ID
-        empleados_bd = db.query(Employee).order_by(Employee.id).all()
-        print(f"   📋 BD tiene {len(empleados_bd)} empleados totales")
+        # Obtener TODOS los empleados activos de BD indexados por cédula
+        empleados_bd = db.query(Employee).filter(Employee.activo == True).all()
+        empleados_por_cedula = {e.cedula: e for e in empleados_bd}
+        print(f"   📋 BD tiene {len(empleados_por_cedula)} empleados activos")
         
-        # Crear lista de empleados activos en BD
-        empleados_activos = [e for e in empleados_bd if e.activo]
-        print(f"   📋 BD tiene {len(empleados_activos)} empleados activos")
+        nuevos = actualizados = reactivados = 0
+        cedulas_en_excel = set()  # Para detectar empleados retirados
         
-        nuevos = actualizados = eliminados = 0
-        
-        # ✅ SINCRONIZACIÓN POSICIÓN POR POSICIÓN
+        # ✅ SINCRONIZACIÓN POR CÉDULA
         for idx, row in df.iterrows():
             try:
                 if pd.isna(row.get("cedula")) or pd.isna(row.get("nombre")):
@@ -409,6 +545,8 @@ def sincronizar_excel_completo():
                 
                 # Datos del Excel
                 cedula = str(int(row["cedula"]))
+                cedulas_en_excel.add(cedula)
+                
                 nombre = row["nombre"]
                 correo = row.get("correo", "")
                 telefono = str(row.get("telefono", "")) if pd.notna(row.get("telefono")) else None
@@ -431,7 +569,6 @@ def sincronizar_excel_completo():
                     except Exception:
                         fecha_ingreso = None
                 tipo_contrato = row.get("tipo_contrato", None) if pd.notna(row.get("tipo_contrato", None)) else None
-                # dias_kactus eliminado: ya no se usa en empleados
                 ciudad = row.get("ciudad", None) if pd.notna(row.get("ciudad", None)) else None
                 
                 # Buscar o crear empresa (strip para evitar duplicados)
@@ -442,16 +579,20 @@ def sincronizar_excel_completo():
                     db.commit()
                     db.refresh(company)
                 
-                # ✅ LÓGICA CLAVE: Buscar empleado en la MISMA POSICIÓN
-                empleado = None
+                # ✅ LÓGICA CLAVE: Buscar empleado POR CÉDULA (no por posición)
+                empleado = empleados_por_cedula.get(cedula)
                 
-                # Si ya existe un empleado en esta posición (índice)
-                if idx < len(empleados_activos):
-                    empleado = empleados_activos[idx]
+                # También buscar inactivos por si fue retirado antes y volvió
+                if not empleado:
+                    empleado = db.query(Employee).filter(
+                        Employee.cedula == cedula, Employee.activo == False
+                    ).first()
+                    if empleado:
+                        reactivados += 1
+                        print(f"   🔄 Reactivando empleado {cedula} ({nombre})")
                 
                 if empleado:
-                    # ✅ ACTUALIZAR el empleado existente en esta posición
-                    empleado.cedula = cedula
+                    # ✅ ACTUALIZAR datos del empleado (ediciones en Excel se reflejan en BD)
                     empleado.nombre = nombre
                     empleado.correo = correo
                     empleado.telefono = telefono
@@ -465,14 +606,13 @@ def sincronizar_excel_completo():
                     empleado.centro_costo = centro_costo
                     empleado.fecha_ingreso = fecha_ingreso
                     empleado.tipo_contrato = tipo_contrato
-                    # empleado.dias_kactus eliminado
                     empleado.ciudad = ciudad
                     empleado.activo = True
                     empleado.updated_at = datetime.now()
                     db.commit()
                     actualizados += 1
                 else:
-                    # ✅ CREAR nuevo empleado (si Excel tiene más filas que BD)
+                    # ✅ CREAR nuevo empleado (cédula no existe en BD)
                     nuevo_empleado = Employee(
                         cedula=cedula,
                         nombre=nombre,
@@ -488,7 +628,6 @@ def sincronizar_excel_completo():
                         centro_costo=centro_costo,
                         fecha_ingreso=fecha_ingreso,
                         tipo_contrato=tipo_contrato,
-                        # dias_kactus eliminado,
                         ciudad=ciudad,
                         activo=True
                     )
@@ -500,25 +639,29 @@ def sincronizar_excel_completo():
                 print(f"   ❌ Error en fila {idx + 2}: {e}")
                 db.rollback()
         
-        # ✅ ELIMINAR empleados sobrantes (si BD tiene más que Excel)
-        total_filas_excel = len(df)
-        if len(empleados_activos) > total_filas_excel:
-            print(f"   🗑️ BD tiene {len(empleados_activos) - total_filas_excel} empleados de más, eliminando...")
-            for i in range(total_filas_excel, len(empleados_activos)):
-                empleado_sobra = empleados_activos[i]
-                empleado_sobra.activo = False
-                empleado_sobra.updated_at = datetime.now()
+        # ✅ MARCAR COMO RETIRADOS los empleados que ya no están en el Excel
+        # Si la persona es recontratada y su cédula vuelve a aparecer en el Excel,
+        # el sistema la detecta arriba y la reactiva automáticamente.
+        retirados = 0
+        for cedula_bd, empleado_bd in empleados_por_cedula.items():
+            if cedula_bd not in cedulas_en_excel:
+                empleado_bd.activo = False
+                empleado_bd.updated_at = datetime.now()
                 db.commit()
-                eliminados += 1
+                retirados += 1
+                print(f"   🚪 Retirado: {empleado_bd.cedula} ({empleado_bd.nombre}) — ya no está en Excel")
         
         # RESUMEN
+        total_activos = db.query(Employee).filter(Employee.activo == True).count()
         print(f"\n{'='*60}")
-        print(f"✅ SYNC COMPLETADO")
+        print(f"✅ SYNC COMPLETADO (por cédula)")
         print(f"   • Emails empresas: Gestionados desde Directorio (admin portal)")
         print(f"   • Empleados nuevos: {nuevos}")
         print(f"   • Empleados actualizados: {actualizados}")
-        print(f"   • Empleados eliminados: {eliminados}")
-        print(f"   • Total activos en BD: {total_filas_excel}")
+        print(f"   • Empleados reactivados: {reactivados}")
+        print(f"   • Empleados retirados: {retirados}")
+        print(f"   • Total activos en BD: {total_activos}")
+        print(f"   • Total cédulas en Excel: {len(cedulas_en_excel)}")
         print(f"{'='*60}\n")
         
         # ========== PASO 3: SYNC CASES_KACTUS (Hoja 2) — IMPORTAR CASOS (INCLUYE HISTÓRICOS) ==========
@@ -547,7 +690,8 @@ def sincronizar_excel_completo():
                 cases_creados = 0
                 cases_actualizados = 0
                 cases_historicos = 0
-                filas_procesadas = []  # Para marcar como procesadas (no históricos)
+                filas_procesadas = []  # Filas procesadas OK → se eliminarán del Excel
+                filas_error = []  # Filas con error → se marcarán con "ERROR: ..." en Excel
                 filas_ya_procesadas = 0  # Contador de filas que ya estaban procesadas
                 
                 from sqlalchemy import and_, func, or_
@@ -764,33 +908,42 @@ def sincronizar_excel_completo():
                                 cases_creados += 1
                                 print(f"   ✅ CREADO: CC {cedula_case} | {serial} | {dias or '?'}d")
                         
-                        # Marcar TODAS las filas como procesadas (incluye históricos)
-                        # Así el usuario sabe que ya se guardó en BD y puede eliminar la fila
+                        # Marcar fila como procesada OK → se eliminará del Excel
                         filas_procesadas.append(idx + 2)  # +2 porque Excel es 1-indexed + header
                         
                     except Exception as e:
                         print(f"   ❌ Error fila {idx+2}: {e}")
+                        filas_error.append((idx + 2, str(e)))  # Guardar fila + error para marcar en Excel
                         db.rollback()
                 
                 print(f"\n   📊 Resumen Cases_Kactus:")
                 print(f"      • Casos CREADOS (nuevos): {cases_creados}")
                 print(f"      • Casos HISTÓRICOS importados: {cases_historicos}")
                 print(f"      • Casos actualizados: {cases_actualizados}")
-                print(f"      • Filas nuevas procesadas: {len(filas_procesadas)}")
+                print(f"      • Filas procesadas OK (se eliminarán del Excel): {len(filas_procesadas)}")
+                print(f"      • Filas con ERROR (se marcarán en Excel): {len(filas_error)}")
                 print(f"      • Filas ya procesadas (omitidas): {filas_ya_procesadas}")
                 
-                # ═══ MARCAR FILAS COMO PROCESADAS (con fecha) ═══
+                # ═══ PASO 3a: MARCAR FILAS CON ERROR en Excel ═══
+                if filas_error:
+                    try:
+                        _marcar_filas_error_kactus(filas_error)
+                    except Exception as e:
+                        print(f"   ⚠️ Error marcando filas con error: {e}")
+                
+                # ═══ PASO 3b: ELIMINAR FILAS PROCESADAS del Excel ═══
+                # Las filas que se procesaron OK se eliminan inmediatamente del Excel
+                # para que no se vuelvan a sincronizar. Esto mantiene el Excel limpio.
                 if filas_procesadas:
                     try:
-                        _marcar_filas_procesadas_kactus(filas_procesadas)
+                        _eliminar_filas_procesadas_kactus(filas_procesadas)
                     except Exception as e:
-                        print(f"   ⚠️ Error marcando filas procesadas: {e}")
-                
-                # ═══ LIMPIAR FILAS ANTIGUAS (> 15 días) ═══
-                try:
-                    _limpiar_filas_antiguas_kactus()
-                except Exception as e:
-                    print(f"   ⚠️ Error limpiando filas antiguas: {e}")
+                        # Si falla la eliminación, marcar como procesadas (fallback)
+                        print(f"   ⚠️ No se pudieron eliminar filas, marcando como procesadas: {e}")
+                        try:
+                            _marcar_filas_procesadas_kactus(filas_procesadas)
+                        except Exception as e2:
+                            print(f"   ⚠️ Tampoco se pudieron marcar: {e2}")
                 
             else:
                 print(f"   ℹ️ Hoja Cases_Kactus vacía o sin datos")
