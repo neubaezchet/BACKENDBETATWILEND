@@ -791,8 +791,8 @@ async def powerbi_analisis_persona(
         gaps = analisis.get("huecos_detectados", [])
         
         total_dias = sum(c.dias_incapacidad or 0 for c in casos)
-        total_gaps = sum(g["dias"] for g in gaps)
-        gaps_criticos = [g for g in gaps if g.get("corta_prorroga", False)]
+        total_gaps = sum(g.get("dias_hueco", g.get("dias", 0)) for g in gaps)
+        gaps_criticos = gaps  # Todos los huecos son críticos (prórrogas cortadas con correlación CIE-10)
         
         return {
             "ok": True,
