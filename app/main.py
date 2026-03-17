@@ -1852,6 +1852,39 @@ async def cambiar_tipo_incapacidad(
         "documentos_requeridos": docs_requeridos,
         "email_enviado": empleado_email is not None
     }
+
+
+# =====================
+# ENDPOINT: Ver cola de pendientes
+# =====================
+from app.database import PendienteEnvio, SessionLocal
+
+@app.get("/pendientes-envio")
+async def ver_pendientes_envio(tipo: str = None):
+    """
+    Devuelve la lista de pendientes de envío (Drive/n8n).
+    - tipo: 'drive', 'n8n' o None para todos
+    """
+    db = SessionLocal()
+    query = db.query(PendienteEnvio)
+    if tipo:
+        query = query.filter_by(tipo=tipo)
+    pendientes = query.order_by(PendienteEnvio.creado_en.desc()).all()
+    db.close()
+    from fastapi.responses import JSONResponse
+    return JSONResponse([
+        {
+            "id": p.id,
+            "tipo": p.tipo,
+            "payload": p.payload,
+            "intentos": p.intentos,
+            "ultimo_error": p.ultimo_error,
+            "creado_en": p.creado_en.isoformat() if p.creado_en else None,
+            "procesado": p.procesado
+        } for p in pendientes
+    ])
+
+
 # ==================== INICIO DEL SERVIDOR ====================
 
 if __name__ == "__main__":
