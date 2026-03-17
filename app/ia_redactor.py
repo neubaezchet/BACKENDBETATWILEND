@@ -135,34 +135,43 @@ Por favor, realizar validación directa con la colaboradora para verificar la au
 Este proceso debe manejarse con confidencialidad."""
 
 
-def redactar_recordatorio_7dias(nombre: str, serial: str, estado: str) -> str:
-    """Recordatorio después de 7 días - PLANTILLA ESTÁTICA"""
-    return f"""Hace **7 días** le notificamos que su incapacidad (**serial {serial}**) se encuentra **{estado}** y requiere correcciones.
+def redactar_recordatorio_7dias(nombre: str, serial: str, estado: str, dias_sin_respuesta: int = 3, checks_seleccionados=None) -> str:
+    """Recordatorio automático de incapacidad pendiente — usa días reales y muestra los motivos de rechazo."""
+    from app.checks_disponibles import CHECKS_DISPONIBLES
 
-**Aún no hemos recibido los documentos actualizados.**
+    dias_texto = f"**{dias_sin_respuesta} días**" if dias_sin_respuesta else "varios días"
 
-Es importante que complete este proceso lo antes posible para continuar con el trámite de su incapacidad.
+    motivos_html = ""
+    if checks_seleccionados:
+        motivos = [CHECKS_DISPONIBLES[c]['descripcion'] for c in checks_seleccionados if c in CHECKS_DISPONIBLES]
+        if motivos:
+            motivos_html = "\n\n**Motivo del rechazo:**\n" + "\n".join([f"• {m}" for m in motivos])
+
+    return f"""Hace {dias_texto} le notificamos que su incapacidad se encuentra en estado **{estado.replace('_', ' ')}** y requiere correcciones.{motivos_html}
+
+**Aún no hemos recibido los documentos actualizados.** Es importante completar este proceso lo antes posible para continuar con el trámite.
 
 Comuníquese si tiene alguna duda."""
 
 
-def redactar_alerta_jefe_7dias(jefe_nombre: str, empleado_nombre: str, serial: str, empresa: str, fecha_inicio: str = "", fecha_fin: str = "", motivo: str = "") -> str:
-    """Alerta para el jefe después de 7 días - PLANTILLA ESTÁTICA"""
+def redactar_alerta_jefe_7dias(jefe_nombre: str, empleado_nombre: str, serial: str, empresa: str, fecha_inicio: str = "", fecha_fin: str = "", motivo: str = "", dias_sin_respuesta: int = 5) -> str:
+    """Alerta para el jefe — indica días reales transcurridos y el motivo del rechazo."""
     fechas = ""
-    if fecha_inicio or fecha_fin:
-        fechas = f"\n- Fecha inicio: {fecha_inicio}\n- Fecha fin: {fecha_fin}"
-    
-    motivo_texto = f"\n- Motivo pendiente: {motivo}" if motivo else ""
-    
-    return f"""El colaborador **{empleado_nombre}** cuenta con incapacidades pendientes.
+    if fecha_inicio and fecha_fin:
+        fechas = f" del **{fecha_inicio}** al **{fecha_fin}**"
+    elif fecha_inicio:
+        fechas = f" desde **{fecha_inicio}**"
 
-**Datos:**
-- Serial: {serial}
-- Empresa: {empresa}{fechas}{motivo_texto}
+    motivo_texto = f"\n\n**Motivo del rechazo:**\n• {motivo}" if motivo else ""
 
-Hace 7 días se solicitó completar/corregir documentación, pero no hemos recibido respuesta.
+    return f"""El colaborador **{empleado_nombre}** tiene una incapacidad{fechas} con documentación pendiente hace **{dias_sin_respuesta} días**.
 
-Agradeceríamos su apoyo para recordarle la importancia de completar este proceso."""
+**Empresa:** {empresa}  
+**Serial:** {serial}{motivo_texto}
+
+Hace {dias_sin_respuesta} días se solicitó completar/corregir la documentación, pero no hemos recibido respuesta. Agradeceríamos su apoyo para recordarle la importancia de completar este proceso.
+
+El documento adjunto contiene los soportes actuales del caso."""
 
 
 def redactar_mensaje_personalizado(nombre: str, serial: str, mensaje_libre: str) -> str:
