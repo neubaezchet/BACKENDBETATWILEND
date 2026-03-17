@@ -3261,7 +3261,8 @@ async def validar_caso_con_checks(
                     tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
                     telefono=caso.telefono_form,
                     email=caso.email_form,
-                    link_drive=caso.drive_link
+                    link_drive=caso.drive_link,
+                    checks_seleccionados=checks,
                 )
                 
                 fechas_str = f" ({caso.fecha_inicio.strftime('%d/%m/%Y')} al {caso.fecha_fin.strftime('%d/%m/%Y')})" if caso.fecha_inicio and caso.fecha_fin else ""
