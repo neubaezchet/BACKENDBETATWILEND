@@ -813,25 +813,44 @@ def sincronizar_excel_completo():
                         
                         if caso:
                             # ═══ CASO YA EXISTE EN BD ═══
-                            # Si ya está procesado y no cambió nada relevante, solo marcar fila en Excel
-                            if caso.procesado and caso.es_historico == es_historico:
-                                filas_ya_procesadas += 1
-                                filas_procesadas.append(idx + 2)  # Asegurar que se marque en Excel
-                                continue
+                            # Detectar si hay datos discordantes entre Kactus y BD
+                            tiene_traslap = getattr(caso, 'dias_traslapo', 0) or 0
+                            datos_cambiaron = False
                             
-                            # Actualizar datos que puedan haber cambiado
-                            if num_incap:
+                            # Actualizar datos de identificación siempre que vengan de Kactus
+                            if num_incap and caso.numero_incapacidad != num_incap:
                                 caso.numero_incapacidad = num_incap
-                            if codigo_cie:
+                                datos_cambiaron = True
+                            if codigo_cie and caso.codigo_cie10 != codigo_cie:
                                 caso.codigo_cie10 = codigo_cie
-                            if diagnostico:
+                                datos_cambiaron = True
+                            if diagnostico and caso.diagnostico != diagnostico:
                                 caso.diagnostico = diagnostico
+                                datos_cambiaron = True
+                            
+                            # fecha_fin: Kactus es la fuente de verdad (reemplaza si discordante)
                             if fecha_fin:
                                 caso.fecha_fin_kactus = fecha_fin
-                                if not caso.fecha_fin:  # Si no tenía fecha_fin, asignarla
+                                if caso.fecha_fin != fecha_fin.date() if hasattr(fecha_fin, 'date') else fecha_fin:
                                     caso.fecha_fin = fecha_fin
-                            if dias and not caso.dias_incapacidad:
-                                caso.dias_incapacidad = dias
+                                    datos_cambiaron = True
+                                    if not tiene_traslap:
+                                        print(f"   📅 Kactus override fecha_fin: {caso.fecha_fin} → {fecha_fin.strftime('%d/%m/%Y')}")
+                            
+                            # dias_incapacidad: Kactus reemplaza si hay discordancia
+                            # EXCEPCIÓN: si el caso tiene traslape detectado, respetar el sistema de traslapes
+                            if dias:
+                                if not tiene_traslap:
+                                    if caso.dias_incapacidad != dias:
+                                        print(f"   📊 Kactus override dias: {caso.dias_incapacidad} → {dias}")
+                                        caso.dias_incapacidad = dias
+                                        datos_cambiaron = True
+                                elif not caso.dias_incapacidad:
+                                    # Solo llenar si estaba vacío (no sobreescribir ajuste de traslape)
+                                    caso.dias_incapacidad = dias
+                                    datos_cambiaron = True
+                            
+                            # Siempre actualizar referencia Kactus
                             caso.fecha_inicio_kactus = fecha_inicio
                             caso.es_historico = es_historico
                             caso.procesado = True
@@ -841,7 +860,10 @@ def sincronizar_excel_completo():
                             caso.updated_at = datetime.now()
                             db.commit()
                             cases_actualizados += 1
-                            print(f"   🔄 Actualizado: CC {cedula_case} | {fecha_inicio.strftime('%d/%m/%Y')}")
+                            if datos_cambiaron:
+                                print(f"   🔄 Actualizado (Kactus override): CC {cedula_case} | {fecha_inicio.strftime('%d/%m/%Y')}")
+                            else:
+                                filas_ya_procesadas += 1
                         else:
                             # ═══ CREAR CASO NUEVO ═══
                             # Buscar empleado para obtener company_id y nombre
