@@ -276,7 +276,24 @@ class NotificationQueue:
                 notif.ultimo_error = "enviar_a_n8n retornó False"
                 
                 if notif.intentos >= notif.max_intentos:
-                    # Descartar después de max intentos
+                    # ✅ GUARDAR EN COLA PERSISTENTE (BD) en vez de descartar
+                    try:
+                        from app.resilient_queue import guardar_pendiente_n8n
+                        guardar_pendiente_n8n({
+                            'tipo_notificacion': notif.tipo,
+                            'email': notif.email,
+                            'serial': notif.serial,
+                            'subject': notif.subject,
+                            'html_content': notif.html_content,
+                            'cc_email': notif.cc_email,
+                            'correo_bd': notif.correo_bd,
+                            'whatsapp': notif.whatsapp,
+                            'whatsapp_message': notif.whatsapp_message,
+                            'drive_link': notif.drive_link,
+                        }, error=notif.ultimo_error)
+                    except Exception as save_err:
+                        print(f"❌ [{serial}] No se pudo guardar en cola BD: {save_err}")
+                    
                     with self._lock:
                         if serial in self._colas and len(self._colas[serial]) > 0:
                             self._colas[serial].popleft()
@@ -288,13 +305,13 @@ class NotificationQueue:
                         "serial": serial,
                         "tipo": notif.tipo,
                         "email": notif.email,
-                        "estado": "fallida",
+                        "estado": "guardada_en_cola_bd",
                         "intentos": notif.intentos,
                         "error": notif.ultimo_error,
                         "timestamp": datetime.now().isoformat()
                     })
                     
-                    print(f"❌ [{serial}] Notificación {notif.tipo} FALLIDA después de {notif.intentos} intentos")
+                    print(f"💾 [{serial}] Notificación {notif.tipo} guardada en COLA BD después de {notif.intentos} intentos")
                 else:
                     # Esperar antes de reintentar
                     espera = 5 * notif.intentos  # 5s, 10s, 15s
@@ -308,6 +325,24 @@ class NotificationQueue:
             traceback.print_exc()
             
             if notif.intentos >= notif.max_intentos:
+                # ✅ GUARDAR EN COLA PERSISTENTE (BD) en vez de perder
+                try:
+                    from app.resilient_queue import guardar_pendiente_n8n
+                    guardar_pendiente_n8n({
+                        'tipo_notificacion': notif.tipo,
+                        'email': notif.email,
+                        'serial': notif.serial,
+                        'subject': notif.subject,
+                        'html_content': notif.html_content,
+                        'cc_email': notif.cc_email,
+                        'correo_bd': notif.correo_bd,
+                        'whatsapp': notif.whatsapp,
+                        'whatsapp_message': notif.whatsapp_message,
+                        'drive_link': notif.drive_link,
+                    }, error=str(e))
+                except Exception as save_err:
+                    print(f"❌ [{serial}] No se pudo guardar en cola BD: {save_err}")
+                
                 with self._lock:
                     if serial in self._colas and len(self._colas[serial]) > 0:
                         self._colas[serial].popleft()
@@ -319,7 +354,7 @@ class NotificationQueue:
                     "serial": serial,
                     "tipo": notif.tipo,
                     "email": notif.email,
-                    "estado": "error",
+                    "estado": "guardada_en_cola_bd",
                     "intentos": notif.intentos,
                     "error": str(e),
                     "timestamp": datetime.now().isoformat()

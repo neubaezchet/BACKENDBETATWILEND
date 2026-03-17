@@ -524,6 +524,25 @@ def upload_to_drive(
     except Exception as e:
         error_msg = f"Error subiendo archivo a Drive: {str(e)}"
         print(f"❌ {error_msg}")
+        
+        # ✅ GUARDAR EN COLA PERSISTENTE para reintentar después
+        try:
+            from app.resilient_queue import guardar_pendiente_drive
+            guardar_pendiente_drive({
+                'file_path': str(file_path),
+                'empresa': empresa,
+                'cedula': cedula,
+                'tipo': tipo,
+                'serial': consecutivo,
+                'fecha_inicio': str(fecha_inicio) if fecha_inicio else None,
+                'fecha_fin': str(fecha_fin) if fecha_fin else None,
+                'tiene_soat': tiene_soat,
+                'tiene_licencia': tiene_licencia,
+                'subtipo': subtipo,
+            }, error=error_msg)
+        except Exception as queue_err:
+            print(f"❌ No se pudo guardar en cola BD: {queue_err}")
+        
         raise Exception(error_msg)
 
 def get_folder_link(empresa: str) -> str:
@@ -679,6 +698,21 @@ def upload_certificado_o_prelicencia(
         
     except Exception as e:
         print(f"❌ Error subiendo a Drive: {e}")
+        
+        # ✅ GUARDAR EN COLA PERSISTENTE para reintentar después
+        try:
+            from app.resilient_queue import guardar_pendiente_drive
+            guardar_pendiente_drive({
+                'file_path': str(file_path),
+                'empresa': empresa,
+                'cedula': cedula,
+                'tipo': tipo,
+                'serial': serial,
+                'fecha_inicio': str(fecha_inicio) if fecha_inicio else None,
+            }, error=str(e))
+        except Exception as queue_err:
+            print(f"❌ No se pudo guardar en cola BD: {queue_err}")
+        
         raise
 
 

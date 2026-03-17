@@ -1,39 +1,11 @@
-# =====================
-# ENDPOINT: Ver cola de pendientes
-# =====================
-from app.database import PendienteEnvio, SessionLocal
-from fastapi.responses import JSONResponse
 
-@router.get("/pendientes-envio")
-async def ver_pendientes_envio(tipo: str = None):
-    """
-    Devuelve la lista de pendientes de envío (Drive/n8n).
-    - tipo: 'drive', 'n8n' o None para todos
-    """
-    db = SessionLocal()
-    query = db.query(PendienteEnvio)
-    if tipo:
-        query = query.filter_by(tipo=tipo)
-    pendientes = query.order_by(PendienteEnvio.creado_en.desc()).all()
-    db.close()
-    return JSONResponse([
-        {
-            "id": p.id,
-            "tipo": p.tipo,
-            "payload": p.payload,
-            "intentos": p.intentos,
-            "ultimo_error": p.ultimo_error,
-            "creado_en": p.creado_en.isoformat(),
-            "procesado": p.procesado
-        } for p in pendientes
-    ])
 """
 RUTAS DE REPORTES
 Endpoints principales para tabla viva y exportaciones
 """
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case as sql_case, distinct
 import io
@@ -475,7 +447,7 @@ async def get_dashboard_completo(
                 "codigo_cie10": c.codigo_cie10 if c.codigo_cie10 else ("En Proceso" if not subido_kactus else None),
                 "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else ("En Proceso" if not subido_kactus else None),
                 "cie10_grupo": cie10_info.get("grupo") if cie10_info else None,
-                "dias_incapacidad": c.dias_incapacidad,
+                "dias_incapacidad": c.dias_incapacidad if not (c.fecha_inicio_kactus and c.fecha_fin_kactus) else ((c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1),
                 "dias_validacion": dias_validacion,
                 "es_prorroga": prorroga_auto.get("es_prorroga", c.es_prorroga),
                 "es_prorroga_db": c.es_prorroga,
@@ -483,8 +455,8 @@ async def get_dashboard_completo(
                 "prorroga_explicacion": prorroga_auto.get("explicacion"),
                 "prorroga_caso_original": prorroga_auto.get("caso_original_serial"),
                 "numero_incapacidad": c.numero_incapacidad if c.numero_incapacidad else ("En Proceso" if not subido_kactus else None),
-                "fecha_inicio": c.fecha_inicio.isoformat() if c.fecha_inicio else None,
-                "fecha_fin": c.fecha_fin.isoformat() if c.fecha_fin else None,
+                "fecha_inicio": (c.fecha_inicio_kactus or c.fecha_inicio).isoformat() if (c.fecha_inicio_kactus or c.fecha_inicio) else None,
+                "fecha_fin": (c.fecha_fin_kactus or c.fecha_fin).isoformat() if (c.fecha_fin_kactus or c.fecha_fin) else None,
                 "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
                 "dias_en_portal": dias_en_portal,
                 "observacion": ultimo_motivo,
@@ -554,10 +526,15 @@ async def get_dashboard_completo(
             # Días Kactus = dias de fechas kactus si las tiene, sino dias_incapacidad
             total_dias_kactus = 0
             for c in casos_persona:
+                dias_caso_kactus = 0
                 if c.fecha_inicio_kactus and c.fecha_fin_kactus:
-                    total_dias_kactus += (c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1
+                    dias_caso_kactus = (c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1
                 else:
-                    total_dias_kactus += c.dias_incapacidad or 0
+                    dias_caso_kactus = c.dias_incapacidad or 0
+                
+                # Respetar el mecanismo de traslapeo de la base de datos
+                dias_caso_kactus -= (c.dias_traslapo or 0)
+                total_dias_kactus += max(0, dias_caso_kactus)
             diagnosticos = list(set(c.diagnostico for c in casos_persona if c.diagnostico))
             codigos_cie10 = list(set(c.codigo_cie10 for c in casos_persona if c.codigo_cie10))
             prorrogas = sum(1 for c in casos_persona if c.es_prorroga)
@@ -1213,3 +1190,33 @@ async def validar_ruptura_prorroga(
     except Exception as e:
         logger.error(f"Error validando ruptura prórroga: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================
+# ENDPOINT: Ver cola de pendientes
+# =====================
+from app.database import PendienteEnvio, SessionLocal
+
+@router.get("/pendientes-envio")
+async def ver_pendientes_envio(tipo: str = None):
+    """
+    Devuelve la lista de pendientes de envío (Drive/n8n).
+    - tipo: 'drive', 'n8n' o None para todos
+    """
+    db = SessionLocal()
+    query = db.query(PendienteEnvio)
+    if tipo:
+        query = query.filter_by(tipo=tipo)
+    pendientes = query.order_by(PendienteEnvio.creado_en.desc()).all()
+    db.close()
+    return JSONResponse([
+        {
+            "id": p.id,
+            "tipo": p.tipo,
+            "payload": p.payload,
+            "intentos": p.intentos,
+            "ultimo_error": p.ultimo_error,
+            "creado_en": p.creado_en.isoformat(),
+            "procesado": p.procesado
+        } for p in pendientes
+    ])

@@ -1,11 +1,13 @@
-# =====================
-# MODELO: PendienteEnvio
-# =====================
-from sqlalchemy.dialects.postgresql import JSONB
+"""
+Sistema de Base de Datos - IncaNeurobaeza
+Modelos SQLAlchemy para gestión de casos de incapacidades
+VERSIÓN 3.0 - Con soporte para jefes y recordatorios
+"""
+
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-
 from datetime import datetime
 import os
 import enum
@@ -17,33 +19,6 @@ Base = declarative_base()
 def get_utc_now():
     """Retorna datetime actual en UTC - compatible con Python 3.12+"""
     return datetime.now()
-
-class PendienteEnvio(Base):
-    __tablename__ = "pendientes_envio"
-    id = Column(Integer, primary_key=True)
-    tipo = Column(String(20), nullable=False)  # 'drive' o 'n8n'
-    payload = Column(JSONB, nullable=False)    # Info del archivo/correo pendiente
-    intentos = Column(Integer, default=0)
-    ultimo_error = Column(String(500), nullable=True)
-    creado_en = Column(DateTime, default=get_utc_now)
-    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
-    procesado = Column(Boolean, default=False)
-
-"""
-Sistema de Base de Datos - IncaNeurobaeza
-Modelos SQLAlchemy para gestión de casos de incapacidades
-VERSIÓN 3.0 - Con soporte para jefes y recordatorios
-"""
-
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime
-import os
-import enum
-
-# Base para modelos
-Base = declarative_base()
 
 
 # Enums para estados
@@ -375,6 +350,24 @@ class Alerta180Log(Base):
     
     enviado_ok = Column(Boolean, default=False)
     created_at = Column(DateTime, default=get_utc_now, index=True)
+
+
+class PendienteEnvio(Base):
+    """
+    Cola persistente de envíos fallidos (N8N y Drive).
+    Cuando N8N no tiene sesión o Drive falla el token,
+    los envíos se guardan aquí para reintentar automáticamente.
+    """
+    __tablename__ = "pendientes_envio"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tipo = Column(String(20), nullable=False)    # 'drive' o 'n8n'
+    payload = Column(JSONB, nullable=False)       # Info del archivo/correo pendiente
+    intentos = Column(Integer, default=0)
+    ultimo_error = Column(String(500), nullable=True)
+    creado_en = Column(DateTime, default=get_utc_now)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    procesado = Column(Boolean, default=False)
 
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
 

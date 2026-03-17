@@ -972,6 +972,67 @@ async def historial_notificaciones(
     }
 
 
+# ==================== COLA RESILIENTE (BD) ENDPOINTS ====================
+
+@router.get("/cola-resiliente/estado")
+async def estado_cola_resiliente(
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Retorna el estado de la cola resiliente (pendientes en BD).
+    Muestra pendientes de N8N y Drive, fallidos, stats del worker.
+    """
+    try:
+        from app.resilient_queue import resilient_queue
+        return resilient_queue.obtener_estado()
+    except Exception as e:
+        return {"error": str(e), "worker_activo": False}
+
+
+@router.post("/cola-resiliente/forzar")
+async def forzar_cola_resiliente(
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Fuerza el procesamiento inmediato de la cola resiliente.
+    Útil cuando sabes que N8N ya tiene sesión activa o el token de Drive fue renovado.
+    """
+    try:
+        from app.resilient_queue import resilient_queue
+        resultado = resilient_queue.forzar_procesamiento()
+        return resultado
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@router.post("/cola-resiliente/{pendiente_id}/reintentar")
+async def reintentar_pendiente(
+    pendiente_id: int,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Reintenta un pendiente específico por su ID.
+    Resetea el contador de intentos para darle otra oportunidad.
+    """
+    from app.database import PendienteEnvio
+    
+    pendiente = db.query(PendienteEnvio).filter(PendienteEnvio.id == pendiente_id).first()
+    if not pendiente:
+        raise HTTPException(status_code=404, detail=f"Pendiente #{pendiente_id} no encontrado")
+    
+    pendiente.procesado = False
+    pendiente.intentos = 0
+    pendiente.ultimo_error = None
+    db.commit()
+    
+    return {
+        "ok": True,
+        "mensaje": f"Pendiente #{pendiente_id} marcado para reintento",
+        "tipo": pendiente.tipo
+    }
+
+
 @router.post("/casos/{serial}/marcar-procesado")
 async def marcar_caso_procesado(
     serial: str,
