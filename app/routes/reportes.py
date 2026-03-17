@@ -787,9 +787,12 @@ async def powerbi_analisis_persona(
                 "centro_costo": "", "ciudad": "", "fecha_ingreso": "", "tipo_contrato": "",
             }
         
+        # Obtener gaps/huecos del análisis de prórrogas
+        gaps = analisis.get("huecos_detectados", [])
+        
         total_dias = sum(c.dias_incapacidad or 0 for c in casos)
         total_gaps = sum(g["dias"] for g in gaps)
-        gaps_criticos = [g for g in gaps if g["corta_prorroga"]]
+        gaps_criticos = [g for g in gaps if g.get("corta_prorroga", False)]
         
         return {
             "ok": True,
