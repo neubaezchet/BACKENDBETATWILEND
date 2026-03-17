@@ -607,9 +607,9 @@ def generar_mensaje_segun_tipo(tipo_email, checks, tipo_incapacidad, serial, qui
     elif tipo_email == 'tthh':
         return _bloque_mensaje(
             "#FDE8E8", "#DC2626",
-            "&#9888; Revision por Presunto Fraude",
+            "&#9888; Incapacidad con Presunto Fraude — Requiere Validación",
             "La siguiente incapacidad presenta inconsistencias que requieren "
-            "<strong>validacion adicional</strong> con la colaboradora."
+            "<strong>validación adicional</strong> con la colaboradora y/o la EPS."
         )
 
     elif tipo_email == 'falsa':
@@ -636,10 +636,10 @@ def generar_mensaje_segun_tipo(tipo_email, checks, tipo_incapacidad, serial, qui
         fecha_texto = f" {fechas}" if fechas else ""
         return _bloque_mensaje(
             "#F5F3FF", "#7C3AED",
-            "&#128269; Solicitud de Validacion con EPS",
+            "&#128269; Solicitud de Validación con EPS — Posible Fraude",
             f"Se solicita validar con la EPS la siguiente incapacidad{fecha_texto}. "
-            "Adjunto encontrara los soportes del caso y la informacion del colaborador/a. "
-            "Por favor confirmar la autenticidad de esta incapacidad."
+            "Los soportes del caso están adjuntos. "
+            "Por favor confirmar la autenticidad de esta incapacidad con la EPS correspondiente."
         )
 
     elif tipo_email == 'recordatorio':
@@ -836,9 +836,22 @@ def get_email_template_universal_con_ia(
     else:
         body += generar_mensaje_segun_tipo(tipo_email, checks_seleccionados, tipo_incapacidad, serial, quinzena, archivos_nombres)
 
-    # DETALLES (TTHH y ENVIAR_VALIDAR)
+    # DETALLES (TTHH y ENVIAR_VALIDAR) + CHECKS
     if tipo_email in ('tthh', 'enviar_validar'):
         body += generar_detalles_caso(serial, nombre, empresa, tipo_incapacidad, telefono, email)
+        # Mostrar checks/motivos si hay
+        if checks_seleccionados:
+            from app.checks_disponibles import CHECKS_DISPONIBLES
+            motivos = [CHECKS_DISPONIBLES[c]['descripcion'] for c in checks_seleccionados if c in CHECKS_DISPONIBLES]
+            if motivos:
+                color_bg = '#FDE8E8' if tipo_email == 'tthh' else '#F5F3FF'
+                color_titulo = '#991B1B' if tipo_email == 'tthh' else '#5B21B6'
+                body += _bloque_lista(
+                    'Inconsistencias / Motivos detectados:',
+                    motivos,
+                    bgcolor=color_bg,
+                    color_titulo=color_titulo
+                )
 
     # CHECKLIST REQUISITOS
     if config['mostrar_requisitos']:
