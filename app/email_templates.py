@@ -866,6 +866,13 @@ def get_email_template_universal_con_ia(
             ("Empresa:", empresa),
             ("Contacto:", f"{telefono} - {email}"),
         ])
+        # Botón al Drive del caso
+        if link_drive:
+            body += _bloque_boton(
+                link_drive,
+                "&#128196; Ver Documentos del Caso en Drive",
+                "#2563EB"
+            )
 
     # BOTON REENVIO
     if config['mostrar_boton']:

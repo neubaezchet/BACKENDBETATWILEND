@@ -3255,7 +3255,7 @@ async def validar_caso_con_checks(
                 
                 email_validar = get_email_template_universal(
                     tipo_email='enviar_validar',
-                    nombre='Validador/a EPS',
+                    nombre=empleado.nombre if empleado else 'Colaborador/a',
                     serial=serial,
                     empresa=caso.empresa.nombre if caso.empresa else 'N/A',
                     tipo_incapacidad=caso.tipo.value if caso.tipo else 'General',
