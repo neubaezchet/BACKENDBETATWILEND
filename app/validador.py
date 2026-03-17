@@ -2842,7 +2842,6 @@ async def validar_caso_con_checks(
             asunto_completa = f"CC {caso.cedula} - {serial}{fechas_str_c} - Validada - {nombre_emp} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             
             if caso.email_form:
-                from app.n8n_notifier import enviar_a_n8n
                 enviar_a_n8n(
                     tipo_notificacion='completa',
                     email=caso.email_form,
