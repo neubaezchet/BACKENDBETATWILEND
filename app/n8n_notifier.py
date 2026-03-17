@@ -1,40 +1,3 @@
-# =====================
-# FUNCIONES: Cola de pendientes (n8n/Drive)
-# =====================
-from app.database import PendienteEnvio, SessionLocal
-def guardar_pendiente_envio(tipo, payload, error_msg=None):
-    db = SessionLocal()
-    pendiente = PendienteEnvio(
-        tipo=tipo,
-        payload=payload,
-        ultimo_error=error_msg
-    )
-    db.add(pendiente)
-    db.commit()
-    db.close()
-    print(f"🕒 Guardado en cola de pendientes: {tipo}")
-
-def reintentar_pendientes_envio(tipo, funcion_envio):
-    db = SessionLocal()
-    pendientes = db.query(PendienteEnvio).filter_by(tipo=tipo, procesado=False).all()
-    for p in pendientes:
-        try:
-            exito = funcion_envio(**p.payload)
-            if exito:
-                p.procesado = True
-                p.actualizado_en = get_utc_now()
-                db.commit()
-                print(f"✅ Pendiente enviado: {p.id}")
-            else:
-                p.intentos += 1
-                p.ultimo_error = "No enviado (funcion_envio devolvió False)"
-                db.commit()
-        except Exception as e:
-            p.intentos += 1
-            p.ultimo_error = str(e)
-            db.commit()
-            print(f"❌ Error reintentando pendiente {p.id}: {e}")
-    db.close()
 """
 Sistema de notificaciones vía n8n con manejo robusto de errores
 Versión mejorada con timeouts, reintentos y rate limiting avanzado
@@ -119,6 +82,34 @@ def enviar_a_n8n(
                 cc_list.append(ce)
                 print(f"   ✓ cc_email agregado a cc_list: {ce}")
     
+    # ✅ INYECCIÓN UNIVERSAL DEL DIRECTORIO DE EMPRESAS EN TODOS LOS CORREOS
+    try:
+        from app.database import SessionLocal, Case, CorreoNotificacion
+        db = SessionLocal()
+        
+        company_id = None
+        if serial and serial != 'AUTO':
+            caso = db.query(Case).filter(Case.serial == serial).first()
+            if caso:
+                company_id = caso.company_id
+                
+        # Buscar en directorio empresas (globales + especificas)
+        correos = db.query(CorreoNotificacion).filter(
+            CorreoNotificacion.area == 'empresas',
+            CorreoNotificacion.activo == True
+        ).all()
+        
+        for c in correos:
+            if c.company_id is None or (company_id is not None and c.company_id == company_id):
+                if c.email and c.email.strip():
+                    em = c.email.strip().lower()
+                    if em not in [x.lower() for x in cc_list] and em != email.lower().strip():
+                        cc_list.append(em)
+                        print(f"   ✓ [INYECCIÓN UNIVERSAL] cc_email agregado a cc_list: {em}")
+        db.close()
+    except Exception as e:
+        print(f"⚠️ Error en inyección universal de empresas: {e}")
+        
     print(f"   📧 cc_list final: {cc_list}")
     
     # ✅ PAYLOAD — cc_email COMBINADO (compatible con workflow viejo Y nuevo)

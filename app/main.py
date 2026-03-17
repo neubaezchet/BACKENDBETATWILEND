@@ -393,6 +393,14 @@ def startup_event():
     except Exception as e:
         print(f"⚠️ Error iniciando scheduler token: {e}")
     
+    try:
+        # ✅ NUEVO: Cola resiliente (BD) para N8N y Drive
+        from app.resilient_queue import resilient_queue
+        resilient_queue.iniciar()
+        print("✅ Cola resiliente (BD) activada — reintentos automáticos de N8N y Drive")
+    except Exception as e:
+        print(f"⚠️ Error iniciando cola resiliente: {e}")
+    
     # ⭐ Scheduler de alertas 180 días (diario a las 7am)
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
