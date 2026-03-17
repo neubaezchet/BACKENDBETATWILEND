@@ -156,10 +156,13 @@ def verificar_casos_pendientes():
                 # EMAIL AL EMPLEADO
                 if enviar_empleado and caso.email_form:
                     print(f"   • Generando recordatorio con IA (día {dias_sin_respuesta})...")
+                    checks_guardados_emp = caso.metadata_form.get('checks_seleccionados', []) if caso.metadata_form else []
                     contenido_ia = redactar_recordatorio_7dias(
                         empleado.nombre,
                         caso.serial,
-                        caso.estado.value
+                        caso.estado.value,
+                        dias_sin_respuesta=dias_sin_respuesta,
+                        checks_seleccionados=checks_guardados_emp
                     )
                     html_email = get_email_template_universal(
                         tipo_email='recordatorio',
@@ -170,6 +173,7 @@ def verificar_casos_pendientes():
                         telefono=caso.telefono_form,
                         email=caso.email_form,
                         link_drive=caso.drive_link,
+                        checks_seleccionados=checks_guardados_emp,
                         contenido_ia=contenido_ia
                     )
                     
@@ -220,11 +224,23 @@ def verificar_casos_pendientes():
                 # EMAIL AL JEFE (solo a los 5 días)
                 if enviar_jefe and empleado.jefe_email:
                     print(f"   • Generando alerta para jefe (5 días) {empleado.jefe_nombre}...")
+                    checks_jefe = caso.metadata_form.get('checks_seleccionados', []) if caso.metadata_form else []
+                    motivo_jefe = ""
+                    if checks_jefe:
+                        from app.checks_disponibles import CHECKS_DISPONIBLES
+                        motivos_list = [CHECKS_DISPONIBLES[c]['descripcion'] for c in checks_jefe if c in CHECKS_DISPONIBLES]
+                        motivo_jefe = "; ".join(motivos_list[:3]) if motivos_list else ""
+                    f_inicio = caso.fecha_inicio.strftime('%d/%m/%Y') if caso.fecha_inicio else ""
+                    f_fin = caso.fecha_fin.strftime('%d/%m/%Y') if caso.fecha_fin else ""
                     contenido_jefe = redactar_alerta_jefe_7dias(
                         empleado.jefe_nombre,
                         empleado.nombre,
                         caso.serial,
-                        caso.empresa.nombre if caso.empresa else 'N/A'
+                        caso.empresa.nombre if caso.empresa else 'N/A',
+                        fecha_inicio=f_inicio,
+                        fecha_fin=f_fin,
+                        motivo=motivo_jefe,
+                        dias_sin_respuesta=dias_sin_respuesta
                     )
                     html_jefe = get_email_template_universal(
                         tipo_email='alerta_jefe',
@@ -238,12 +254,30 @@ def verificar_casos_pendientes():
                         contenido_ia=contenido_jefe,
                         empleado_nombre=empleado.nombre
                     )
-                    if send_html_email(
-                        empleado.jefe_email,
-                        f"📊 Seguimiento - Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
-                        html_jefe,
-                        caso=caso  # ✅ FIX: Pasar caso para obtener CC empresa del directorio
-                    ):
+                    # ✅ Adjuntar PDF si existe (desde CaseDocument)
+                    adjuntos_jefe = []
+                    try:
+                        import base64 as _b64j
+                        import os as _osjefe
+                        from app.database import CaseDocument as _CDoc
+                        docs_jefe = db.query(_CDoc).filter(_CDoc.case_id == caso.id).limit(3).all()
+                        for doc in docs_jefe:
+                            if doc.file_path and _osjefe.path.exists(doc.file_path):
+                                with open(doc.file_path, 'rb') as _f:
+                                    adjuntos_jefe.append({'filename': _osjefe.path.basename(doc.file_path), 'content': _b64j.b64encode(_f.read()).decode('utf-8'), 'mimetype': 'application/pdf'})
+                    except Exception as _ej:
+                        print(f"   ⚠️ Sin adjunto para jefe: {_ej}")
+                    resultado_jefe = enviar_a_n8n(
+                        tipo_notificacion='alerta_jefe',
+                        email=empleado.jefe_email,
+                        serial=caso.serial,
+                        subject=f"📊 Seguimiento - Incapacidad {caso.serial} - {empleado.nombre} - {caso.empresa.nombre if caso.empresa else 'N/A'}",
+                        html_content=html_jefe,
+                        cc_email=None,
+                        adjuntos_base64=adjuntos_jefe,
+                        drive_link=caso.drive_link
+                    )
+                    if resultado_jefe:
                         alertas_jefe_enviadas += 1
                         print(f"   ✅ Alerta enviada a jefe")
                     else:
