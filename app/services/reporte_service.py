@@ -94,18 +94,21 @@ class ReporteService:
             
             casos_resumen = []
             for caso in ultimos_casos:
-                # Obtener nombre de empresa a través de relación
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "N/A"
                 empleado_nombre = caso.empleado.nombre if caso.empleado else caso.cedula or "N/A"
-                
+
+                estado_resumen = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
+                if estado_resumen in ["DERIVADO_TTHH", "TTHH"]:
+                    estado_resumen = "PRESUNTO FRAUDE"
+
                 casos_resumen.append({
                     "id": caso.id,
                     "serial": caso.serial or f"CASO-{caso.id}",
                     "empresa": empresa_nombre,
                     "empleado": empleado_nombre,
                     "tipo": caso.tipo.value if caso.tipo else "general",
-                    "estado": 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO"),
-                    "fecha_creacion": caso.created_at.strftime("%Y-%m-%d %H:%M:%S") if caso.created_at else "N/A",
+                    "estado": estado_resumen,
+                    "fecha_creacion": caso.created_at.strftime("%d/%m/%Y %H:%M") if caso.created_at else "N/A",
                     "dias": caso.dias_incapacidad or None
                 })
             
@@ -170,15 +173,19 @@ class ReporteService:
             for caso in casos_preview:
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "N/A"
                 empleado_nombre = caso.empleado.nombre if caso.empleado else caso.cedula or "N/A"
-                
+
+                estado_prev = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
+                if estado_prev in ["DERIVADO_TTHH", "TTHH"]:
+                    estado_prev = "PRESUNTO FRAUDE"
+
                 registros.append({
                     "id": caso.id,
                     "serial": caso.serial or f"CASO-{caso.id}",
                     "empresa": empresa_nombre,
                     "empleado": empleado_nombre,
                     "tipo": caso.tipo.value if caso.tipo else "general",
-                    "estado": 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO"),
-                    "fecha_creacion": caso.created_at.strftime("%Y-%m-%d") if caso.created_at else "N/A"
+                    "estado": estado_prev,
+                    "fecha_creacion": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else "N/A"
                 })
             
             return {
@@ -255,10 +262,11 @@ class ReporteService:
             for caso in casos:
                 empresa_nombre = caso.empresa.nombre if caso.empresa else "N/A"
                 empleado_nombre = caso.empleado.nombre if caso.empleado else caso.cedula or "N/A"
-            
+
                 estado_val = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
                 if estado_val in ["DERIVADO_TTHH", "TTHH"]:
                     estado_val = "PRESUNTO FRAUDE"
+
                 datos.append({
                     "SERIAL": caso.serial or f"CASO-{caso.id}",
                     "CEDULA": caso.cedula or "",
@@ -267,14 +275,14 @@ class ReporteService:
                     "TIPO": caso.tipo.value if caso.tipo else "GENERAL",
                     "ESTADO": estado_val,
                     "DIAS": caso.dias_incapacidad or 0,
-                    "FECHA INICIO": caso.fecha_inicio.strftime("%Y-%m-%d") if caso.fecha_inicio else "",
-                    "FECHA FIN": caso.fecha_fin.strftime("%Y-%m-%d") if caso.fecha_fin else "",
+                    "FECHA INICIO": caso.fecha_inicio.strftime("%d/%m/%Y") if caso.fecha_inicio else "",
+                    "FECHA FIN": caso.fecha_fin.strftime("%d/%m/%Y") if caso.fecha_fin else "",
                     "EPS": caso.eps or (caso.empleado.eps if caso.empleado and caso.empleado.eps else ""),
                     "CODIGO CIE10": caso.codigo_cie10 or "",
                     "DIAGNOSTICO": caso.diagnostico or "",
                     "ES PRORROGA": "SI" if (caso.serial in seriales_prorroga or caso.es_prorroga) else "NO",
-                    "FECHA ADJUNTADO": caso.created_at.strftime("%Y-%m-%d") if caso.created_at else "",
-                    "HORA ADJUNTADO": caso.created_at.strftime("%H:%M") if caso.created_at else "",
+                    "FECHA ENVIO": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else "",
+                    "HORA ENVIO": caso.created_at.strftime("%H:%M") if caso.created_at else "",
                     "PROCESADO": "SI" if caso.procesado else "NO",
                 })
             

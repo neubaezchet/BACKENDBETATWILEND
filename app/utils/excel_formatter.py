@@ -16,35 +16,52 @@ logger = logging.getLogger(__name__)
 def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normaliza un DataFrame para exportación:
-    - Texto en MAYÚSCULAS
-    - Fechas limpias sin decimales
     - Columnas en MAYÚSCULAS
+    - Texto en MAYÚSCULAS
+    - Fechas en formato DD/MM/YYYY (sin T, sin decimales, sin hora si es medianoche)
     """
     df = df.copy()
-    
+
     # Renombrar columnas a MAYÚSCULAS
     df.columns = [str(col).upper() for col in df.columns]
-    
+
+    def _limpiar_fecha(val_str: str) -> str:
+        """Convierte cualquier formato de fecha/datetime a DD/MM/YYYY o DD/MM/YYYY HH:MM"""
+        try:
+            # Soporta: "2026-03-26T00:00:00", "2026-03-26 00:00:00.000000", "2026-03-26"
+            dt = pd.to_datetime(val_str)
+            if dt.hour == 0 and dt.minute == 0 and dt.second == 0:
+                return dt.strftime("%d/%m/%Y")
+            return dt.strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            return str(val_str).upper()
+
+    def _limpiar_valor(val) -> str:
+        if pd.isna(val) or val is None:
+            return val
+        val_str = str(val).strip()
+        # Detectar fechas: empieza con 4 dígitos-mes-día (ISO) o contiene T entre fecha y hora
+        es_fecha = (
+            (len(val_str) >= 10 and val_str[4:5] == '-' and val_str[7:8] == '-') or
+            ('T' in val_str and val_str[4:5] == '-')
+        )
+        if es_fecha:
+            return _limpiar_fecha(val_str)
+        return val_str.upper()
+
     # Procesar cada columna
     for col in df.columns:
-        # Limpiar fechas: si la columna tiene datetime, formatear sin decimales
         if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].dt.strftime("%Y-%m-%d").fillna("")
+            # Columnas datetime nativas de pandas
+            df[col] = df[col].apply(
+                lambda dt: dt.strftime("%d/%m/%Y") if pd.notna(dt) and dt.hour == 0 and dt.minute == 0
+                else (dt.strftime("%d/%m/%Y %H:%M") if pd.notna(dt) else "")
+            )
         elif df[col].dtype == object:
-            # Para strings: convertir a MAYÚSCULAS y limpiar fechas con decimales
-            def _limpiar_valor(val):
-                if pd.isna(val) or val is None:
-                    return val
-                val_str = str(val)
-                # Detectar fechas con parte decimal (ej: "2026-03-15 00:00:00.000000")
-                if len(val_str) > 19 and val_str[4:5] == '-' and val_str[7:8] == '-':
-                    val_str = val_str[:19]  # Truncar a "YYYY-MM-DD HH:MM:SS"
-                    if val_str.endswith("00:00:00"):
-                        val_str = val_str[:10]  # Solo fecha si hora es 00:00:00
-                return str(val_str).upper()
             df[col] = df[col].apply(_limpiar_valor)
-    
+
     return df
+
 
 
 class ExcelFormatter:
