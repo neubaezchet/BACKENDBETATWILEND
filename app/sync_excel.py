@@ -813,10 +813,11 @@ def sincronizar_excel_completo():
                         
                         if caso:
                             # ═══ CASO YA EXISTE EN BD ═══
-                            # Detectar si hay datos discordantes entre Kactus y BD
+                            # Kactus es la fuente de verdad para fechas y días
+                            # dias_traslapo permanece intacto (es calculado por el sistema, no viene de Kactus)
                             tiene_traslap = getattr(caso, 'dias_traslapo', 0) or 0
                             datos_cambiaron = False
-                            
+
                             # Actualizar datos de identificación siempre que vengan de Kactus
                             if num_incap and caso.numero_incapacidad != num_incap:
                                 caso.numero_incapacidad = num_incap
@@ -827,31 +828,36 @@ def sincronizar_excel_completo():
                             if diagnostico and caso.diagnostico != diagnostico:
                                 caso.diagnostico = diagnostico
                                 datos_cambiaron = True
-                            
-                            # fecha_fin: Kactus es la fuente de verdad (reemplaza si discordante)
+
+                            # fecha_inicio: Kactus es la fuente de verdad
+                            caso.fecha_inicio_kactus = fecha_inicio
+                            fecha_inicio_date = fecha_inicio.date() if hasattr(fecha_inicio, 'date') else fecha_inicio
+                            if caso.fecha_inicio != fecha_inicio_date:
+                                caso.fecha_inicio = fecha_inicio
+                                datos_cambiaron = True
+                                print(f"   📅 Kactus override fecha_inicio: {caso.fecha_inicio} → {fecha_inicio.strftime('%d/%m/%Y')}")
+
+                            # fecha_fin: Kactus es la fuente de verdad
                             if fecha_fin:
                                 caso.fecha_fin_kactus = fecha_fin
-                                if caso.fecha_fin != fecha_fin.date() if hasattr(fecha_fin, 'date') else fecha_fin:
+                                fecha_fin_date = fecha_fin.date() if hasattr(fecha_fin, 'date') else fecha_fin
+                                if caso.fecha_fin != fecha_fin_date:
                                     caso.fecha_fin = fecha_fin
                                     datos_cambiaron = True
-                                    if not tiene_traslap:
-                                        print(f"   📅 Kactus override fecha_fin: {caso.fecha_fin} → {fecha_fin.strftime('%d/%m/%Y')}")
-                            
-                            # dias_incapacidad: Kactus reemplaza si hay discordancia
-                            # EXCEPCIÓN: si el caso tiene traslape detectado, respetar el sistema de traslapes
-                            if dias:
-                                if not tiene_traslap:
-                                    if caso.dias_incapacidad != dias:
-                                        print(f"   📊 Kactus override dias: {caso.dias_incapacidad} → {dias}")
-                                        caso.dias_incapacidad = dias
-                                        datos_cambiaron = True
-                                elif not caso.dias_incapacidad:
-                                    # Solo llenar si estaba vacío (no sobreescribir ajuste de traslape)
-                                    caso.dias_incapacidad = dias
-                                    datos_cambiaron = True
-                            
-                            # Siempre actualizar referencia Kactus
-                            caso.fecha_inicio_kactus = fecha_inicio
+                                    print(f"   📅 Kactus override fecha_fin: {caso.fecha_fin} → {fecha_fin.strftime('%d/%m/%Y')}")
+
+                            # dias_incapacidad: Kactus siempre reemplaza (son los días BRUTOS del certificado)
+                            # dias_traslapo NO se toca — es calculado por el sistema y representa el solapamiento
+                            # Los días efectivos = dias_incapacidad - dias_traslapo (se calcula al mostrar)
+                            if dias and caso.dias_incapacidad != dias:
+                                if tiene_traslap:
+                                    print(f"   📊 Kactus override días (con traslape {tiene_traslap}d): {caso.dias_incapacidad} → {dias} brutos")
+                                else:
+                                    print(f"   📊 Kactus override días: {caso.dias_incapacidad} → {dias}")
+                                caso.dias_incapacidad = dias
+                                datos_cambiaron = True
+
+                            # Marca de sync
                             caso.es_historico = es_historico
                             caso.procesado = True
                             caso.fecha_procesado = datetime.now()
@@ -861,7 +867,7 @@ def sincronizar_excel_completo():
                             db.commit()
                             cases_actualizados += 1
                             if datos_cambiaron:
-                                print(f"   🔄 Actualizado (Kactus override): CC {cedula_case} | {fecha_inicio.strftime('%d/%m/%Y')}")
+                                print(f"   🔄 Actualizado (Kactus): CC {cedula_case} | {fecha_inicio.strftime('%d/%m/%Y')} | {dias}d")
                             else:
                                 filas_ya_procesadas += 1
                         else:
