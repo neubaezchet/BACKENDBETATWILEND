@@ -706,14 +706,55 @@ async def powerbi_analisis_persona(
         for c in casos:
             cie_info = buscar_codigo(c.codigo_cie10) if c.codigo_cie10 else None
             empresa_obj = db.query(Company).filter(Company.id == c.company_id).first() if c.company_id else None
-            
-            fi = c.fecha_inicio
-            ff = c.fecha_fin or c.fecha_inicio
-            
-            # EPS: primero del caso, luego del empleado
+
+            fi = c.fecha_inicio_kactus or c.fecha_inicio
+            ff = c.fecha_fin_kactus or c.fecha_fin or c.fecha_inicio
             eps_valor = c.eps or eps_empleado or ""
-            
-            # ...existing code...
+            dias_val = c.dias_incapacidad or 0
+            if c.fecha_inicio_kactus and c.fecha_fin_kactus:
+                dias_val = (c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1
+
+            timeline.append({
+                "serial": c.serial,
+                "fecha_inicio": fi.strftime("%Y-%m-%d") if fi else None,
+                "fecha_fin": ff.strftime("%Y-%m-%d") if ff else None,
+                "dias": dias_val,
+                "tipo": (c.tipo.value if c.tipo else "sin_tipo").lower(),
+                "estado": c.estado.value.lower() if c.estado else "nuevo",
+                "diagnostico": c.diagnostico or "",
+                "codigo_cie10": c.codigo_cie10 or "",
+                "cie10_descripcion": (cie_info.get("descripcion") if cie_info and cie_info.get("encontrado") else c.diagnostico or ""),
+                "es_prorroga": c.serial in seriales_prorroga or bool(c.es_prorroga),
+                "empresa": empresa_obj.nombre if empresa_obj else "",
+                "eps": eps_valor,
+                "numero_incapacidad": c.numero_incapacidad or "",
+            })
+
+        # Construir gaps entre incapacidades consecutivas
+        gaps = []
+        for i in range(len(casos) - 1):
+            caso_a = casos[i]
+            caso_b = casos[i + 1]
+            fin_a = caso_a.fecha_fin_kactus or caso_a.fecha_fin or caso_a.fecha_inicio
+            inicio_b = caso_b.fecha_inicio_kactus or caso_b.fecha_inicio
+            if fin_a and inicio_b:
+                dias_gap = ((inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b) -
+                            (fin_a.date() if hasattr(fin_a, 'date') else fin_a)).days
+                if dias_gap > 1:
+                    fecha_gap_inicio = fin_a.date() if hasattr(fin_a, 'date') else fin_a
+                    fecha_gap_fin = inicio_b.date() if hasattr(inicio_b, 'date') else inicio_b
+                    corta_prorroga = dias_gap > 30
+                    gaps.append({
+                        "fecha_inicio": str(fecha_gap_inicio + timedelta(days=1)),
+                        "fecha_fin": str(fecha_gap_fin - timedelta(days=1)),
+                        "dias": dias_gap - 1,
+                        "entre_serial_a": caso_a.serial,
+                        "entre_serial_b": caso_b.serial,
+                        "corta_prorroga": corta_prorroga,
+                        "severidad": "critica" if corta_prorroga else "advertencia",
+                        "mensaje": f"{'🔴 CORTA PRÓRROGA' if corta_prorroga else '🟡 Hueco'}: {dias_gap - 1} días sin cobertura" +
+                                   (f" (>{30}d, reinicia conteo)" if corta_prorroga else ""),
+                    })
         
         # Resumen KPIs por tipo
         por_tipo = {}
@@ -787,12 +828,9 @@ async def powerbi_analisis_persona(
                 "centro_costo": "", "ciudad": "", "fecha_ingreso": "", "tipo_contrato": "",
             }
         
-        # Obtener gaps/huecos del análisis de prórrogas
-        gaps = analisis.get("huecos_detectados", [])
-        
         total_dias = sum(c.dias_incapacidad or 0 for c in casos)
-        total_gaps = sum(g.get("dias_hueco", g.get("dias", 0)) for g in gaps)
-        gaps_criticos = gaps  # Todos los huecos son críticos (prórrogas cortadas con correlación CIE-10)
+        total_gaps_dias = sum(g.get("dias", 0) for g in gaps)
+        gaps_criticos = [g for g in gaps if g.get("corta_prorroga")]
         
         return {
             "ok": True,
@@ -801,7 +839,7 @@ async def powerbi_analisis_persona(
                 "total_incapacidades": len(casos),
                 "total_dias_incapacidad": total_dias,
                 "total_gaps": len(gaps),
-                "total_dias_gap": total_gaps,
+                "total_dias_gap": total_gaps_dias,
                 "gaps_criticos": len(gaps_criticos),
                 "cadenas_prorroga": len([c for c in analisis.get("cadenas_prorroga", []) if c.get("es_cadena_prorroga")]),
                 "dias_prorroga_max": analisis.get("dias_prorroga", 0),
