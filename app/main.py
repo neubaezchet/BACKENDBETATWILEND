@@ -35,6 +35,9 @@ from app.routes.alertas import router as alertas_router
 from app.routes.admin import router as admin_router
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
+# ✅ Cola resiliente persistente (Drive + N8N)
+from app.resilient_queue import resilient_queue, guardar_pendiente_n8n, guardar_pendiente_drive
+
 # ==================== FUNCIÓN: DOCUMENTOS REQUERIDOS ====================
 def obtener_documentos_requeridos(tipo: str, dias: int = None, phantom: bool = None, mother_works: bool = None) -> list:
     """
@@ -104,6 +107,15 @@ app.include_router(alertas_router)
 app.include_router(admin_router)
 
 app.include_router(validador_router)
+
+# ✅ Iniciar worker de cola resiliente (reintentos Drive + N8N)
+resilent_queue_started = False
+try:
+    resilient_queue.iniciar()
+    resilent_queue_started = True
+    print("🛡️ Worker de cola resiliente iniciado")
+except Exception as _rq_err:
+    print(f"⚠️ No se pudo iniciar cola resiliente: {_rq_err}")
 
 # ==================== HEALTH CHECK DE GOOGLE DRIVE ====================
 
@@ -1297,27 +1309,53 @@ async def subir_incapacidad(
     
     try:
         empresa_destino = empleado_bd.empresa.nombre if empleado_bd else "OTRA_EMPRESA"
-        
+
         pdf_final_path, original_filenames = await merge_pdfs_from_uploads(archivos, cedula, tipo)
-        
-        link_pdf = upload_inteligente(
-            file_path=pdf_final_path,
-            empresa=empresa_destino,
-            cedula=cedula,
-            tipo=tipo,
-            serial=consecutivo,
-            fecha_inicio=fecha_inicio,
-            fecha_fin=fecha_fin,
-            tiene_soat=tiene_soat,
-            tiene_licencia=tiene_licencia,
-            subtipo=subType
-        )
-        
-        pdf_final_path.unlink()
-        
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Error procesando archivos: {e}"})
-    
+
+        link_pdf = None
+        drive_en_cola = False
+        try:
+            link_pdf = upload_inteligente(
+                file_path=pdf_final_path,
+                empresa=empresa_destino,
+                cedula=cedula,
+                tipo=tipo,
+                serial=consecutivo,
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                tiene_soat=tiene_soat,
+                tiene_licencia=tiene_licencia,
+                subtipo=subType
+            )
+            pdf_final_path.unlink(missing_ok=True)
+        except Exception as drive_err:
+            # ✅ Drive falló → guardar PDF en /tmp con nombre seguro y meter en cola
+            print(f"⚠️ Drive falló ({drive_err}) — caso se guardará en BD y PDF en cola")
+            import shutil
+            tmp_dir = Path("/tmp/incapacidades_cola")
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            pdf_cola_path = tmp_dir / f"{consecutivo}.pdf"
+            shutil.copy2(str(pdf_final_path), str(pdf_cola_path))
+            pdf_final_path.unlink(missing_ok=True)
+            guardar_pendiente_drive({
+                "file_path": str(pdf_cola_path),
+                "empresa": empresa_destino,
+                "cedula": cedula,
+                "tipo": tipo,
+                "serial": consecutivo,
+                "fecha_inicio": fecha_inicio.isoformat() if fecha_inicio else None,
+                "fecha_fin": fecha_fin.isoformat() if fecha_fin else None,
+                "tiene_soat": tiene_soat,
+                "tiene_licencia": tiene_licencia,
+                "subtipo": subType
+            }, error=str(drive_err))
+            drive_en_cola = True
+            link_pdf = None  # Se actualizará cuando la cola lo procese
+
+    except Exception as merge_err:
+        # Solo llegamos aquí si merge_pdfs_from_uploads falla — sin PDF no hay caso
+        return JSONResponse(status_code=500, content={"error": f"Error procesando archivos PDF: {merge_err}"})
+
     tipo_bd = mapear_tipo_incapacidad(subType if subType else tipo)
     
     nuevo_caso = Case(
@@ -1479,9 +1517,22 @@ _Automatico por Incapacidades_""".strip()
                 notificacion_exitosa = True
                 print(f"✅ Notificación enviada exitosamente")
             else:
-                print(f"⚠️ Error al enviar notificación vía n8n (pero caso se guardó en BD)")
-                # NO bloqueamos - el caso ya está guardado en BD
-                notificacion_exitosa = False  # Pero marcamos como no enviado para en caso log
+                # ✅ N8N falló → meter en cola de reintentos (no bloqueamos al usuario)
+                print(f"⚠️ N8N no respondió — guardando en cola de reintentos")
+                guardar_pendiente_n8n({
+                    "tipo_notificacion": "confirmacion",
+                    "email": email,
+                    "serial": consecutivo,
+                    "subject": asunto,
+                    "html_content": html_empleado,
+                    "cc_email": cc_empresa,
+                    "correo_bd": correo_empleado,
+                    "whatsapp": telefono,
+                    "whatsapp_message": mensaje_whatsapp,
+                    "adjuntos_base64": [],
+                    "drive_link": link_pdf
+                }, error="n8n no respondió o sesión cerrada")
+                notificacion_exitosa = False
         
         print(f"\n{'='*80}")
         print(f"✅ RESPUESTA FINAL AL FRONTEND")
