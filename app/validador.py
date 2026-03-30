@@ -1595,6 +1595,17 @@ async def exportar_casos(
         empleado = caso.empleado
         empresa_obj = caso.empresa
         
+        # Extraer estado (reemplazar DERIVADO_TTHH con PRESUNTO FRAUDE)
+        estado_val = caso.estado.value if caso.estado else None
+        if estado_val in ["DERIVADO_TTHH", "TTHH"]:
+            estado_val = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
+        
+        # Extraer día de la semana del created_at
+        dia_semana = ""
+        if caso.created_at:
+            dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+            dia_semana = dias[caso.created_at.weekday()]
+        
         data.append({
             "SERIAL": caso.serial,
             "CEDULA": caso.cedula,
@@ -1602,43 +1613,41 @@ async def exportar_casos(
             "EMPRESA": empresa_obj.nombre if empresa_obj else "OTRA",
             "TIPO": caso.tipo.value if caso.tipo else None,
             "DIAS": caso.dias_incapacidad,
-            "ESTADO": caso.estado.value if caso.estado else None,
+            "ESTADO": estado_val,
             "EPS": caso.eps or (empleado.eps if empleado else None),
-            "FECHA INICIO": caso.fecha_inicio.strftime("%Y-%m-%d") if caso.fecha_inicio else None,
-            "FECHA FIN": caso.fecha_fin.strftime("%Y-%m-%d") if caso.fecha_fin else None,
+            "FECHA INICIO": caso.fecha_inicio.strftime("%d/%m/%Y") if caso.fecha_inicio else None,
+            "FECHA FIN": caso.fecha_fin.strftime("%d/%m/%Y") if caso.fecha_fin else None,
             "CODIGO CIE10": caso.codigo_cie10,
             "DIAGNOSTICO": caso.diagnostico,
             "ES PRORROGA": "SI" if (caso.serial in seriales_prorroga or caso.es_prorroga) else "NO",
             "LINK DRIVE": caso.drive_link,
-            "FECHA ADJUNTADO": caso.created_at.strftime("%Y-%m-%d") if caso.created_at else None,
+            "FECHA ADJUNTADO": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else None,
+            "DIA ADJUNTADO": dia_semana,
             "HORA ADJUNTADO": caso.created_at.strftime("%H:%M") if caso.created_at else None,
             "PROCESADO": "SI" if caso.procesado else "NO",
-            "FECHA PROCESADO": caso.fecha_procesado.strftime("%Y-%m-%d") if caso.fecha_procesado else None,
+            "FECHA PROCESADO": caso.fecha_procesado.strftime("%d/%m/%Y") if caso.fecha_procesado else None,
             "USUARIO PROCESADO": caso.usuario_procesado,
         })
     
     df = pd.DataFrame(data)
     
-    output = io.BytesIO()
+    # Aplicar formatter profesional
+    from app.utils.excel_formatter import ExcelFormatter
     
     if formato == "xlsx":
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Casos')
-        
-        output.seek(0)
+        archivo = ExcelFormatter.crear_excel(df, titulo="Exportación de Casos")
         
         return StreamingResponse(
-            output,
+            io.BytesIO(archivo),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename=casos_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
         )
     
     elif formato == "csv":
-        df.to_csv(output, index=False)
-        output.seek(0)
+        archivo = ExcelFormatter.crear_csv(df)
         
         return StreamingResponse(
-            output,
+            io.BytesIO(archivo),
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename=casos_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
         )
