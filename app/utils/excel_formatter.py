@@ -28,6 +28,13 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     def _limpiar_fecha(val_str: str) -> str:
         """Convierte cualquier formato de fecha/datetime a DD/MM/YYYY o DD/MM/YYYY HH:MM"""
         try:
+            # Si ya está en formato DD/MM/YYYY o DD/MM/YYYY HH:MM, devolverlo como está
+            if val_str and (
+                (len(val_str) == 10 and val_str[2] == '/' and val_str[5] == '/') or
+                (len(val_str) >= 16 and val_str[2] == '/' and val_str[5] == '/')
+            ):
+                return val_str
+            
             # Soporta: "2026-03-26T00:00:00", "2026-03-26 00:00:00.000000", "2026-03-26"
             dt = pd.to_datetime(val_str)
             if dt.hour == 0 and dt.minute == 0 and dt.second == 0:
@@ -40,7 +47,16 @@ def _normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
         if pd.isna(val) or val is None:
             return val
         val_str = str(val).strip()
-        # Detectar fechas: empieza con 4 dígitos-mes-día (ISO) o contiene T entre fecha y hora
+        
+        # Si ya está en formato DD/MM/YYYY, devolverlo como está
+        if len(val_str) == 10 and val_str[2] == '/' and val_str[5] == '/':
+            return val_str
+        
+        # Si ya está en formato DD/MM/YYYY HH:MM, devolverlo como está
+        if len(val_str) >= 16 and val_str[2] == '/' and val_str[5] == '/' and ':' in val_str:
+            return val_str
+        
+        # Detectar fechas ISO: empieza con 4 dígitos-mes-día o contiene T
         es_fecha = (
             (len(val_str) >= 10 and val_str[4:5] == '-' and val_str[7:8] == '-') or
             ('T' in val_str and val_str[4:5] == '-')
