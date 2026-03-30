@@ -843,8 +843,8 @@ async def cambiar_estado(
         },
         "DERIVADO_TTHH": {
             "tipo": "derivado_tthh",
-            "subject": f"👥 Derivado a Recursos Humanos - {serial}",
-            "template": "derivado_tthh"
+            "subject": f"⏳ Tu incapacidad está siendo validada - {serial}",
+            "template": "falsa"  # ✅ Mostrar al empleado: "Esperamos respuesta de EPS"
         },
         "CAUSA_EXTRA": {
             "tipo": "causa_extra",
@@ -926,6 +926,48 @@ async def cambiar_estado(
             
             background_tasks.add_task(_enviar_estado)
             notificacion_encolada = True
+            
+            # ✅ SI ES PRESUNTO FRAUDE: Enviar OTRO correo al área de presunto_fraude
+            if nuevo_estado == "DERIVADO_TTHH":
+                print(f"\n🚨 [{serial}] PRESUNTO FRAUDE DETECTADO - Enviando alerta a presunto_fraude")
+                
+                # Obtener emails del directorio presunto_fraude (+ empresa CC)
+                emails_pf = obtener_emails_presunto_fraude(_empresa, db)
+                
+                def _enviar_presunto_fraude():
+                    """Envía reporte de presunto fraude al área correspondiente"""
+                    from app.email_templates import get_email_template_universal
+                    
+                    # Generar HTML del reporte con detalles del caso
+                    html_pf = get_email_template_universal(
+                        "enviar_validar",  # Template para investigación de fraude
+                        nombre_empleado,
+                        serial,
+                        _empresa,
+                        _tipo_inc,
+                        _telefono or 'N/A',
+                        _email,
+                        _drive_link,
+                        contenido_ia=f"Caso marcado como PRESUNTO FRAUDE. Motivo: {_motivo or 'Revisar documentos'}"
+                    )
+                    
+                    # 🔗 Enviar a presunto_fraude CON CC de empresa
+                    from app.notificacion_service import enviar_a_n8n
+                    
+                    enviar_a_n8n(
+                        tipo_notificacion="presunto_fraude_alerta",
+                        email=emails_pf[0] if emails_pf else "xoblaxbaezaospino@gmail.com",  # Email principal
+                        cc_email=",".join(emails_pf[1:]) if len(emails_pf) > 1 else None,  # CCs
+                        correo_bd=cc_directorio,  # ✅ Agregar CC de empresa
+                        serial=serial,
+                        subject=f"🚨 ALERTA - Presunto Fraude: {serial}",
+                        html_content=html_pf,
+                        drive_link=_drive_link
+                    )
+                
+                background_tasks.add_task(_enviar_presunto_fraude)
+                print(f"   📧 Presunto fraude env a: {emails_pf}")
+                print(f"   📧 CC empresa: {cc_directorio or 'N/A'}")
         
         print(f"   📧 Email TO: {_email}")
         print(f"   📱 WhatsApp: {_telefono or 'N/A'}")
