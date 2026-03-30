@@ -45,3 +45,9 @@ reportlab==4.0.9
 
 # IA
 anthropic==0.40.0
+
+# HTML/Markdown conversion
+html2text==2024.2.26
+
+# Email
+secure-smtplib==0.1.1
