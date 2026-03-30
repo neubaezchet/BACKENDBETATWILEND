@@ -108,7 +108,10 @@ class ReporteService:
                     "empleado": empleado_nombre,
                     "tipo": caso.tipo.value if caso.tipo else "general",
                     "estado": estado_resumen,
-                    "fecha_creacion": caso.created_at.strftime("%d/%m/%Y %H:%M") if caso.created_at else "N/A",
+                    "fecha_inicio": caso.fecha_inicio.strftime("%d/%m/%Y") if caso.fecha_inicio else "N/A",
+                    "fecha_fin": caso.fecha_fin.strftime("%d/%m/%Y") if caso.fecha_fin else "N/A",
+                    "fecha_creacion": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else "N/A",
+                    "hora_creacion": caso.created_at.strftime("%H:%M") if caso.created_at else "N/A",
                     "dias": caso.dias_incapacidad or None
                 })
             
@@ -185,6 +188,8 @@ class ReporteService:
                     "empleado": empleado_nombre,
                     "tipo": caso.tipo.value if caso.tipo else "general",
                     "estado": estado_prev,
+                    "fecha_inicio": caso.fecha_inicio.strftime("%d/%m/%Y") if caso.fecha_inicio else "N/A",
+                    "fecha_fin": caso.fecha_fin.strftime("%d/%m/%Y") if caso.fecha_fin else "N/A",
                     "fecha_creacion": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else "N/A"
                 })
             
@@ -267,6 +272,12 @@ class ReporteService:
                 if estado_val in ["DERIVADO_TTHH", "TTHH"]:
                     estado_val = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
 
+                # Extraer día de la semana de la fecha de envío
+                dia_semana = ""
+                if caso.created_at:
+                    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                    dia_semana = dias[caso.created_at.weekday()]
+
                 datos.append({
                     "SERIAL": caso.serial or f"CASO-{caso.id}",
                     "CEDULA": caso.cedula or "",
@@ -282,6 +293,7 @@ class ReporteService:
                     "DIAGNOSTICO": caso.diagnostico or "",
                     "ES PRORROGA": "SI" if (caso.serial in seriales_prorroga or caso.es_prorroga) else "NO",
                     "FECHA ENVIO": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else "",
+                    "DIA ENVIO": dia_semana,
                     "HORA ENVIO": caso.created_at.strftime("%H:%M") if caso.created_at else "",
                     "PROCESADO": "SI" if caso.procesado else "NO",
                 })
