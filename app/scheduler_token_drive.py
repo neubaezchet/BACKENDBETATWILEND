@@ -110,7 +110,7 @@ def renovar_token_drive():
 def enviar_alerta_critica(mensaje: str):
     """Alerta ROJA por email"""
     try:
-        from app.n8n_notifier import enviar_a_n8n
+        from app.email_service import enviar_notificacion  # ✅ MIGRACIÓN: N8N → Backend Native
         
         html = f"""
         <div style="background:#fee2e2;border:3px solid #dc2626;padding:20px;border-radius:8px;">
@@ -120,7 +120,7 @@ def enviar_alerta_critica(mensaje: str):
         </div>
         """
         
-        enviar_a_n8n(
+        enviar_notificacion(
             tipo_notificacion='extra',
             email='xoblaxbaezaospino@gmail.com',
             serial='CRITICAL',
@@ -137,7 +137,7 @@ def enviar_alerta_critica(mensaje: str):
 def enviar_alerta_fallo(mensaje: str):
     """Alerta NARANJA por email"""
     try:
-        from app.n8n_notifier import enviar_a_n8n
+        from app.email_service import enviar_notificacion  # ✅ MIGRACIÓN: N8N → Backend Native
         
         html = f"""
         <div style="background:#fef3c7;border:2px solid #f59e0b;padding:20px;border-radius:8px;">
@@ -147,7 +147,7 @@ def enviar_alerta_fallo(mensaje: str):
         </div>
         """
         
-        enviar_a_n8n(
+        enviar_notificacion(
             tipo_notificacion='extra',
             email='xoblaxbaezaospino@gmail.com',
             serial='WARNING',
