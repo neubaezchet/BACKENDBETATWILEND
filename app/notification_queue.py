@@ -232,9 +232,9 @@ class NotificationQueue:
         print(f"{'='*60}")
         
         try:
-            from app.n8n_notifier import enviar_a_n8n
+            from app.email_service import enviar_notificacion  # ✅ MIGRACIÓN: N8N → Backend Native
             
-            resultado = enviar_a_n8n(
+            resultado = enviar_notificacion(
                 tipo_notificacion=notif.tipo,
                 email=notif.email,
                 serial=notif.serial,

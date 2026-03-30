@@ -12,7 +12,7 @@ from app.database import SessionLocal, Case, EstadoCaso
 from app.ia_redactor import redactar_recordatorio_7dias, redactar_alerta_jefe_7dias
 from app.email_templates import get_email_template_universal
 import os
-from app.n8n_notifier import enviar_a_n8n
+from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
 
 def send_html_email(to_email: str, subject: str, html_body: str, caso=None, whatsapp_message=None) -> bool:
     """Envía email usando N8N con copias a empresa y empleado BD"""

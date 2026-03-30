@@ -205,7 +205,7 @@ def _enviar_alerta_email(
     
     for email_dest in destinatarios:
         try:
-            from app.n8n_notifier import enviar_a_n8n
+            from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
             
             resultado = enviar_a_n8n(
                 tipo_notificacion="alerta_180",

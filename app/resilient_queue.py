@@ -212,7 +212,7 @@ class ResilientQueueProcessor:
     def _reintentar_n8n(self, payload: dict) -> bool:
         """Reintenta enviar notificación a N8N"""
         try:
-            from app.n8n_notifier import enviar_a_n8n
+            from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
             
             resultado = enviar_a_n8n(
                 tipo_notificacion=payload.get('tipo_notificacion', 'confirmacion'),

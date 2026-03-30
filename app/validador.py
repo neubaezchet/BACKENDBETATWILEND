@@ -26,7 +26,7 @@ from app.database import (
 from app.checks_disponibles import CHECKS_DISPONIBLES, obtener_checks_por_tipo
 from app.email_templates import get_email_template_universal
 from app.drive_manager import CaseFileOrganizer
-from app.n8n_notifier import enviar_a_n8n  # ✅ NUEVO
+from app.email_service import enviar_notificacion, enviar_a_n8n  # ✅ MIGRACIÓN: N8N → Backend Native
 from app.completes_manager import completes_mgr  # ✅ NUEVO - Sincronización Completes
 from app.notification_queue import notification_queue, NotificacionPendiente  # ✅ Cola de notificaciones
 from app.services.prorroga_detector import analizar_historial_empleado  # ✅ Detección de prórrogas por cadenas
@@ -147,7 +147,7 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
     ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
     """
     import base64
-    from app.n8n_notifier import enviar_a_n8n
+    from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
     
     # Convertir adjuntos a base64
     adjuntos_base64 = []
@@ -245,7 +245,7 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
     ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
     """
     import base64
-    from app.n8n_notifier import enviar_a_n8n
+    from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
     
     # Convertir adjuntos a base64
     adjuntos_base64 = []

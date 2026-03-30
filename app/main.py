@@ -24,7 +24,7 @@ from app.validador import router as validador_router, obtener_emails_empresa_dir
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
 from app.serial_generator import generar_serial_unico  # ✅ NUEVO
 
-from app.n8n_notifier import enviar_a_n8n
+from app.email_service import enviar_notificacion, enviar_a_n8n  # ✅ MIGRACIÓN: N8N → Backend Native
 from fastapi import Request, Header
 from app.database import CaseEvent
 
@@ -1487,8 +1487,8 @@ Nos comunicaremos si se requiere algo adicional.
 
 _Automatico por Incapacidades_""".strip()
         
-        # ✅ ENVIAR VIA N8N con COPIAS Y WHATSAPP
-        from app.n8n_notifier import enviar_a_n8n
+        # ✅ ENVIAR VIA BACKEND NATIVO (Sin N8N) con COPIAS Y WHATSAPP
+        from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
         
         emails_enviados = []
         notificacion_exitosa = False
