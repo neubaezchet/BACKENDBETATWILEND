@@ -99,7 +99,7 @@ class ReporteService:
 
                 estado_resumen = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
                 if estado_resumen in ["DERIVADO_TTHH", "TTHH"]:
-                    estado_resumen = "PRESUNTO FRAUDE"
+                    estado_resumen = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
 
                 casos_resumen.append({
                     "id": caso.id,
@@ -176,7 +176,7 @@ class ReporteService:
 
                 estado_prev = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
                 if estado_prev in ["DERIVADO_TTHH", "TTHH"]:
-                    estado_prev = "PRESUNTO FRAUDE"
+                    estado_prev = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
 
                 registros.append({
                     "id": caso.id,
@@ -265,7 +265,7 @@ class ReporteService:
 
                 estado_val = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
                 if estado_val in ["DERIVADO_TTHH", "TTHH"]:
-                    estado_val = "PRESUNTO FRAUDE"
+                    estado_val = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
 
                 datos.append({
                     "SERIAL": caso.serial or f"CASO-{caso.id}",
