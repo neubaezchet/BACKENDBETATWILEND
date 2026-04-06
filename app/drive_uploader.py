@@ -26,6 +26,7 @@ GOOGLE_SERVICE_ACCOUNT_KEY = os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+GOOGLE_AUTH_MODE = (os.environ.get("GOOGLE_AUTH_MODE") or "").strip().lower()
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 # Archivo de cache del token (ruta temporal portable)
@@ -62,6 +63,11 @@ def _get_service_account_credentials():
         info,
         scopes=DRIVE_SCOPES,
     )
+
+
+def _auth_mode_service_account_forzado() -> bool:
+    """Permite bloquear fallback OAuth legacy cuando se quiere solo service account."""
+    return GOOGLE_AUTH_MODE in {"service_account", "service-account", "sa"}
 
 # ==================== CACHE Y LOCKS ====================
 
@@ -228,6 +234,13 @@ def _get_or_refresh_credentials():
 
     # Prioridad 1: Cuenta de servicio (sin refresh token)
     service_account_creds = _get_service_account_credentials()
+
+    if _auth_mode_service_account_forzado() and not service_account_creds:
+        raise ValueError(
+            "GOOGLE_AUTH_MODE=service_account pero no hay credenciales SA válidas. "
+            "Configura GOOGLE_SERVICE_ACCOUNT_KEY (o alias) correctamente."
+        )
+
     if service_account_creds:
         print("✅ Drive autenticado con cuenta de servicio")
         return service_account_creds

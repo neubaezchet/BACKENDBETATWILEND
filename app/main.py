@@ -223,6 +223,14 @@ def startup_event():
     global scheduler_sync, scheduler_recordatorios, scheduler_token
     init_db()
     print("🚀 API iniciada")
+
+    usa_cuenta_servicio = bool(
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+    )
+    print(f"🔐 Modo Google Auth: {'service_account' if usa_cuenta_servicio else 'refresh_token'}")
     
     # ⭐ AUTO-MIGRACIÓN: Agregar columnas nuevas si no existen
     try:
@@ -392,7 +400,10 @@ def startup_event():
     try:
         # ✅ NUEVO: Scheduler de renovación de token
         scheduler_token = iniciar_scheduler_token()
-        print("✅ Sistema de auto-renovación de token activado")
+        if scheduler_token:
+            print("✅ Sistema de auto-renovación de token activado")
+        else:
+            print("✅ Scheduler de token omitido (modo cuenta de servicio)")
     except Exception as e:
         print(f"⚠️ Error iniciando scheduler token: {e}")
     
