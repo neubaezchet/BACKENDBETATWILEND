@@ -33,6 +33,21 @@ DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 TOKEN_FILE = Path(tempfile.gettempdir()) / "google_token.json"
 
 
+def _service_account_env_present() -> bool:
+    """Indica si existe alguna configuración de cuenta de servicio en entorno."""
+    return bool(
+        GOOGLE_SERVICE_ACCOUNT_KEY
+        or GOOGLE_CREDENTIALS_JSON
+        or GOOGLE_SHEETS_CREDENTIALS
+        or GOOGLE_SERVICE_ACCOUNT_FILE
+    )
+
+
+def is_service_account_mode() -> bool:
+    """Modo SA activo por bandera explícita o por presencia de configuración SA."""
+    return _auth_mode_service_account_forzado() or _service_account_env_present()
+
+
 def _load_service_account_info() -> dict:
     """Carga credenciales de cuenta de servicio desde env var JSON o archivo."""
     raw_json = GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_CREDENTIALS_JSON or GOOGLE_SHEETS_CREDENTIALS
@@ -116,9 +131,14 @@ def force_regenerate_token():
         clear_service_cache()
         clear_token_cache()
 
-        # Si hay cuenta de servicio, no existe token para regenerar.
+        # En modo SA no se usa refresh token; validar/recrear servicio SA.
         service_account_creds = _get_service_account_credentials()
-        if service_account_creds:
+        if is_service_account_mode():
+            if not service_account_creds:
+                raise ValueError(
+                    "Modo service_account activo pero credenciales SA inválidas o incompletas. "
+                    "No se permite fallback a OAuth legacy."
+                )
             service = build('drive', 'v3', credentials=service_account_creds)
             service.files().list(pageSize=1, fields="files(id)").execute()
             with _service_cache_lock:
@@ -235,13 +255,13 @@ def _get_or_refresh_credentials():
     # Prioridad 1: Cuenta de servicio (sin refresh token)
     service_account_creds = _get_service_account_credentials()
 
-    if _auth_mode_service_account_forzado() and not service_account_creds:
-        raise ValueError(
-            "GOOGLE_AUTH_MODE=service_account pero no hay credenciales SA válidas. "
-            "Configura GOOGLE_SERVICE_ACCOUNT_KEY (o alias) correctamente."
-        )
-
-    if service_account_creds:
+    if is_service_account_mode():
+        if not service_account_creds:
+            raise ValueError(
+                "Modo service_account activo, pero las credenciales SA no son válidas. "
+                "Corrige GOOGLE_SERVICE_ACCOUNT_KEY/GOOGLE_CREDENTIALS_JSON/GOOGLE_SHEETS_CREDENTIALS "
+                "o GOOGLE_SERVICE_ACCOUNT_FILE. No se permite fallback a OAuth legacy."
+            )
         print("✅ Drive autenticado con cuenta de servicio")
         return service_account_creds
     
