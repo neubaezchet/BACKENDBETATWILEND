@@ -357,22 +357,66 @@ def _idx_to_col_letter(idx: int) -> str:
     return result
 
 def descargar_excel_desde_drive():
-    """Descarga el Excel desde Google Drive"""
+    """Descarga el Excel desde Google Sheets usando autenticación"""
     try:
-        print(f"📥 Descargando Excel desde Google Sheets...")
-        response = requests.get(EXCEL_DOWNLOAD_URL, timeout=30)
+        print(f"📥 Descargando Excel desde Google Sheets (autenticado)...")
         
-        if response.status_code == 200:
-            with open(LOCAL_CACHE_PATH, 'wb') as f:
-                f.write(response.content)
-            print(f"✅ Excel descargado correctamente ({len(response.content)} bytes)")
-            return LOCAL_CACHE_PATH
-        else:
-            print(f"❌ Error descargando Excel: HTTP {response.status_code}")
+        # PASO 1: Obtener servicio autenticado
+        service = _get_sheets_service()
+        if not service:
+            print(f"⚠️ No hay credenciales válidas, usando cache anterior")
             if os.path.exists(LOCAL_CACHE_PATH):
                 print(f"⚠️ Usando cache anterior")
                 return LOCAL_CACHE_PATH
             return None
+        
+        # PASO 2: Descargar como XLSX usando Google Sheets API (autenticado)
+        # URL de exportación autenticada a través de Drive API
+        try:
+            # Usar Drive API para descargar el archivo (si es un archivo real en Drive)
+            from googleapiclient.http import MediaIoBaseDownload
+            from io import BytesIO
+            
+            drive_request = service.files().export_media(
+                fileId=GOOGLE_DRIVE_FILE_ID,
+                mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            
+            # Descargar contenido
+            fh = BytesIO()
+            downloader = MediaIoBaseDownload(fh, drive_request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+            
+            # Guardar en cache local
+            fh.seek(0)
+            content = fh.read()
+            
+            with open(LOCAL_CACHE_PATH, 'wb') as f:
+                f.write(content)
+            
+            print(f"✅ Excel descargado autenticado ({len(content)} bytes)")
+            return LOCAL_CACHE_PATH
+            
+        except Exception as sheets_err:
+            # Si falla exports_media, usar Sheets API para exportar
+            print(f"   ⚠️ Export_media falló ({sheets_err}), intentando con URL pública...")
+            
+            # Intento 2: URL pública
+            response = requests.get(
+                f"https://docs.google.com/spreadsheets/d/{GOOGLE_DRIVE_FILE_ID}/export?format=xlsx",
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                with open(LOCAL_CACHE_PATH, 'wb') as f:
+                    f.write(response.content)
+                print(f"✅ Excel descargado vía URL pública ({len(response.content)} bytes)")
+                return LOCAL_CACHE_PATH
+            else:
+                raise Exception(f"Ambos métodos fallaron. HTTP {response.status_code} (esperaba 200)")
+        
     except Exception as e:
         print(f"❌ Error descargando Excel: {e}")
         if os.path.exists(LOCAL_CACHE_PATH):
