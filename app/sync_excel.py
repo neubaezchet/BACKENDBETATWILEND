@@ -43,6 +43,29 @@ def _get_sheets_service():
     return build('sheets', 'v4', credentials=creds)
 
 
+def _get_drive_service():
+    """Obtiene el servicio de Google Drive API."""
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+    import json
+    
+    creds_json = (
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+    )
+    if not creds_json:
+        print("   ⚠️ Sin credenciales de Google")
+        return None
+    
+    creds_dict = json.loads(creds_json)
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=['https://www.googleapis.com/auth/drive']
+    )
+    return build('drive', 'v3', credentials=creds)
+
+
 def _marcar_filas_procesadas_kactus(filas: list, columna_procesado_idx: int = None):
     """
     Marca filas como procesadas escribiendo la fecha actual en la columna "Procesado".
@@ -361,30 +384,27 @@ def descargar_excel_desde_drive():
     try:
         print(f"📥 Descargando Excel desde Google Sheets (autenticado)...")
         
-        # PASO 1: Obtener servicio autenticado
-        service = _get_sheets_service()
-        if not service:
-            print(f"⚠️ No hay credenciales válidas, usando cache anterior")
-            if os.path.exists(LOCAL_CACHE_PATH):
-                print(f"⚠️ Usando cache anterior")
-                return LOCAL_CACHE_PATH
-            return None
+        # PASO 1: Obtener servicio de Drive API (correctamente autenticado)
+        drive_service = _get_drive_service()
+        if not drive_service:
+            print(f"⚠️ No hay credenciales válidas para Drive, intentando URL pública...")
+            # Ir directo al fallback
+            raise Exception("No Drive service available")
         
-        # PASO 2: Descargar como XLSX usando Google Sheets API (autenticado)
-        # URL de exportación autenticada a través de Drive API
+        # PASO 2: Descargar el archivo usando Drive API
         try:
-            # Usar Drive API para descargar el archivo (si es un archivo real en Drive)
             from googleapiclient.http import MediaIoBaseDownload
             from io import BytesIO
             
-            drive_request = service.files().export_media(
+            # Usar Drive API para exportar el archivo como XLSX (autenticado)
+            export_request = drive_service.files().export(
                 fileId=GOOGLE_DRIVE_FILE_ID,
                 mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
             
             # Descargar contenido
             fh = BytesIO()
-            downloader = MediaIoBaseDownload(fh, drive_request)
+            downloader = MediaIoBaseDownload(fh, export_request)
             done = False
             while not done:
                 status, done = downloader.next_chunk()
@@ -396,14 +416,17 @@ def descargar_excel_desde_drive():
             with open(LOCAL_CACHE_PATH, 'wb') as f:
                 f.write(content)
             
-            print(f"✅ Excel descargado autenticado ({len(content)} bytes)")
+            print(f"✅ Excel descargado autenticado vía Drive API ({len(content)} bytes)")
             return LOCAL_CACHE_PATH
             
-        except Exception as sheets_err:
-            # Si falla exports_media, usar Sheets API para exportar
-            print(f"   ⚠️ Export_media falló ({sheets_err}), intentando con URL pública...")
-            
-            # Intento 2: URL pública
+        except Exception as drive_err:
+            print(f"   ⚠️ Drive API falló ({drive_err}), intentando con URL pública...")
+            raise  # Re-raise para ir al fallback
+        
+    except Exception as e:
+        try:
+            # FALLBACK 1: Intentar URL pública
+            print(f"   ⚠️ Intentando URL pública...")
             response = requests.get(
                 f"https://docs.google.com/spreadsheets/d/{GOOGLE_DRIVE_FILE_ID}/export?format=xlsx",
                 timeout=30
@@ -415,14 +438,18 @@ def descargar_excel_desde_drive():
                 print(f"✅ Excel descargado vía URL pública ({len(response.content)} bytes)")
                 return LOCAL_CACHE_PATH
             else:
-                raise Exception(f"Ambos métodos fallaron. HTTP {response.status_code} (esperaba 200)")
+                raise Exception(f"URL pública retornó HTTP {response.status_code}")
         
-    except Exception as e:
-        print(f"❌ Error descargando Excel: {e}")
-        if os.path.exists(LOCAL_CACHE_PATH):
-            print(f"⚠️ Usando cache anterior")
-            return LOCAL_CACHE_PATH
-        return None
+        except Exception as url_err:
+            print(f"   ⚠️ URL pública también falló ({url_err})")
+            
+            # FALLBACK 2: Usar cache anterior
+            if os.path.exists(LOCAL_CACHE_PATH):
+                print(f"   ⚠️ Usando cache anterior")
+                return LOCAL_CACHE_PATH
+            
+            print(f"❌ Error descargando Excel (sin cache disponible): {e}")
+            return None
 
 
 def sincronizar_empleado_desde_excel(cedula: str):
