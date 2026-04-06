@@ -9,6 +9,7 @@ Sincronización automática Excel → PostgreSQL + Token de Drive ULTRA-RESISTEN
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.sync_excel import sincronizar_excel_completo
+import os
 import datetime
 import time
 import threading
@@ -38,6 +39,16 @@ _status_lock = threading.Lock()
 
 MAX_CONSECUTIVE_ERRORS = 3  # Después de esto, activar modo emergencia
 REFRESH_INTERVAL_SECONDS = 120  # Renovar cada 2 minutos
+
+
+def _usa_cuenta_servicio() -> bool:
+    """Detecta si el backend está configurado con cuenta de servicio."""
+    return bool(
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+    )
 
 
 def get_token_status():
@@ -79,6 +90,19 @@ def verificar_drive_token():
     """
     global _api_in_progress
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+
+    # En cuenta de servicio no existe refresh token: solo validar conectividad.
+    if _usa_cuenta_servicio():
+        try:
+            from app.drive_uploader import get_authenticated_service
+            service = get_authenticated_service()
+            service.files().list(pageSize=1, fields="files(id)").execute()
+            _update_token_status(success=True)
+            return True
+        except Exception as e:
+            _update_token_status(success=False, error=str(e)[:120])
+            print(f"[{timestamp}] ⚠️ Error validando cuenta de servicio: {str(e)[:100]}")
+            return False
     
     # Usar lock global para evitar SSL race conditions
     with _google_api_lock:
@@ -173,6 +197,10 @@ def _heartbeat_drive():
     """
     global _api_in_progress
     
+    # En cuenta de servicio no se requiere heartbeat de token.
+    if _usa_cuenta_servicio():
+        return True
+
     # Si hay otra operación de API en progreso, saltar heartbeat
     if _api_in_progress:
         return True  # No es un error, simplemente omitimos
@@ -226,13 +254,14 @@ def sync_excel_con_verificacion():
     with _google_api_lock:
         _api_in_progress = True
         try:
-            # Pre-verificar estado del token
-            with _status_lock:
-                healthy = _token_status["is_healthy"]
-            
-            if not healthy:
-                print(f"[{timestamp}] ⚠️ Token no saludable, recuperando antes de sync...")
-                _verificar_drive_token_internal(timestamp)
+            # En modo refresh_token, verificar salud antes de sincronizar.
+            if not _usa_cuenta_servicio():
+                with _status_lock:
+                    healthy = _token_status["is_healthy"]
+
+                if not healthy:
+                    print(f"[{timestamp}] ⚠️ Token no saludable, recuperando antes de sync...")
+                    _verificar_drive_token_internal(timestamp)
             
             sincronizar_excel_completo()
             
@@ -293,15 +322,18 @@ def iniciar_sincronizacion_automatica():
         }
     )
     
-    # ✅ PRIMERO: Renovación de token de Drive (cada 2 minutos = más seguro)
-    scheduler.add_job(
-        verificar_drive_token,
-        'interval',
-        seconds=REFRESH_INTERVAL_SECONDS,  # 120 segundos = 2 minutos
-        id='verificar_drive_token',
-        name='Renovación Token Drive',
-        replace_existing=True
-    )
+    usa_service_account = _usa_cuenta_servicio()
+
+    # ✅ PRIMERO: Renovación de token de Drive (solo en modo refresh_token)
+    if not usa_service_account:
+        scheduler.add_job(
+            verificar_drive_token,
+            'interval',
+            seconds=REFRESH_INTERVAL_SECONDS,  # 120 segundos = 2 minutos
+            id='verificar_drive_token',
+            name='Renovación Token Drive',
+            replace_existing=True
+        )
     
     # ✅ Sincronización de Excel (cada 60 segundos, con pre-verificación)
     scheduler.add_job(
@@ -313,15 +345,16 @@ def iniciar_sincronizacion_automatica():
         replace_existing=True
     )
     
-    # ✅ Heartbeat silencioso (cada 30 segundos, solo verifica)
-    scheduler.add_job(
-        _heartbeat_drive,
-        'interval',
-        seconds=30,
-        id='heartbeat_drive',
-        name='Heartbeat Drive (silencioso)',
-        replace_existing=True
-    )
+    # ✅ Heartbeat silencioso (solo en modo refresh_token)
+    if not usa_service_account:
+        scheduler.add_job(
+            _heartbeat_drive,
+            'interval',
+            seconds=30,
+            id='heartbeat_drive',
+            name='Heartbeat Drive (silencioso)',
+            replace_existing=True
+        )
     
     # ✅ Limpieza quincenal de Hoja Kactus (día 1 y 16 a las 00:30)
     scheduler.add_job(
@@ -339,20 +372,28 @@ def iniciar_sincronizacion_automatica():
     print("=" * 60)
     print("🔄 SINCRONIZACIÓN AUTOMÁTICA ULTRA-RESISTENTE ACTIVADA")
     print("=" * 60)
-    print("   • Token Drive: cada 2 minutos (renovación proactiva)")
+    if usa_service_account:
+        print("   • Token Drive: modo cuenta de servicio (sin renovación)")
+    else:
+        print("   • Token Drive: cada 2 minutos (renovación proactiva)")
     print("   • Excel → PostgreSQL: cada 1 minuto")
-    print("   • Heartbeat Drive: cada 30 segundos (monitoreo)")
+    if not usa_service_account:
+        print("   • Heartbeat Drive: cada 30 segundos (monitoreo)")
     print("   • Limpieza Kactus: quincenal (día 1 y 16)")
     print("=" * 60)
     
-    # CRÍTICO: Renovar token PRIMERO antes de cualquier otra cosa
-    print("\n🚀 Iniciando renovación inicial del token...")
-    token_ok = verificar_drive_token()
-    
-    if token_ok:
-        print("✅ Token inicial válido, ejecutando sync inicial...")
+    # Inicio inicial: validar Drive solo en modo refresh token.
+    if usa_service_account:
+        print("\n🚀 Modo cuenta de servicio activo: iniciando sync inicial...")
         sync_excel_con_verificacion()
     else:
-        print("⚠️ Token inicial con problemas, se reintentará automáticamente")
+        print("\n🚀 Iniciando renovación inicial del token...")
+        token_ok = verificar_drive_token()
+
+        if token_ok:
+            print("✅ Token inicial válido, ejecutando sync inicial...")
+            sync_excel_con_verificacion()
+        else:
+            print("⚠️ Token inicial con problemas, se reintentará automáticamente")
     
     return scheduler

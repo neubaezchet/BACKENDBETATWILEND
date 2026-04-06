@@ -26,7 +26,11 @@ def _get_sheets_service():
     from googleapiclient.discovery import build
     import json
     
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    creds_json = (
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+    )
     if not creds_json:
         print("   ⚠️ Sin credenciales de Google")
         return None
