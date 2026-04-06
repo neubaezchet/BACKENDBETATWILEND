@@ -1,14 +1,14 @@
 """
 Cola Resiliente con Persistencia en BD - IncaNeurobaeza
 =======================================================
-Cuando N8N o Drive fallan (sesión cerrada, token expirado, etc.),
-los envíos pendientes se guardan en la tabla `pendientes_envio` (PostgreSQL).
+Cuando fallan los envíos o Drive, los pendientes se guardan en la tabla
+`pendientes_envio` (PostgreSQL).
 
 Un worker background revisa periódicamente la tabla y reintenta los envíos.
 Desde portal-neurobaeza se puede monitorear el estado de la cola.
 
 TIPOS de pendientes:
-- 'n8n': Notificaciones (email + WhatsApp) que no pudieron enviarse
+- 'notificacion': Notificaciones (email + WhatsApp) que no pudieron enviarse
 - 'drive': Archivos que no pudieron subirse a Google Drive
 """
 
@@ -22,17 +22,16 @@ from typing import Optional
 
 # ==================== GUARDAR PENDIENTES EN BD ====================
 
-def guardar_pendiente_n8n(payload: dict, error: str = None):
+def guardar_pendiente_notificacion(payload: dict, error: str = None):
     """
     Guarda una notificación fallida en la tabla pendientes_envio.
-    Se llama cuando N8N no responde (sesión cerrada, timeout, etc.)
     """
     try:
         from app.database import SessionLocal, PendienteEnvio
         db = SessionLocal()
         
         pendiente = PendienteEnvio(
-            tipo='n8n',
+            tipo='notificacion',
             payload=payload,
             intentos=0,
             ultimo_error=str(error)[:500] if error else None,
@@ -40,11 +39,11 @@ def guardar_pendiente_n8n(payload: dict, error: str = None):
         )
         db.add(pendiente)
         db.commit()
-        print(f"💾 [COLA-BD] Notificación N8N guardada en cola persistente: {payload.get('serial', '?')}")
+        print(f"💾 [COLA-BD] Notificación guardada en cola persistente: {payload.get('serial', '?')}")
         db.close()
         return True
     except Exception as e:
-        print(f"❌ [COLA-BD] Error guardando pendiente N8N: {e}")
+        print(f"❌ [COLA-BD] Error guardando pendiente de notificación: {e}")
         traceback.print_exc()
         return False
 
@@ -86,7 +85,7 @@ class ResilientQueueProcessor:
     """
     Worker background que procesa la tabla pendientes_envio.
     - Revisa cada 60 segundos si hay pendientes
-    - Reintenta N8N y Drive automáticamente
+    - Reintenta notificaciones y Drive automáticamente
     - Máximo 10 intentos por pendiente (después se marca como fallido permanente)
     - Thread-safe
     """
@@ -101,7 +100,7 @@ class ResilientQueueProcessor:
             "procesados_ok": 0,
             "procesados_error": 0,
             "ultima_revision": None,
-            "n8n_recuperados": 0,
+            "notificaciones_recuperadas": 0,
             "drive_recuperados": 0,
         }
     
@@ -164,8 +163,8 @@ class ResilientQueueProcessor:
             
             for pendiente in pendientes:
                 try:
-                    if pendiente.tipo == 'n8n':
-                        exito = self._reintentar_n8n(pendiente.payload)
+                    if pendiente.tipo == 'notificacion':
+                        exito = self._reintentar_notificacion(pendiente.payload)
                     elif pendiente.tipo == 'drive':
                         exito = self._reintentar_drive(pendiente.payload)
                     else:
@@ -179,8 +178,8 @@ class ResilientQueueProcessor:
                         pendiente.procesado = True
                         pendiente.ultimo_error = None
                         self._stats["procesados_ok"] += 1
-                        if pendiente.tipo == 'n8n':
-                            self._stats["n8n_recuperados"] += 1
+                        if pendiente.tipo == 'notificacion':
+                            self._stats["notificaciones_recuperadas"] += 1
                         else:
                             self._stats["drive_recuperados"] += 1
                         print(f"✅ [COLA-BD] Pendiente #{pendiente.id} ({pendiente.tipo}) procesado OK")
@@ -203,18 +202,17 @@ class ResilientQueueProcessor:
                     db.commit()
                     print(f"❌ [COLA-BD] Error procesando pendiente #{pendiente.id}: {e}")
                 
-                # Pequeña pausa entre pendientes para no saturar
-                time.sleep(2)
+                # Procesamiento continuo: sin pausa artificial entre pendientes
         
         finally:
             db.close()
     
-    def _reintentar_n8n(self, payload: dict) -> bool:
-        """Reintenta enviar notificación a N8N"""
+    def _reintentar_notificacion(self, payload: dict) -> bool:
+        """Reintenta enviar notificación usando el backend nativo"""
         try:
-            from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
+            from app.email_service import enviar_notificacion
             
-            resultado = enviar_a_n8n(
+            resultado = enviar_notificacion(
                 tipo_notificacion=payload.get('tipo_notificacion', 'confirmacion'),
                 email=payload.get('email', ''),
                 serial=payload.get('serial', ''),
@@ -229,7 +227,7 @@ class ResilientQueueProcessor:
             )
             return bool(resultado)
         except Exception as e:
-            print(f"❌ [COLA-BD] Error reintentando N8N: {e}")
+            print(f"❌ [COLA-BD] Error reintentando notificación: {e}")
             return False
     
     def _reintentar_drive(self, payload: dict) -> bool:
@@ -312,9 +310,9 @@ class ResilientQueueProcessor:
                 PendienteEnvio.procesado == False
             ).count()
             
-            pendientes_n8n = db.query(PendienteEnvio).filter(
+            pendientes_notificacion = db.query(PendienteEnvio).filter(
                 PendienteEnvio.procesado == False,
-                PendienteEnvio.tipo == 'n8n'
+                PendienteEnvio.tipo == 'notificacion'
             ).count()
             
             pendientes_drive = db.query(PendienteEnvio).filter(
@@ -352,7 +350,7 @@ class ResilientQueueProcessor:
             return {
                 "worker_activo": self._running,
                 "total_pendientes": total_pendientes,
-                "pendientes_n8n": pendientes_n8n,
+                "pendientes_notificacion": pendientes_notificacion,
                 "pendientes_drive": pendientes_drive,
                 "fallidos_permanentes": fallidos_permanentes,
                 "stats": self._stats,

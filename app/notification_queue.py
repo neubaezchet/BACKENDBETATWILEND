@@ -232,7 +232,7 @@ class NotificationQueue:
         print(f"{'='*60}")
         
         try:
-            from app.email_service import enviar_notificacion  # ✅ MIGRACIÓN: N8N → Backend Native
+            from app.email_service import enviar_notificacion  # ✅ Backend nativo
             
             resultado = enviar_notificacion(
                 tipo_notificacion=notif.tipo,
@@ -273,13 +273,13 @@ class NotificationQueue:
             else:
                 # ❌ FALLO - Reintentar o descartar
                 notif.intentos += 1
-                notif.ultimo_error = "enviar_a_n8n retornó False"
+                notif.ultimo_error = "enviar_notificacion retornó False"
                 
                 if notif.intentos >= notif.max_intentos:
                     # ✅ GUARDAR EN COLA PERSISTENTE (BD) en vez de descartar
                     try:
-                        from app.resilient_queue import guardar_pendiente_n8n
-                        guardar_pendiente_n8n({
+                        from app.resilient_queue import guardar_pendiente_notificacion
+                        guardar_pendiente_notificacion({
                             'tipo_notificacion': notif.tipo,
                             'email': notif.email,
                             'serial': notif.serial,
@@ -313,10 +313,7 @@ class NotificationQueue:
                     
                     print(f"💾 [{serial}] Notificación {notif.tipo} guardada en COLA BD después de {notif.intentos} intentos")
                 else:
-                    # Esperar antes de reintentar
-                    espera = 5 * notif.intentos  # 5s, 10s, 15s
-                    print(f"⏳ [{serial}] Reintentando en {espera}s (intento {notif.intentos}/{notif.max_intentos})")
-                    time.sleep(espera)
+                    print(f"⏳ [{serial}] Reintento programado (intento {notif.intentos}/{notif.max_intentos})")
                     
         except Exception as e:
             notif.intentos += 1
@@ -326,9 +323,9 @@ class NotificationQueue:
             
             if notif.intentos >= notif.max_intentos:
                 # ✅ GUARDAR EN COLA PERSISTENTE (BD) en vez de perder
-                try:
-                    from app.resilient_queue import guardar_pendiente_n8n
-                    guardar_pendiente_n8n({
+                    try:
+                        from app.resilient_queue import guardar_pendiente_notificacion
+                        guardar_pendiente_notificacion({
                         'tipo_notificacion': notif.tipo,
                         'email': notif.email,
                         'serial': notif.serial,

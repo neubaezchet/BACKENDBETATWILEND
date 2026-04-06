@@ -1,0 +1,92 @@
+[33ma157da9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m fix: agregar html2text y secure-smtplib a requirements.txt para Railway
+[33m5b3c502[m docs: verificacion completa de sistema resiliente backend
+[33m02addfe[m feat: actualizar endpoint exportar/casos con fechas DD/MM/YYYY y presunto fraude
+[33m63ba9cc[m feat: limpiar fechas formatos y agregar columnas DIA ENVIO en todas las exportaciones
+[33m5416766[m feat: actualizar estado PRESUNTO FRAUDE en reportes con descripcion completa
+[33m39a2c90[m docs: guia completa de directorio de correos - empresas y presunto fraude
+[33m9936c3a[m fix: DERIVADO_TTHH presunto fraude - usar plantilla falsa para empleado + enviar reporte a presunto_fraude con CC empresa
+[33mb89b680[m migration: N8N → Backend Native SMTP - add email_service.py, notificacion_service.py, update imports
+[33mf9450e9[m feat: cola resiliente activa - Drive/N8N fallos entran a cola, formulario siempre responde OK
+[33ma5f7b24[m feat: exportacion CSV/Excel con fechas DD/MM/YYYY, FECHA/HORA ENVIO y TTHH→PRESUNTO FRAUDE
+[33m5695bb0[m fix: sync Kactus siempre actualiza dias/fecha_inicio/fecha_fin independiente del traslape
+[33m7817ea0[m fix: restaurar loop timeline y gaps en endpoint powerbi/persona/{cedula}
+[33m1677020[m Fix: PowerBI persona - KeyError 'dias', use dias_hueco from huecos_detectados structure
+[33m38ed05c[m Fix: PowerBI persona - gaps NameError, assign from analisis huecos_detectados
+[33mbfaead7[m Fix Kactus sync: override discordant fecha_fin/dias_incapacidad from BD, respect traslap adjustments
+[33mae27108[m Fix: real employee name in enviar_validar, Drive link button in boss alert, checks details in enviar_validar template
+[33m849670d[m Fix enviar_validar template: add checks_seleccionados to show inconsistencies in fraud email body
+[33mc361dd1[m Fix UnboundLocalError: remove inline import of enviar_a_n8n inside conditional block causing Python scoping bug in validar_caso_con_checks
+[33m6657dcb[m Enrich tthh/enviar_validar templates: show employee details table, dates, and detected checks/motives
+[33m1503259[m Fix reminder email: real days elapsed, show rejection motives, attach PDF to boss alert
+[33md4d8b53[m Fix 404 for /pendientes-envio by moving route to root main.py
+[33m4976b14[m Create create_superadmin.py
+[33m1991db1[m Fix IndentationError in reporte_service.py causing server crash
+[33md2aef6d[m .
+[33mdf82f8a[m .
+[33me4f2892[m Update database.py
+[33mb014658[m .
+[33mb6707b2[m .
+[33m5378b4e[m .
+[33mde5ade2[m fix: drive_link en lista casos + WhatsApp con link Drive en todos los mensajes
+[33m71c3355[m fix: robustecer emails presunto fraude - try/except Drive + CC empresa en todos los correos
+[33m8c6d80b[m feat: posible fraude reestructurado - validada verdadera/falsa, dual emails, adulterada en reportes
+[33m0bbf0a2[m feat: nuevo flujo validacion - solicitar epicrisis, enviar a validar, posible fraude neutro
+[33m354d8a8[m fix: cleanup duplicados DELETE antes de UPDATE (evita UniqueViolation) + fix Case.empresa_id -> company_id
+[33m07cee3d[m fix: CC emails fallback a email_copia + endpoint PUT empresa email-copia + cleanup duplicados startup
+[33m1b6d8d6[m fix: limpieza empresas duplicadas, strip nombres, endpoint editar empresas, diagnostico directorio
+[33mecf55f6[m temp: endpoint diagnostico directorio
+[33ma663328[m Create check_db.py
+[33me96bc69[m fix: numero contacto corporativo 3173391828 en plantillas + fix boton eliminar incapacidad
+[33maa2ba4c[m fix: 3 bugs - sync es_historico siempre true para Kactus, tabla-viva enum crash, dashboard excluye historicos
+[33m205b04f[m feat: add Kactus tipo mappings - maternidad, accidente trabajo, ley maria, enfermedad profesional
+[33m3984a62[m Add Kactus tipo formats to TIPO_MAP (I - INCAPACIDAD, L - LICENCIA, etc)
+[33ma985eae[m Perf: skip re-updating cases already processed in BD, only mark Excel
+[33m6f1a9cd[m .
+[33m92969d8[m Fix: enum estadocaso en migracion (COMPLETA no VALIDADA)
+[33m5f063cd[m Fix: es_historico + procesado automatico en sync Kactus, migracion completa con columnas procesado
+[33mc5d2510[m ,
+[33me077f46[m refactor: Remove Claude AI dependency, use static templates (keep AI only for personalized messages)
+[33m1ecb4bf[m fix: todas las columnas de Cases_Kactus ahora son case-insensitive
+[33mfdd9208[m fix: sync_excel columnas case-insensitive (procesado, historico, tipo, dias)
+[33m3c71b63[m feat: prorroga contexto maternidad - si hay cadena previa y correlaciona, cuenta como prorroga aunque haya licencia de por medio
+[33m3b98d7b[m fix: no enviar recordatorios a empleados retirados (activo=False)
+[33m6180e43[m fix: verificar-duplicado ahora considera tipo, permite certificado+incapacidad mismas fechas
+[33m40fc6bb[m Fix SSL race conditions with global API lock - prevents segmentation faults
+[33m34ea2d1[m feat: Importación de datos históricos de Kactus para conteo 180 días
+[33mac6f7ef[m fix: Auto-recuperación TOTAL del token de Drive
+[33mfc071a7[m feat: Sistema de Token de Drive ULTRA-RESISTENTE
+[33m36d9f76[m feat: Sistema de limpieza automática Cases_Kactus > 15 días
+[33m7d25460[m fix: limpiar referencias a hojas Excel inexistentes (solo 2 hojas)
+[33m931b88d[m fix: Cases_Kactus sync - CREAR nuevos casos desde Hoja 2 + eliminar filas procesadas
+[33ma17ef21[m Update incapacidades.db
+[33me196eca[m Fix: auto-crear tabla correos_notificacion + endpoint diagnostico DB
+[33m3968570[m .
+[33m605c0ff[m .
+[33m33812e4[m c
+[33md80ea50[m Update validador.py
+[33m0f7f2b2[m docs: deployment status for database column fix
+[33mf66aaf7[m docs: add fix documentation for database column migration
+[33mca4714d[m fix: add missing case columns (intentos_incompletos, fecha_ultimo_incompleto) to auto-migration
+[33m993274c[m feat: Sistema completo de historico y contador de intentos incompletos
+[33m2393e8e[m fix: Agregar mensaje WhatsApp especial para COMPLETA
+[33mef6dede[m fix: Notificaciones con directorio en TODOS los estados + validar bloqueo fix
+[33m20f3a5b[m feat: Enviar Email + WhatsApp cuando validador marca incapacidad como COMPLETA
+[33ma176c46[m fix: Usar directorio de empresas en lugar de tabla Company.email_copia
+[33me7624e6[m fix: estructura Drive + eliminar de Incompletas al marcar COMPLETA + email CC fix
+[33mea86dab[m fix: login acepta email o username + email_copia reemplazado por directorio en estado COMPLETA
+[33mdf4860e[m feat: agregar permiso exportaciones al setup superadmin
+[33m62e9321[m fix: flag_modified en metadata_form JSON - checks_seleccionados ahora se persisten
+[33m28e01aa[m refactor: emails CC/copia ahora vienen del Directorio (correos_notificacion) - Ya no usa Company.email_copia ni contacto_email del Excel Hoja 2 - enviar_email_con_adjuntos: CC empresa desde directorio area=empresas - obtener_emails_presunto_fraude: solo directorio area=presunto_fraude - alerta_180: solo directorio area=alerta_180 - sync_excel: eliminado sync de Hoja 2 (emails se gestionan desde admin portal)
+[33m0b7ff1b[m feat: add total_reenvios + recordatorios_count to cases list API
+[33m5fe2e0e[m fix: Drive file flow - historico stays, copy to Completes, reenvio copies to historico+completes
+[33me964784[m fix: update completa email+WhatsApp text - enviada correctamente, procederemos a subirla
+[33m51b7c77[m fix: NameError verificar_token_admin + add gspread dependency
+[33mfdfd087[m Update requirements.txt
+[33mf78a81d[m feat: endpoint POST /admin/test-recordatorios para probar manualmente
+[33me2f8179[m fix: recordatorios incompletas a 3 y 5 dias con contador
+[33m8d05852[m fix: email incompleta formato legible + WhatsApp muestra motivos/soportes
+[33mf92420b[m feat: endpoints verificar-duplicado + export PDF con nombre cedula_fechaInicio_fechaFin
+[33md7aa6ec[m feat: exportar Drive temporal (copias 24h) + limpieza auto 6h + preview modo_export inteligente
+[33m9745086[m feat: historico con filtro por mes + quincenas Drive
+[33mb63c486[m feat: exportacion por lotes de 500 + historico anual via Drive
+[33m078767b[m feat: forgot-passwo

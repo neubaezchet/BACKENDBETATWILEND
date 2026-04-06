@@ -12,10 +12,19 @@ from app.database import SessionLocal, Case, EstadoCaso
 from app.ia_redactor import redactar_recordatorio_7dias, redactar_alerta_jefe_7dias
 from app.email_templates import get_email_template_universal
 import os
-from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
+from app.email_service import enviar_notificacion  # ✅ Backend nativo
+
+def _parsear_serial_local(serial: str):
+    """Extrae cédula y fechas desde el serial cuando aplica."""
+    partes = (serial or "").split("_")
+    if len(partes) >= 7:
+        cedula = partes[0]
+        fechas = f"del {partes[1]}/{partes[2]}/{partes[3]} al {partes[4]}/{partes[5]}/{partes[6]}"
+        return cedula, fechas
+    return None, None
 
 def send_html_email(to_email: str, subject: str, html_body: str, caso=None, whatsapp_message=None) -> bool:
-    """Envía email usando N8N con copias a empresa y empleado BD"""
+    """Envía email y WhatsApp con copias a empresa y empleado BD"""
     tipo_map = {
         'Recordatorio': 'recordatorio',
         'Seguimiento': 'alerta_jefe'
@@ -62,7 +71,7 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None, what
         if hasattr(caso, 'telefono_form') and caso.telefono_form:
             whatsapp = caso.telefono_form
     
-    resultado = enviar_a_n8n(
+    resultado = enviar_notificacion(
         tipo_notificacion=tipo_notificacion,
         email=to_email,
         serial=caso.serial if caso else 'AUTO',
@@ -79,7 +88,7 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None, what
         print(f"✅ Email enviado a {to_email} (CC empresa: {cc_email or 'N/A'}, CC BD: {correo_bd or 'N/A'}, WhatsApp: {whatsapp or 'N/A'})")
         return True
     
-    print(f"❌ Error enviando email a {to_email}")
+    print(f"❌ Error enviando notificación a {to_email}")
     return False
 
 
@@ -183,9 +192,8 @@ def verificar_casos_pendientes():
                     if checks_guardados:
                         try:
                             from app.checks_disponibles import CHECKS_DISPONIBLES
-                            from app.n8n_notifier import _parsear_serial_wa
                             from app.ia_redactor import DOCUMENTOS_REQUERIDOS
-                            _ced, _fechas = _parsear_serial_wa(caso.serial)
+                            _ced, _fechas = _parsear_serial_local(caso.serial)
                             _ftxt = f" {_fechas}" if _fechas else ""
                             wa_l = [f"🔔 *Recordatorio - Documentación Pendiente*", f"Incapacidad{_ftxt}", ""]
                             motivos = [CHECKS_DISPONIBLES[c]['label'] for c in checks_guardados if c in CHECKS_DISPONIBLES]
@@ -267,7 +275,7 @@ def verificar_casos_pendientes():
                                     adjuntos_jefe.append({'filename': _osjefe.path.basename(doc.file_path), 'content': _b64j.b64encode(_f.read()).decode('utf-8'), 'mimetype': 'application/pdf'})
                     except Exception as _ej:
                         print(f"   ⚠️ Sin adjunto para jefe: {_ej}")
-                    resultado_jefe = enviar_a_n8n(
+                    resultado_jefe = enviar_notificacion(
                         tipo_notificacion='alerta_jefe',
                         email=empleado.jefe_email,
                         serial=caso.serial,

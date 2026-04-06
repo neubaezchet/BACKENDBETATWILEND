@@ -4,7 +4,7 @@ SERVICIO DE ALERTAS 180 DÍAS - Envío automático de emails
 Analiza empleados cercanos a 180 días, envía emails de alerta
 a Talento Humano y correos configurados.
 
-Usa el flujo existente: Python → n8n webhook → Gmail SMTP
+Usa el flujo existente: Python → servicio de notificaciones → Gmail SMTP
 """
 
 import logging
@@ -169,7 +169,7 @@ def _enviar_alerta_email(
     alerta: dict,
     destinatarios: List[str],
 ) -> dict:
-    """Envía el email de alerta vía n8n y registra en el log"""
+    """Envía el email de alerta vía servicio nativo y registra en el log"""
     
     tipo = alerta.get("tipo", "ALERTA_TEMPRANA")
     dias = alerta.get("dias_acumulados", 0)
@@ -205,9 +205,9 @@ def _enviar_alerta_email(
     
     for email_dest in destinatarios:
         try:
-            from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
-            
-            resultado = enviar_a_n8n(
+            from app.email_service import enviar_notificacion
+
+            resultado = enviar_notificacion(
                 tipo_notificacion="alerta_180",
                 email=email_dest,
                 serial=f"ALERTA-180-{cedula}",
