@@ -7,11 +7,13 @@ import os
 import json
 import time
 import datetime
+import tempfile
 import threading
 import functools
 from pathlib import Path
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -20,9 +22,46 @@ CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN")
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI")
+GOOGLE_SERVICE_ACCOUNT_KEY = os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+GOOGLE_SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-# Archivo de cache del token (Render usa /tmp)
-TOKEN_FILE = Path("/tmp/google_token.json")
+# Archivo de cache del token (ruta temporal portable)
+TOKEN_FILE = Path(tempfile.gettempdir()) / "google_token.json"
+
+
+def _load_service_account_info() -> dict:
+    """Carga credenciales de cuenta de servicio desde env var JSON o archivo."""
+    raw_json = GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_CREDENTIALS_JSON or GOOGLE_SHEETS_CREDENTIALS
+
+    if raw_json:
+        try:
+            return json.loads(raw_json)
+        except Exception as e:
+            raise ValueError(f"JSON inválido en credenciales de cuenta de servicio: {e}")
+
+    if GOOGLE_SERVICE_ACCOUNT_FILE:
+        sa_path = Path(GOOGLE_SERVICE_ACCOUNT_FILE)
+        if not sa_path.exists():
+            raise ValueError(f"GOOGLE_SERVICE_ACCOUNT_FILE no existe: {sa_path}")
+        with open(sa_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    return None
+
+
+def _get_service_account_credentials():
+    """Retorna credenciales de cuenta de servicio si están configuradas."""
+    info = _load_service_account_info()
+    if not info:
+        return None
+
+    return ServiceAccountCredentials.from_service_account_info(
+        info,
+        scopes=DRIVE_SCOPES,
+    )
 
 # ==================== CACHE Y LOCKS ====================
 
@@ -70,6 +109,16 @@ def force_regenerate_token():
         # 1. Limpiar TODO
         clear_service_cache()
         clear_token_cache()
+
+        # Si hay cuenta de servicio, no existe token para regenerar.
+        service_account_creds = _get_service_account_credentials()
+        if service_account_creds:
+            service = build('drive', 'v3', credentials=service_account_creds)
+            service.files().list(pageSize=1, fields="files(id)").execute()
+            with _service_cache_lock:
+                _service_cache = service
+            print("✅ Servicio de Drive recreado con cuenta de servicio")
+            return service
         
         # 2. Crear credenciales desde cero
         if not all([CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
@@ -176,6 +225,12 @@ def _get_or_refresh_credentials():
     - Auto-recuperación en caso de error
     ✅ CORREGIDO: Ahora siempre genera nuevo token si caduca
     """
+
+    # Prioridad 1: Cuenta de servicio (sin refresh token)
+    service_account_creds = _get_service_account_credentials()
+    if service_account_creds:
+        print("✅ Drive autenticado con cuenta de servicio")
+        return service_account_creds
     
     with _creds_lock:  # ← EVITA RENOVACIONES SIMULTÁNEAS
         creds = None
@@ -198,7 +253,7 @@ def _get_or_refresh_credentials():
                     token_data = json.load(token)
                     creds = Credentials.from_authorized_user_info(
                         token_data, 
-                        scopes=["https://www.googleapis.com/auth/drive.file"]
+                        scopes=DRIVE_SCOPES
                     )
                     
                     # ✅ VERIFICAR SI NECESITA RENOVACIÓN
@@ -242,7 +297,7 @@ def _get_or_refresh_credentials():
                     token_uri="https://oauth2.googleapis.com/token",
                     client_id=CLIENT_ID,
                     client_secret=CLIENT_SECRET,
-                    scopes=["https://www.googleapis.com/auth/drive.file"]
+                    scopes=DRIVE_SCOPES
                 )
                 
                 # Renovar para obtener el access_token
@@ -277,7 +332,7 @@ def _get_or_refresh_credentials():
                     'token_uri': creds.token_uri,
                     'client_id': creds.client_id,
                     'client_secret': creds.client_secret,
-                    'scopes': creds.scopes,
+                    'scopes': creds.scopes or DRIVE_SCOPES,
                     'expiry': creds.expiry.isoformat() if creds.expiry else None
                 }
                 

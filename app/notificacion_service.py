@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Servicio de Notificaciones — Orquestador Principal
-Reemplaza completamente el workflow de N8N
+Servicio nativo de orquestación de notificaciones
 Flujo: Webhook → Procesar Datos → Email SMTP + WhatsApp WAHA → Cola resiliente
 
 Versión: 1.0 — 29/03/2026
-Compatible 100% con interfaz anterior (enviar_a_n8n → enviar_notificacion)
 """
 
 import re
@@ -14,14 +13,13 @@ from typing import Optional, List, Dict, Tuple
 from datetime import datetime
 from html2text import html2text as html_to_text_converter
 
-from app.email_service import enviar_notificacion, verificar_salud_email
-from app.n8n_notifier import generar_mensaje_whatsapp  # Templates WhatsApp
+from app.email_service import enviar_notificacion, verificar_salud_email, generar_mensaje_whatsapp
 
 logger = logging.getLogger(__name__)
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# PROCESAMIENTO DE DATOS — Lógica del nodo "Procesar Datos" de N8N
+# PROCESAMIENTO DE DATOS — Lógica de procesamiento de notificaciones
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def procesar_datos_notificacion(
@@ -274,7 +272,7 @@ def enviar_notificacion_completa(
     drive_link: Optional[str] = None
 ) -> Dict:
     """
-    Orquestador principal - Reemplaza completamente el workflow de N8N
+    Orquestador principal de notificaciones
     
     Flujo:
     1. Procesa datos (limpia, valida, formatea)
@@ -297,7 +295,7 @@ def enviar_notificacion_completa(
     """
     
     logger.info(f"\n{'='*80}\n"
-                f"📤 ENVIAR NOTIFICACIÓN COMPLETA (Backend Nativo — Sin N8N)\n"
+                f"📤 ENVIAR NOTIFICACIÓN COMPLETA (Backend nativo)\n"
                 f"{'='*80}\n")
     
     # ─────────────────────────────────────────────────────────────────────
@@ -420,12 +418,3 @@ def enviar_notificacion_completa(
     return response
 
 
-# ════════════════════════════════════════════════════════════════════════════════════
-# COMPATIBILIDAD
-# ════════════════════════════════════════════════════════════════════════════════════
-
-# Alias para reemplazar directamente enviar_a_n8n en todo el código
-def enviar_a_n8n(*args, **kwargs) -> bool:
-    """Compatibilidad: llama a enviar_notificacion_completa"""
-    resultado = enviar_notificacion_completa(*args, **kwargs)
-    return resultado['status'] in ['success', 'partial']

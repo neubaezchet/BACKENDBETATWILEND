@@ -26,12 +26,22 @@ from app.database import (
 from app.checks_disponibles import CHECKS_DISPONIBLES, obtener_checks_por_tipo
 from app.email_templates import get_email_template_universal
 from app.drive_manager import CaseFileOrganizer
-from app.email_service import enviar_notificacion, enviar_a_n8n  # ✅ MIGRACIÓN: N8N → Backend Native
+from app.email_service import enviar_notificacion  # ✅ Backend nativo
 from app.completes_manager import completes_mgr  # ✅ NUEVO - Sincronización Completes
 from app.notification_queue import notification_queue, NotificacionPendiente  # ✅ Cola de notificaciones
 from app.services.prorroga_detector import analizar_historial_empleado  # ✅ Detección de prórrogas por cadenas
 
 router = APIRouter(prefix="/validador", tags=["Portal de Validadores"])
+
+
+def _parsear_serial_local(serial: str):
+    """Extrae cédula y fechas desde el serial cuando aplica."""
+    partes = (serial or "").split("_")
+    if len(partes) >= 7:
+        cedula = partes[0]
+        fechas = f"del {partes[1]}/{partes[2]}/{partes[3]} al {partes[4]}/{partes[5]}/{partes[6]}"
+        return cedula, fechas
+    return None, None
 
 # ==================== MODELOS PYDANTIC ====================
 
@@ -147,7 +157,6 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
     ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
     """
     import base64
-    from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
     
     # Convertir adjuntos a base64
     adjuntos_base64 = []
@@ -207,14 +216,14 @@ def enviar_email_con_adjuntos(to_email, subject, html_body, adjuntos_paths=[], c
             whatsapp = caso.telefono_form
             print(f"📱 WhatsApp: {whatsapp}")
     
-    # ✅ Si no se pasó mensaje WhatsApp explícito, n8n_notifier lo genera automáticamente
+    # ✅ Si no se pasó mensaje WhatsApp explícito, se usa el mensaje recibido por parámetro
     # (whatsapp_message ya viene del parámetro de la función)
     
     # Obtener drive_link si hay caso
     drive_link = caso.drive_link if caso and hasattr(caso, 'drive_link') else None
     
-    # Enviar a n8n
-    resultado = enviar_a_n8n(
+    # Enviar notificación
+    resultado = enviar_notificacion(
         tipo_notificacion=tipo_notificacion,
         email=to_email,
         serial=caso.serial if caso else 'N/A',
@@ -245,7 +254,6 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
     ✅ Sistema profesional de envío con copias por empresa, empleado Y WhatsApp
     """
     import base64
-    from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
     
     # Convertir adjuntos a base64
     adjuntos_base64 = []
@@ -311,8 +319,8 @@ def enviar_email_con_adjuntos_temp(to_email, subject, html_body, adjuntos_paths=
     # Obtener drive_link si hay caso
     drive_link = caso.drive_link if caso and hasattr(caso, 'drive_link') else None
     
-    # Enviar a n8n
-    resultado = enviar_a_n8n(
+    # Enviar notificación
+    resultado = enviar_notificacion(
         tipo_notificacion=tipo_notificacion,
         email=to_email,
         serial=caso.serial if caso else 'N/A',
@@ -952,9 +960,7 @@ async def cambiar_estado(
                     )
                     
                     # 🔗 Enviar a presunto_fraude CON CC de empresa
-                    from app.notificacion_service import enviar_a_n8n
-                    
-                    enviar_a_n8n(
+                    enviar_notificacion(
                         tipo_notificacion="presunto_fraude_alerta",
                         email=emails_pf[0] if emails_pf else "xoblaxbaezaospino@gmail.com",  # Email principal
                         cc_email=",".join(emails_pf[1:]) if len(emails_pf) > 1 else None,  # CCs
@@ -1022,7 +1028,7 @@ async def estado_cola_resiliente(
 ):
     """
     Retorna el estado de la cola resiliente (pendientes en BD).
-    Muestra pendientes de N8N y Drive, fallidos, stats del worker.
+    Muestra pendientes de notificaciones y Drive, fallidos, stats del worker.
     """
     try:
         from app.resilient_queue import resilient_queue
@@ -1037,7 +1043,7 @@ async def forzar_cola_resiliente(
 ):
     """
     Fuerza el procesamiento inmediato de la cola resiliente.
-    Útil cuando sabes que N8N ya tiene sesión activa o el token de Drive fue renovado.
+    Útil cuando ya se recuperó el canal de notificaciones o el token de Drive fue renovado.
     """
     try:
         from app.resilient_queue import resilient_queue
@@ -2893,7 +2899,7 @@ async def validar_caso_con_checks(
             asunto_completa = f"CC {caso.cedula} - {serial}{fechas_str_c} - Validada - {nombre_emp} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             
             if caso.email_form:
-                enviar_a_n8n(
+                enviar_notificacion(
                     tipo_notificacion='completa',
                     email=caso.email_form,
                     serial=serial,
@@ -3040,8 +3046,7 @@ async def validar_caso_con_checks(
             asunto = f"CC {caso.cedula} - {serial}{fechas_str} - {estado_label} - {empleado.nombre if empleado else 'Colaborador'} - {caso.empresa.nombre if caso.empresa else 'N/A'}"
             # ✅ Construir mensaje WhatsApp con los checks directamente (sin parsear HTML)
             from app.checks_disponibles import CHECKS_DISPONIBLES
-            from app.n8n_notifier import _parsear_serial_wa
-            _cedula_wa, _fechas_wa = _parsear_serial_wa(serial)
+            _cedula_wa, _fechas_wa = _parsear_serial_local(serial)
             wa_lineas = []
             wa_emoji = '⚠️'
             wa_titulo = 'Documentacion Incompleta' if accion == 'incompleta' else 'Documento Ilegible'
@@ -3158,7 +3163,7 @@ async def validar_caso_con_checks(
                         _cc_filtrado = [e.strip() for e in _cc_para_dest.split(",") if e.strip().lower() != email_dest.lower()]
                         _cc_para_dest = ",".join(_cc_filtrado) if _cc_filtrado else None
                     
-                    resultado = enviar_a_n8n(
+                    resultado = enviar_notificacion(
                         tipo_notificacion='tthh',
                         email=email_dest,
                         serial=serial,
@@ -3342,7 +3347,7 @@ async def validar_caso_con_checks(
                         _cc_filtrado = [e.strip() for e in _cc_para_dest.split(",") if e.strip().lower() != email_dest.lower()]
                         _cc_para_dest = ",".join(_cc_filtrado) if _cc_filtrado else None
                     
-                    resultado = enviar_a_n8n(
+                    resultado = enviar_notificacion(
                         tipo_notificacion='enviar_validar',
                         email=email_dest,
                         serial=serial,
@@ -3401,7 +3406,7 @@ async def validar_caso_con_checks(
                 print(f"📧 CC empresa para falsa_confirmada: {cc_empresa_fraude or 'N/A'}")
                 
                 for email_dest in emails_fraude:
-                    enviar_a_n8n(
+                    enviar_notificacion(
                         tipo_notificacion='tthh',
                         email=email_dest,
                         serial=serial,

@@ -354,14 +354,14 @@ class Alerta180Log(Base):
 
 class PendienteEnvio(Base):
     """
-    Cola persistente de envíos fallidos (N8N y Drive).
-    Cuando N8N no tiene sesión o Drive falla el token,
+    Cola persistente de envíos fallidos (Notificaciones y Drive).
+    Cuando falla una notificación o Drive falla por token,
     los envíos se guardan aquí para reintentar automáticamente.
     """
     __tablename__ = "pendientes_envio"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    tipo = Column(String(20), nullable=False)    # 'drive' o 'n8n'
+    tipo = Column(String(20), nullable=False)    # 'drive' o 'notificacion'
     payload = Column(JSONB, nullable=False)       # Info del archivo/correo pendiente
     intentos = Column(Integer, default=0)
     ultimo_error = Column(String(500), nullable=True)

@@ -24,7 +24,7 @@ from app.validador import router as validador_router, obtener_emails_empresa_dir
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
 from app.serial_generator import generar_serial_unico  # ✅ NUEVO
 
-from app.email_service import enviar_notificacion, enviar_a_n8n  # ✅ MIGRACIÓN: N8N → Backend Native
+from app.email_service import enviar_notificacion  # ✅ Backend nativo
 from fastapi import Request, Header
 from app.database import CaseEvent
 
@@ -35,8 +35,8 @@ from app.routes.alertas import router as alertas_router
 from app.routes.admin import router as admin_router
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
-# ✅ Cola resiliente persistente (Drive + N8N)
-from app.resilient_queue import resilient_queue, guardar_pendiente_n8n, guardar_pendiente_drive
+# ✅ Cola resiliente persistente (Drive)
+from app.resilient_queue import resilient_queue, guardar_pendiente_drive
 
 # ==================== FUNCIÓN: DOCUMENTOS REQUERIDOS ====================
 def obtener_documentos_requeridos(tipo: str, dias: int = None, phantom: bool = None, mother_works: bool = None) -> list:
@@ -108,15 +108,6 @@ app.include_router(admin_router)
 
 app.include_router(validador_router)
 
-# ✅ Iniciar worker de cola resiliente (reintentos Drive + N8N)
-resilent_queue_started = False
-try:
-    resilient_queue.iniciar()
-    resilent_queue_started = True
-    print("🛡️ Worker de cola resiliente iniciado")
-except Exception as _rq_err:
-    print(f"⚠️ No se pudo iniciar cola resiliente: {_rq_err}")
-
 # ==================== HEALTH CHECK DE GOOGLE DRIVE ====================
 
 from fastapi import APIRouter
@@ -150,8 +141,8 @@ async def drive_health_check():
                     token_data = json.load(f)
                     expiry_str = token_data.get('expiry')
                     if expiry_str:
-                        expiry = datetime.datetime.fromisoformat(expiry_str)
-                        now = datetime.datetime.now()
+                        expiry = datetime.fromisoformat(expiry_str)
+                        now = datetime.now()
                         remaining = (expiry - now).total_seconds()
                         token_info = {
                             'expires_in_minutes': round(remaining / 60, 1),
@@ -165,13 +156,13 @@ async def drive_health_check():
             "status": "healthy",
             "service": "connected",
             "token_info": token_info,
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         return {
             "status": "unhealthy",
             "error": str(e),
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
 
 @drive_router.post("/refresh-cache")
@@ -406,10 +397,10 @@ def startup_event():
         print(f"⚠️ Error iniciando scheduler token: {e}")
     
     try:
-        # ✅ NUEVO: Cola resiliente (BD) para N8N y Drive
+        # ✅ NUEVO: Cola resiliente (BD) para Drive
         from app.resilient_queue import resilient_queue
         resilient_queue.iniciar()
-        print("✅ Cola resiliente (BD) activada — reintentos automáticos de N8N y Drive")
+        print("✅ Cola resiliente (BD) activada — reintentos automáticos de Drive")
     except Exception as e:
         print(f"⚠️ Error iniciando cola resiliente: {e}")
     
@@ -493,8 +484,8 @@ def get_current_quinzena():
     mes_nombre = calendar.month_name[today.month]
     return f"primera quincena de {mes_nombre}" if today.day <= 15 else f"segunda quincena de {mes_nombre}"
 
-def send_html_email(to_email: str, subject: str, html_body: str, caso=None):
-    """Envía email + WhatsApp a través de N8N con soporte para copias"""
+def send_html_email(to_email: str, subject: str, html_body: str, caso=None, db: Session = None):
+    """Envía email + WhatsApp con soporte para copias"""
     tipo_map = {
         'Confirmación': 'confirmacion',
         'Copia': 'confirmacion',
@@ -517,10 +508,18 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None):
     whatsapp = None
     correo_bd = None
     
+    db_local = db
+    cerrar_db_local = False
+
     if caso:
+        if db_local is None:
+            from app.database import SessionLocal
+            db_local = SessionLocal()
+            cerrar_db_local = True
+
         # ✅ CC EMPRESA: Ahora viene del DIRECTORIO (no de BD)
         if hasattr(caso, 'company_id') and caso.company_id:
-            emails_dir = obtener_emails_empresa_directorio(caso.company_id, db=db)
+            emails_dir = obtener_emails_empresa_directorio(caso.company_id, db=db_local)
             if emails_dir:
                 cc_email = ",".join(emails_dir)  # ✅ TODOS los emails del directorio
                 print(f"📧 CC desde DIRECTORIO: {cc_email} (empresa_id={caso.company_id})")
@@ -537,8 +536,11 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None):
             if hasattr(caso.empleado, 'correo') and caso.empleado.correo:
                 correo_bd = caso.empleado.correo
                 print(f"📧 Correo BD: {correo_bd}")
+
+    if cerrar_db_local and db_local is not None:
+        db_local.close()
     
-    resultado = enviar_a_n8n(
+    resultado = enviar_notificacion(
         tipo_notificacion=tipo_notificacion,
         email=to_email,
         serial=caso.serial if caso else 'AUTO',
@@ -558,8 +560,8 @@ def send_html_email(to_email: str, subject: str, html_body: str, caso=None):
         print(f"✅ {canales} enviado: {to_email} (CC: {cc_email or 'ninguno'}, Tel: {whatsapp or 'ninguno'})")
         return True, None
     else:
-        print(f"❌ Error enviando via N8N")
-        return False, "Error N8N"
+        print(f"❌ Error enviando notificación")
+        return False, "Error notificación"
     
 
 def enviar_email_cambio_tipo(email: str, nombre: str, serial: str, tipo_anterior: str, tipo_nuevo: str, docs_requeridos: list):
@@ -708,10 +710,6 @@ async def uptime_stats():
         "message": "Backend funcionando 24/7 gracias a UptimeRobot ⚡",
         "uptime_robot_enabled": True
     }
-
-    """Endpoint para mantener vivo el servidor - usado por UptimeRobot"""
-    from datetime import datetime
-    return {"status": "alive", "timestamp": datetime.now().isoformat()}
 
 @app.post("/wake-up")
 async def force_wake_up(db: Session = Depends(get_db)):
@@ -954,7 +952,7 @@ async def reenviar_caso_incompleto(
             </div>
             """
             
-            enviar_a_n8n(
+            enviar_notificacion(
                 tipo_notificacion='extra',
                 email='xoblaxbaezaospino@gmail.com',
                 serial=serial,
@@ -1332,7 +1330,8 @@ async def subir_incapacidad(
             # ✅ Drive falló → guardar PDF en /tmp con nombre seguro y meter en cola
             print(f"⚠️ Drive falló ({drive_err}) — caso se guardará en BD y PDF en cola")
             import shutil
-            tmp_dir = Path("/tmp/incapacidades_cola")
+            import tempfile
+            tmp_dir = Path(tempfile.gettempdir()) / "incapacidades_cola"
             tmp_dir.mkdir(parents=True, exist_ok=True)
             pdf_cola_path = tmp_dir / f"{consecutivo}.pdf"
             shutil.copy2(str(pdf_final_path), str(pdf_cola_path))
@@ -1487,8 +1486,8 @@ Nos comunicaremos si se requiere algo adicional.
 
 _Automatico por Incapacidades_""".strip()
         
-        # ✅ ENVIAR VIA BACKEND NATIVO (Sin N8N) con COPIAS Y WHATSAPP
-        from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
+        # ✅ ENVIAR VIA BACKEND NATIVO con COPIAS Y WHATSAPP
+        from app.email_service import enviar_notificacion
         
         emails_enviados = []
         notificacion_exitosa = False
@@ -1499,7 +1498,7 @@ _Automatico por Incapacidades_""".strip()
         
         if email:  # Email del formulario como TO principal
             
-            resultado = enviar_a_n8n(
+            resultado = enviar_notificacion(
                 tipo_notificacion='confirmacion',
                 email=email,
                 serial=consecutivo,
@@ -1513,25 +1512,11 @@ _Automatico por Incapacidades_""".strip()
                 drive_link=link_pdf
             )
             if resultado:
-                emails_enviados.append(correo_empleado)
+                emails_enviados.append(email)
                 notificacion_exitosa = True
                 print(f"✅ Notificación enviada exitosamente")
             else:
-                # ✅ N8N falló → meter en cola de reintentos (no bloqueamos al usuario)
-                print(f"⚠️ N8N no respondió — guardando en cola de reintentos")
-                guardar_pendiente_n8n({
-                    "tipo_notificacion": "confirmacion",
-                    "email": email,
-                    "serial": consecutivo,
-                    "subject": asunto,
-                    "html_content": html_empleado,
-                    "cc_email": cc_empresa,
-                    "correo_bd": correo_empleado,
-                    "whatsapp": telefono,
-                    "whatsapp_message": mensaje_whatsapp,
-                    "adjuntos_base64": [],
-                    "drive_link": link_pdf
-                }, error="n8n no respondió o sesión cerrada")
+                print(f"⚠️ La notificación no respondió")
                 notificacion_exitosa = False
         
         print(f"\n{'='*80}")
@@ -1544,6 +1529,7 @@ _Automatico por Incapacidades_""".strip()
             "consecutivo": consecutivo,
             "case_id": nuevo_caso.id,
             "link_pdf": link_pdf,
+            "drive_en_cola": drive_en_cola,
             "archivos_combinados": len(original_filenames),
             "correos_enviados": emails_enviados,
             "notificacion_enviada": notificacion_exitosa,
@@ -1603,7 +1589,7 @@ Nos comunicaremos contigo pronto.
 Gracias por usar IncaNeurobaeza.
         """.strip()
         
-        notificacion_exitosa = enviar_a_n8n(
+        notificacion_exitosa = enviar_notificacion(
             tipo_notificacion='confirmacion',
             email=email,
             serial=consecutivo,
@@ -1622,6 +1608,7 @@ Gracias por usar IncaNeurobaeza.
             "consecutivo": consecutivo,
             "case_id": nuevo_caso.id,
             "link_pdf": link_pdf,
+            "drive_en_cola": drive_en_cola,
             "correos_enviados": [email],
             "notificacion_enviada": notificacion_exitosa,
             "canales_notificados": {
@@ -1692,15 +1679,41 @@ async def check_drive_token_health():
     from app.drive_uploader import TOKEN_FILE
     import json
     from datetime import datetime
+
+    usa_cuenta_servicio = bool(
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+    )
     
     result = {
         "timestamp": datetime.now().isoformat(),
+        "auth_mode": "service_account" if usa_cuenta_servicio else "refresh_token",
         "token_file": {},
         "scheduler_status": {},
         "recommendation": None
     }
     
     try:
+        if usa_cuenta_servicio:
+            from app.drive_uploader import get_authenticated_service
+            service = get_authenticated_service()
+            service.files().list(pageSize=1, fields="files(id)").execute()
+
+            result["token_file"] = {
+                "exists": False,
+                "status": "not_applicable",
+                "detail": "Cuenta de servicio no usa token cache de usuario"
+            }
+            result["scheduler_status"] = {
+                "mode": "disabled",
+                "detail": "No se requiere renovación de token"
+            }
+            result["overall_status"] = "✅ HEALTHY"
+            result["recommendation"] = None
+            return result
+
         # 1. Verificar archivo de token en cache
         if TOKEN_FILE.exists():
             with open(TOKEN_FILE, 'r') as f:
@@ -1775,10 +1788,18 @@ async def force_refresh_drive_token(x_admin_token: str = Header(None)):
     try:
         from app.drive_uploader import clear_service_cache, clear_token_cache, get_authenticated_service
         from datetime import datetime
+
+        usa_cuenta_servicio = bool(
+            os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+            or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+            or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+            or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+        )
         
         # Limpiar todo el cache
         clear_service_cache()
-        clear_token_cache()
+        if not usa_cuenta_servicio:
+            clear_token_cache()
         
         # Forzar renovación
         service = get_authenticated_service()
@@ -1788,7 +1809,7 @@ async def force_refresh_drive_token(x_admin_token: str = Header(None)):
         
         return {
             "status": "success",
-            "message": "Token renovado exitosamente",
+            "message": "Servicio de Drive refrescado exitosamente" if usa_cuenta_servicio else "Token renovado exitosamente",
             "timestamp": datetime.now().isoformat()
         }
         
@@ -1913,8 +1934,8 @@ from app.database import PendienteEnvio, SessionLocal
 @app.get("/pendientes-envio")
 async def ver_pendientes_envio(tipo: str = None):
     """
-    Devuelve la lista de pendientes de envío (Drive/n8n).
-    - tipo: 'drive', 'n8n' o None para todos
+    Devuelve la lista de pendientes de envío (Drive).
+    - tipo: 'drive' o None para todos
     """
     db = SessionLocal()
     query = db.query(PendienteEnvio)

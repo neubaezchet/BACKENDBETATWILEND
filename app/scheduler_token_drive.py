@@ -20,8 +20,22 @@ CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN")
 
+
+def _usa_cuenta_servicio() -> bool:
+    """Detecta si Drive está configurado con cuenta de servicio."""
+    return bool(
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+    )
+
 def renovar_token_drive():
     """Renovación con REINTENTOS y ALERTAS"""
+
+    if _usa_cuenta_servicio():
+        print("✅ Cuenta de servicio detectada: no requiere renovación de token")
+        return True
     
     print(f"\n{'='*60}")
     print(f"🔄 [{datetime.now()}] Renovando token...")
@@ -110,7 +124,7 @@ def renovar_token_drive():
 def enviar_alerta_critica(mensaje: str):
     """Alerta ROJA por email"""
     try:
-        from app.email_service import enviar_notificacion  # ✅ MIGRACIÓN: N8N → Backend Native
+        from app.email_service import enviar_notificacion  # ✅ Backend nativo
         
         html = f"""
         <div style="background:#fee2e2;border:3px solid #dc2626;padding:20px;border-radius:8px;">
@@ -137,7 +151,7 @@ def enviar_alerta_critica(mensaje: str):
 def enviar_alerta_fallo(mensaje: str):
     """Alerta NARANJA por email"""
     try:
-        from app.email_service import enviar_notificacion  # ✅ MIGRACIÓN: N8N → Backend Native
+        from app.email_service import enviar_notificacion  # ✅ Backend nativo
         
         html = f"""
         <div style="background:#fef3c7;border:2px solid #f59e0b;padding:20px;border-radius:8px;">
@@ -163,6 +177,10 @@ def enviar_alerta_fallo(mensaje: str):
 
 def iniciar_scheduler_token():
     """Inicia el scheduler - RENUEVA CADA 30 MIN"""
+
+    if _usa_cuenta_servicio():
+        print("✅ Scheduler de token omitido: Drive usa cuenta de servicio")
+        return None
     
     scheduler = BackgroundScheduler(
         timezone="America/Bogota",

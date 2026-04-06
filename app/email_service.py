@@ -2,15 +2,14 @@
 ======================================================================================
 Email Service — Backend Nativo
 ======================================================================================
-Reemplaza N8N completamente. Envía emails via Gmail SMTP + WhatsApp via WAHA API.
+Envía emails via Gmail SMTP + WhatsApp via WAHA API.
 Sin dependencia de webhooks externos. Incluye retry automático y logging detallado.
-
-Compatible 100% con la interfaz anterior (enviar_a_n8n → enviar_notificacion)
 """
 
 import smtplib
 import os
 import time
+import re
 from typing import Optional, List, Dict
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -40,8 +39,141 @@ WAHA_API_KEY = os.environ.get("WAHA_API_KEY", "1085043374")
 WAHA_SESSION_NAME = os.environ.get("WAHA_SESSION_NAME", "default")
 
 
+def _parsear_serial_wa(serial: str):
+    """Extrae cédula y rango de fechas de serial para mensajes de WhatsApp."""
+    if not serial:
+        return (serial or '', '')
+    parts = serial.strip().split()
+    if len(parts) == 7:
+        return (parts[0], f"del {parts[1]}/{parts[2]}/{parts[3]} al {parts[4]}/{parts[5]}/{parts[6]}")
+    return (serial, '')
+
+
+def generar_mensaje_whatsapp(
+    tipo_notificacion: str,
+    serial: str,
+    subject: str,
+    html_content: str,
+    drive_link: str = None,
+) -> str:
+    """Genera mensajes cortos de WhatsApp según tipo de notificación."""
+    _, fechas = _parsear_serial_wa(serial)
+    fecha_texto = f" {fechas}" if fechas else ""
+
+    motivos = []
+    motivo_match = re.search(r'Motivo:</strong><br/>(.*?)</span>', html_content, re.DOTALL)
+    if motivo_match:
+        texto_motivo = re.sub(r'<[^>]+>', '', motivo_match.group(1)).strip()
+        texto_motivo = texto_motivo.replace('&#8226;', '•').replace('&amp;', '&')
+        for linea in texto_motivo.split('•'):
+            linea = linea.strip()
+            if linea and len(linea) > 5:
+                motivos.append(linea)
+
+    soportes = []
+    soporte_matches = re.findall(r'&#8226;</td>\s*<td[^>]*>(.*?)</td>', html_content, re.DOTALL)
+    for soporte in soporte_matches:
+        texto_s = re.sub(r'<[^>]+>', '', soporte).strip()
+        if texto_s and len(texto_s) > 3 and 'Adjunta' not in texto_s and 'Verifica' not in texto_s and 'Incluye' not in texto_s:
+            soportes.append(texto_s)
+
+    config = {
+        'confirmacion': ('📋', 'Incapacidad Recibida'),
+        'incompleta': ('⚠️', 'Documentacion Incompleta'),
+        'ilegible': ('⚠️', 'Documento Ilegible'),
+        'incompleta_ilegible': ('⚠️', 'Documentacion Incompleta'),
+        'completa': ('✅', 'Incapacidad Validada'),
+        'eps': ('📋', 'Transcripcion en EPS'),
+        'eps_transcripcion': ('📋', 'Transcripcion en EPS'),
+        'tthh': ('🔔', 'Alerta Talento Humano'),
+        'derivado_tthh': ('🔔', 'Alerta Talento Humano'),
+        'causa_extra': ('📌', 'Causa Extra Identificada'),
+        'en_radicacion': ('📤', 'En Radicacion'),
+        'recordatorio': ('🔔', 'Recordatorio Pendiente'),
+        'alerta_jefe': ('🔔', 'Caso Pendiente'),
+    }
+    emoji, titulo = config.get(tipo_notificacion, ('📄', 'Notificacion'))
+
+    lineas = [
+        f"{emoji} *{titulo}*",
+        f"Incapacidad{fecha_texto}",
+        "",
+    ]
+
+    if tipo_notificacion == 'confirmacion':
+        lineas.append("Documentacion recibida. Esta siendo revisada.")
+        lineas.append("")
+        lineas.append("Nos comunicaremos si se requiere algo adicional.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
+    elif tipo_notificacion in ('incompleta', 'ilegible', 'incompleta_ilegible'):
+        if motivos:
+            lineas.append("*Motivo:*")
+            for motivo in motivos[:3]:
+                lineas.append(f"• {motivo}")
+            lineas.append("")
+        if soportes:
+            lineas.append("*Soportes requeridos:*")
+            for soporte in soportes[:5]:
+                lineas.append(f"• {soporte}")
+            lineas.append("")
+        lineas.append("Enviar en *PDF escaneado*, completo y legible.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento actual: {drive_link}")
+        lineas.append("")
+        lineas.append("Subir documentos: https://repogemin.vercel.app/")
+    elif tipo_notificacion == 'completa':
+        lineas.append(f"Tu incapacidad{fecha_texto} ha sido enviada correctamente.")
+        lineas.append("Procederemos a subirla al sistema.")
+        lineas.append("")
+        lineas.append("Nos comunicaremos contigo si se requiere algo adicional.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
+    elif tipo_notificacion in ('eps', 'eps_transcripcion'):
+        lineas.append(f"Tu incapacidad{fecha_texto} requiere transcripcion en tu EPS.")
+        lineas.append("Dirigete con tu documento de identidad.")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
+    elif tipo_notificacion == 'recordatorio':
+        lineas.append(f"Tu incapacidad{fecha_texto} aun tiene documentacion pendiente.")
+        if motivos:
+            lineas.append("")
+            lineas.append("*Motivo:*")
+            for motivo in motivos[:3]:
+                lineas.append(f"• {motivo}")
+        if drive_link:
+            lineas.append("")
+            lineas.append(f"📄 Ver documento: {drive_link}")
+        lineas.append("")
+        lineas.append("Subir documentos: https://repogemin.vercel.app/")
+    elif tipo_notificacion in ('tthh', 'derivado_tthh'):
+        lineas.append(f"Incapacidad{fecha_texto} ha sido derivada a Talento Humano.")
+    elif tipo_notificacion == 'causa_extra':
+        lineas.append(f"Tu incapacidad{fecha_texto} tiene una causa extra identificada.")
+        lineas.append("Revisa tu correo para mas detalles.")
+    elif tipo_notificacion == 'en_radicacion':
+        lineas.append(f"Tu incapacidad{fecha_texto} esta en proceso de radicacion.")
+        lineas.append("Te notificaremos cuando el proceso se complete.")
+    elif tipo_notificacion == 'alerta_jefe':
+        lineas.append(f"Incapacidad{fecha_texto} pendiente de respuesta.")
+    else:
+        lineas.append("Revise su correo para mas detalles.")
+
+    lineas.append("")
+    lineas.append("_Automatico por Incapacidades_")
+
+    mensaje = "\n".join(lineas)
+    if len(mensaje) > 800:
+        mensaje = mensaje[:797] + "..."
+    return mensaje
+
+
 # ═══════════════════════════════════════════════════════════════════════════════════
-# FUNCIÓN PRINCIPAL — ENVIAR NOTIFICACIÓN (reemplaza enviar_a_n8n)
+# FUNCIÓN PRINCIPAL — ENVIAR NOTIFICACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════════
 
 def enviar_notificacion(
@@ -80,7 +212,7 @@ def enviar_notificacion(
     """
     
     print(f"\n{'='*90}")
-    print(f"📧 ENVIAR NOTIFICACIÓN — Backend Native (sin N8N)")
+    print(f"📧 ENVIAR NOTIFICACIÓN — Backend nativo")
     print(f"{'='*90}")
     print(f"Tipo: {tipo_notificacion}")
     print(f"Serial: {serial}")
@@ -91,7 +223,7 @@ def enviar_notificacion(
     print(f"{'='*90}\n")
     
     # ─────────────────────────────────────────────────────────────────────
-    # 1. CONSTRUIR LISTA DE CCs (igual que en n8n_notifier)
+    # 1. CONSTRUIR LISTA DE CCs
     # ─────────────────────────────────────────────────────────────────────
     cc_list = []
     
@@ -107,7 +239,7 @@ def enviar_notificacion(
                     cc_list.append(ce)
     
     # ─────────────────────────────────────────────────────────────────────
-    # 2. INYECTAR DIRECTORIO DE EMPRESAS (igual que en n8n_notifier)
+    # 2. INYECTAR DIRECTORIO DE EMPRESAS
     # ─────────────────────────────────────────────────────────────────────
     try:
         from app.database import SessionLocal, Case, CorreoNotificacion
@@ -173,7 +305,6 @@ def enviar_notificacion(
                 print(f"✅ Rate limit OK — Enviando WhatsApp")
                 
                 if not whatsapp_message:
-                    from app.n8n_notifier import generar_mensaje_whatsapp
                     whatsapp_message = generar_mensaje_whatsapp(
                         tipo_notificacion, serial, subject, html_content, drive_link
                     )
@@ -321,16 +452,6 @@ def _enviar_whatsapp(numero: str, mensaje: str) -> bool:
     except Exception as e:
         print(f"  ❌ Error enviando WhatsApp: {e}")
         return False
-
-
-# ═══════════════════════════════════════════════════════════════════════════════════
-# COMPATIBILIDAD — Alias para reemplazar n8n_notifier
-# ═══════════════════════════════════════════════════════════════════════════════════
-
-# Mantener nombre original para compatibilidad con código existente
-def enviar_a_n8n(*args, **kwargs):
-    """Alias para compatibilidad — redirige a enviar_notificacion"""
-    return enviar_notificacion(*args, **kwargs)
 
 
 # Health check

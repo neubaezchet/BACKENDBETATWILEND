@@ -199,7 +199,7 @@ async def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get
 
     # Enviar email de recuperación
     try:
-        from app.notificacion_service import enviar_a_n8n  # ✅ Migración: N8N → Backend Nativo
+        from app.email_service import enviar_notificacion
 
         portal_url = os.environ.get("PORTAL_URL", "https://repogemin.vercel.app")
         reset_link = f"{portal_url}?reset_token={reset_token}"
@@ -221,7 +221,7 @@ async def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get
         </div>
         """
 
-        enviar_a_n8n(
+        enviar_notificacion(
             tipo_notificacion="recuperacion",
             email=user.email,
             serial="RECOVERY",

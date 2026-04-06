@@ -13,9 +13,13 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 def get_sheets_service():
     """Obtiene el servicio de Google Sheets"""
     try:
-        creds_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        creds_json = (
+            os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+            or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+            or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        )
         if not creds_json:
-            print("❌ GOOGLE_SHEETS_CREDENTIALS no configurado")
+            print("❌ Credenciales de Google no configuradas para Sheets")
             return None
         
         creds_dict = json.loads(creds_json)
