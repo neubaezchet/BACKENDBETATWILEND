@@ -43,6 +43,10 @@ REFRESH_INTERVAL_SECONDS = 120  # Renovar cada 2 minutos
 
 def _usa_cuenta_servicio() -> bool:
     """Detecta si el backend está configurado con cuenta de servicio."""
+    auth_mode = (os.environ.get("GOOGLE_AUTH_MODE") or "").strip().lower()
+    if auth_mode in {"service_account", "service-account", "sa"}:
+        return True
+
     return bool(
         os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
         or os.environ.get("GOOGLE_CREDENTIALS_JSON")

@@ -115,7 +115,8 @@ from app.drive_uploader import (
     get_authenticated_service, 
     clear_service_cache, 
     clear_token_cache,
-    TOKEN_FILE
+    TOKEN_FILE,
+    is_service_account_mode,
 )
 import json
 
@@ -224,12 +225,7 @@ def startup_event():
     init_db()
     print("🚀 API iniciada")
 
-    usa_cuenta_servicio = bool(
-        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
-        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
-        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
-        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
-    )
+    usa_cuenta_servicio = is_service_account_mode()
     print(f"🔐 Modo Google Auth: {'service_account' if usa_cuenta_servicio else 'refresh_token'}")
     
     # ⭐ AUTO-MIGRACIÓN: Agregar columnas nuevas si no existen
@@ -1691,12 +1687,7 @@ async def check_drive_token_health():
     import json
     from datetime import datetime
 
-    usa_cuenta_servicio = bool(
-        os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
-        or os.environ.get("GOOGLE_CREDENTIALS_JSON")
-        or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
-        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
-    )
+    usa_cuenta_servicio = is_service_account_mode()
     
     result = {
         "timestamp": datetime.now().isoformat(),
@@ -1800,12 +1791,7 @@ async def force_refresh_drive_token(x_admin_token: str = Header(None)):
         from app.drive_uploader import clear_service_cache, clear_token_cache, get_authenticated_service
         from datetime import datetime
 
-        usa_cuenta_servicio = bool(
-            os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
-            or os.environ.get("GOOGLE_CREDENTIALS_JSON")
-            or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
-            or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
-        )
+        usa_cuenta_servicio = is_service_account_mode()
         
         # Limpiar todo el cache
         clear_service_cache()
