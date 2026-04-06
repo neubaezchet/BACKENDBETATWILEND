@@ -47,8 +47,9 @@ class TipoIncapacidad(str, enum.Enum):
     ENFERMEDAD_ESPECIAL = "especial"
     MATERNIDAD = "maternidad"
     PATERNIDAD = "paternidad"
-    PRELICENCIA = "prelicencia"  # ✅ NUEVO
-    CERTIFICADO = "certificado"  # ✅ NUEVO
+    PRELICENCIA = "prelicencia"
+    CERTIFICADO = "certificado"
+    OTHER = "other"  # ✅ Para tipos no mapeados
 
 # ==================== MODELOS ====================
 

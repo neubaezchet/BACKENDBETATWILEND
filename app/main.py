@@ -260,6 +260,22 @@ def startup_event():
             conn.commit()
         print("✅ Auto-migración completada (columnas verificadas)")
         
+        # ⭐ AUTO-MIGRACIÓN: Agregar valores faltantes al enum tipoincapacidad
+        with engine.connect() as conn:
+            enum_migrations = [
+                "ALTER TYPE tipoincapacidad ADD VALUE IF NOT EXISTS 'other';",
+                "ALTER TYPE tipoincapacidad ADD VALUE IF NOT EXISTS 'prelicencia';",
+                "ALTER TYPE tipoincapacidad ADD VALUE IF NOT EXISTS 'maternidad';",
+            ]
+            for sql in enum_migrations:
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                except Exception as e:
+                    # Si ya existen, no hay problema
+                    print(f"  ℹ️ Enum migration: {e}")
+        print("✅ Auto-migración de enum completada")
+        
         # ⭐ LIMPIEZA: Eliminar columnas obsoletas que ya no vienen de Kactus
         with engine.connect() as conn:
             for col in ["dias_kactus", "medico_tratante", "institucion_origen", "diagnostico_kactus"]:
@@ -1142,11 +1158,21 @@ async def verificar_duplicado(
         Case.fecha_fin == ff
     ]
     
-    # Si se proporciona tipo, incluirlo en el filtro (permite mismas fechas para distintos tipos)
+    # Si se proporciona tipo, validar que exista en el enum ANTES de consultar
     if tipo:
-        filtros.append(Case.tipo == tipo)
+        try:
+            tipo_enum = TipoIncapacidad(tipo)
+            filtros.append(Case.tipo == tipo_enum)
+        except ValueError:
+            # Si el tipo no existe en el enum, ignorar el filtro de tipo
+            print(f"⚠️ Tipo '{tipo}' no reconocido, buscando sin filtro de tipo")
     
-    caso_existente = db.query(Case).filter(and_(*filtros)).first()
+    try:
+        caso_existente = db.query(Case).filter(and_(*filtros)).first()
+    except Exception as e:
+        print(f"⚠️ Error en verificar_duplicado: {e}")
+        db.rollback()
+        return {"duplicado": False}
     
     if caso_existente:
         return {
