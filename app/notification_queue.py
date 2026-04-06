@@ -323,9 +323,9 @@ class NotificationQueue:
             
             if notif.intentos >= notif.max_intentos:
                 # ✅ GUARDAR EN COLA PERSISTENTE (BD) en vez de perder
-                    try:
-                        from app.resilient_queue import guardar_pendiente_notificacion
-                        guardar_pendiente_notificacion({
+                try:
+                    from app.resilient_queue import guardar_pendiente_notificacion
+                    guardar_pendiente_notificacion({
                         'tipo_notificacion': notif.tipo,
                         'email': notif.email,
                         'serial': notif.serial,
