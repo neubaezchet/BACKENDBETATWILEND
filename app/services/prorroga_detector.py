@@ -216,28 +216,29 @@ def verificar_prorroga_contexto_maternidad(db: Session, caso_nuevo: Case) -> dic
     cedula = caso_nuevo.cedula
     codigo_nuevo = _normalizar_codigo(caso_nuevo.codigo_cie10 or "")
     
-    # ─── 1. Buscar licencias/prelicencias de maternidad del empleado ───
-    licencias_maternidad = db.query(Case).filter(
-        Case.cedula == cedula,
-        Case.tipo.in_([TipoIncapacidad.MATERNIDAD, TipoIncapacidad.PRELICENCIA])
-    ).order_by(Case.fecha_inicio.desc()).all()
-    
-    if not licencias_maternidad:
-        resultado["explicacion"] = "No hay licencia/prelicencia de maternidad registrada"
-        return resultado
-    
-    # ─── 2. Para cada licencia, buscar cadena de prórrogas ANTERIORES ───
-    for licencia in licencias_maternidad:
-        fecha_licencia = licencia.fecha_inicio
-        if not fecha_licencia:
-            continue
-        
-        # Incapacidades ANTERIORES a la licencia (excluir la propia licencia y maternidad)
-        incapacidades_previas = db.query(Case).filter(
+    try:
+        # ─── 1. Buscar licencias/prelicencias de maternidad del empleado ───
+        licencias_maternidad = db.query(Case).filter(
             Case.cedula == cedula,
-            Case.fecha_inicio < fecha_licencia,
-            ~Case.tipo.in_([TipoIncapacidad.MATERNIDAD, TipoIncapacidad.PRELICENCIA, TipoIncapacidad.PATERNIDAD])
-        ).order_by(Case.fecha_inicio.asc()).all()
+            Case.tipo.in_([TipoIncapacidad.MATERNIDAD, TipoIncapacidad.PRELICENCIA])
+        ).order_by(Case.fecha_inicio.desc()).all()
+        
+        if not licencias_maternidad:
+            resultado["explicacion"] = "No hay licencia/prelicencia de maternidad registrada"
+            return resultado
+        
+        # ─── 2. Para cada licencia, buscar cadena de prórrogas ANTERIORES ───
+        for licencia in licencias_maternidad:
+            fecha_licencia = licencia.fecha_inicio
+            if not fecha_licencia:
+                continue
+            
+            # Incapacidades ANTERIORES a la licencia (excluir la propia licencia y maternidad)
+            incapacidades_previas = db.query(Case).filter(
+                Case.cedula == cedula,
+                Case.fecha_inicio < fecha_licencia,
+                ~Case.tipo.in_([TipoIncapacidad.MATERNIDAD, TipoIncapacidad.PRELICENCIA, TipoIncapacidad.PATERNIDAD])
+            ).order_by(Case.fecha_inicio.asc()).all()
         
         if len(incapacidades_previas) < MINIMO_PRORROGAS_PREVIAS_MATERNIDAD:
             continue  # No hay suficientes incapacidades previas
@@ -347,6 +348,11 @@ def verificar_prorroga_contexto_maternidad(db: Session, caso_nuevo: Case) -> dic
                 f"NO correlaciona con la cadena previa ({codigos_cadena}). "
                 f"No se considera prórroga."
             )
+    
+    except Exception as e:
+        print(f"⚠️ Error en verificar_prorroga_contexto_maternidad: {e}")
+        db.rollback()
+        resultado["explicacion"] = f"Error procesando regla maternidad: {str(e)}"
     
     return resultado
 
