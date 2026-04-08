@@ -239,115 +239,115 @@ def verificar_prorroga_contexto_maternidad(db: Session, caso_nuevo: Case) -> dic
                 Case.fecha_inicio < fecha_licencia,
                 ~Case.tipo.in_([TipoIncapacidad.MATERNIDAD, TipoIncapacidad.PRELICENCIA, TipoIncapacidad.PATERNIDAD])
             ).order_by(Case.fecha_inicio.asc()).all()
-        
-        if len(incapacidades_previas) < MINIMO_PRORROGAS_PREVIAS_MATERNIDAD:
-            continue  # No hay suficientes incapacidades previas
-        
-        # ─── 3. Detectar cadenas de prórroga en las incapacidades previas ───
-        # Usar el detector existente pero solo con las incapacidades previas
-        cadenas_previas = _detectar_cadenas_prorroga(incapacidades_previas)
-        
-        # Buscar cadena activa (con al menos MINIMO_PRORROGAS_PREVIAS incapacidades)
-        cadena_activa = None
-        for cadena in cadenas_previas:
-            if cadena["es_cadena_prorroga"] and cadena["total_incapacidades_cadena"] >= MINIMO_PRORROGAS_PREVIAS_MATERNIDAD:
-                # La más reciente que cumpla el criterio
-                if cadena_activa is None:
-                    cadena_activa = cadena
-                else:
-                    # Comparar fechas para tomar la más reciente
-                    fecha_actual = cadena.get("fecha_fin_cadena")
-                    fecha_mejor = cadena_activa.get("fecha_fin_cadena")
-                    if fecha_actual and fecha_mejor and fecha_actual > fecha_mejor:
+            
+            if len(incapacidades_previas) < MINIMO_PRORROGAS_PREVIAS_MATERNIDAD:
+                continue  # No hay suficientes incapacidades previas
+            
+            # ─── 3. Detectar cadenas de prórroga en las incapacidades previas ───
+            # Usar el detector existente pero solo con las incapacidades previas
+            cadenas_previas = _detectar_cadenas_prorroga(incapacidades_previas)
+            
+            # Buscar cadena activa (con al menos MINIMO_PRORROGAS_PREVIAS incapacidades)
+            cadena_activa = None
+            for cadena in cadenas_previas:
+                if cadena["es_cadena_prorroga"] and cadena["total_incapacidades_cadena"] >= MINIMO_PRORROGAS_PREVIAS_MATERNIDAD:
+                    # La más reciente que cumpla el criterio
+                    if cadena_activa is None:
                         cadena_activa = cadena
-        
-        if not cadena_activa:
-            continue  # No hay cadena de prórrogas relevante
-        
-        # ─── 4. Verificar si el caso nuevo está cerca de la licencia ───
-        fecha_inicio_nuevo = caso_nuevo.fecha_inicio
-        fecha_fin_licencia = licencia.fecha_fin or licencia.fecha_inicio
-        
-        if fecha_inicio_nuevo and fecha_fin_licencia:
-            # El caso debe ser durante la licencia o hasta 30 días antes/después
-            dias_diferencia = abs((fecha_inicio_nuevo.date() - fecha_fin_licencia.date()).days)
-            dias_antes_licencia = (fecha_licencia.date() - fecha_inicio_nuevo.date()).days if fecha_inicio_nuevo < fecha_licencia else -1
+                    else:
+                        # Comparar fechas para tomar la más reciente
+                        fecha_actual = cadena.get("fecha_fin_cadena")
+                        fecha_mejor = cadena_activa.get("fecha_fin_cadena")
+                        if fecha_actual and fecha_mejor and fecha_actual > fecha_mejor:
+                            cadena_activa = cadena
             
-            en_rango = (
-                # Durante la licencia
-                (fecha_inicio_nuevo >= fecha_licencia and fecha_inicio_nuevo <= fecha_fin_licencia) or
-                # Hasta 30 días antes de la licencia
-                (0 <= dias_antes_licencia <= 30) or
-                # Hasta 30 días después de la licencia
-                (fecha_inicio_nuevo > fecha_fin_licencia and dias_diferencia <= 30)
-            )
+            if not cadena_activa:
+                continue  # No hay cadena de prórrogas relevante
             
-            if not en_rango:
+            # ─── 4. Verificar si el caso nuevo está cerca de la licencia ───
+            fecha_inicio_nuevo = caso_nuevo.fecha_inicio
+            fecha_fin_licencia = licencia.fecha_fin or licencia.fecha_inicio
+            
+            if fecha_inicio_nuevo and fecha_fin_licencia:
+                # El caso debe ser durante la licencia o hasta 30 días antes/después
+                dias_diferencia = abs((fecha_inicio_nuevo.date() - fecha_fin_licencia.date()).days)
+                dias_antes_licencia = (fecha_licencia.date() - fecha_inicio_nuevo.date()).days if fecha_inicio_nuevo < fecha_licencia else -1
+                
+                en_rango = (
+                    # Durante la licencia
+                    (fecha_inicio_nuevo >= fecha_licencia and fecha_inicio_nuevo <= fecha_fin_licencia) or
+                    # Hasta 30 días antes de la licencia
+                    (0 <= dias_antes_licencia <= 30) or
+                    # Hasta 30 días después de la licencia
+                    (fecha_inicio_nuevo > fecha_fin_licencia and dias_diferencia <= 30)
+                )
+                
+                if not en_rango:
+                    continue
+            
+            resultado["aplica_regla_maternidad"] = True
+            
+            # ─── 5. Verificar correlación con la cadena previa ───
+            codigos_cadena = cadena_activa.get("codigos_cie10", [])
+            
+            if not codigo_nuevo or not codigos_cadena:
+                resultado["explicacion"] = (
+                    f"Aplica regla maternidad pero sin códigos CIE-10 para verificar correlación. "
+                    f"Cadena previa: {cadena_activa['total_incapacidades_cadena']} incapacidades, "
+                    f"{cadena_activa['dias_acumulados']} días acumulados."
+                )
                 continue
-        
-        resultado["aplica_regla_maternidad"] = True
-        
-        # ─── 5. Verificar correlación con la cadena previa ───
-        codigos_cadena = cadena_activa.get("codigos_cie10", [])
-        
-        if not codigo_nuevo or not codigos_cadena:
-            resultado["explicacion"] = (
-                f"Aplica regla maternidad pero sin códigos CIE-10 para verificar correlación. "
-                f"Cadena previa: {cadena_activa['total_incapacidades_cadena']} incapacidades, "
-                f"{cadena_activa['dias_acumulados']} días acumulados."
-            )
-            continue
-        
-        # Verificar correlación con CUALQUIER código de la cadena previa
-        mejor_correlacion = None
-        for codigo_previo in codigos_cadena:
-            corr = son_correlacionados(codigo_previo, codigo_nuevo, dias_entre=0)
-            if corr["correlacionados"]:
-                if mejor_correlacion is None or corr.get("asertividad", 0) > mejor_correlacion.get("asertividad", 0):
-                    mejor_correlacion = corr
-                    mejor_correlacion["codigo_correlacionado"] = codigo_previo
-        
-        if mejor_correlacion and mejor_correlacion["correlacionados"]:
-            resultado["es_prorroga_cadena_previa"] = True
-            resultado["cadena_previa"] = {
-                "total_incapacidades": cadena_activa["total_incapacidades_cadena"],
-                "dias_acumulados": cadena_activa["dias_acumulados"],
-                "codigos_cie10": codigos_cadena,
-                "fecha_inicio": cadena_activa["fecha_inicio_cadena"],
-                "fecha_fin": cadena_activa["fecha_fin_cadena"]
-            }
-            resultado["correlacion"] = mejor_correlacion
-            resultado["explicacion"] = (
-                f"✅ PRÓRROGA MATERNIDAD: El diagnóstico {codigo_nuevo} correlaciona con "
-                f"{mejor_correlacion['codigo_correlacionado']} de la cadena previa "
-                f"({cadena_activa['total_incapacidades_cadena']} incapacidades, "
-                f"{cadena_activa['dias_acumulados']} días). "
-                f"Asertividad: {mejor_correlacion.get('asertividad', 0):.0f}%. "
-                f"La licencia de maternidad NO rompe la cadena de prórroga."
-            )
             
-            # ─── 6. Marcar el caso como prórroga ───
-            if caso_nuevo.id:
-                try:
-                    caso_nuevo.es_prorroga = True
-                    # Guardar metadata
-                    metadata = caso_nuevo.metadata_form or {}
-                    metadata["prorroga_contexto_maternidad"] = True
-                    metadata["cadena_previa_dias"] = cadena_activa["dias_acumulados"]
-                    metadata["correlacion_maternidad"] = mejor_correlacion.get("codigo_correlacionado")
-                    caso_nuevo.metadata_form = metadata
-                    db.commit()
-                except Exception as e:
-                    db.rollback()
-                    print(f"⚠️ Error actualizando caso como prórroga maternidad: {e}")
+            # Verificar correlación con CUALQUIER código de la cadena previa
+            mejor_correlacion = None
+            for codigo_previo in codigos_cadena:
+                corr = son_correlacionados(codigo_previo, codigo_nuevo, dias_entre=0)
+                if corr["correlacionados"]:
+                    if mejor_correlacion is None or corr.get("asertividad", 0) > mejor_correlacion.get("asertividad", 0):
+                        mejor_correlacion = corr
+                        mejor_correlacion["codigo_correlacionado"] = codigo_previo
             
-            return resultado
-        else:
-            resultado["explicacion"] = (
-                f"Aplica regla maternidad pero el diagnóstico {codigo_nuevo} "
-                f"NO correlaciona con la cadena previa ({codigos_cadena}). "
-                f"No se considera prórroga."
-            )
+            if mejor_correlacion and mejor_correlacion["correlacionados"]:
+                resultado["es_prorroga_cadena_previa"] = True
+                resultado["cadena_previa"] = {
+                    "total_incapacidades": cadena_activa["total_incapacidades_cadena"],
+                    "dias_acumulados": cadena_activa["dias_acumulados"],
+                    "codigos_cie10": codigos_cadena,
+                    "fecha_inicio": cadena_activa["fecha_inicio_cadena"],
+                    "fecha_fin": cadena_activa["fecha_fin_cadena"]
+                }
+                resultado["correlacion"] = mejor_correlacion
+                resultado["explicacion"] = (
+                    f"✅ PRÓRROGA MATERNIDAD: El diagnóstico {codigo_nuevo} correlaciona con "
+                    f"{mejor_correlacion['codigo_correlacionado']} de la cadena previa "
+                    f"({cadena_activa['total_incapacidades_cadena']} incapacidades, "
+                    f"{cadena_activa['dias_acumulados']} días). "
+                    f"Asertividad: {mejor_correlacion.get('asertividad', 0):.0f}%. "
+                    f"La licencia de maternidad NO rompe la cadena de prórroga."
+                )
+                
+                # ─── 6. Marcar el caso como prórroga ───
+                if caso_nuevo.id:
+                    try:
+                        caso_nuevo.es_prorroga = True
+                        # Guardar metadata
+                        metadata = caso_nuevo.metadata_form or {}
+                        metadata["prorroga_contexto_maternidad"] = True
+                        metadata["cadena_previa_dias"] = cadena_activa["dias_acumulados"]
+                        metadata["correlacion_maternidad"] = mejor_correlacion.get("codigo_correlacionado")
+                        caso_nuevo.metadata_form = metadata
+                        db.commit()
+                    except Exception as e:
+                        db.rollback()
+                        print(f"⚠️ Error actualizando caso como prórroga maternidad: {e}")
+                
+                return resultado
+            else:
+                resultado["explicacion"] = (
+                    f"Aplica regla maternidad pero el diagnóstico {codigo_nuevo} "
+                    f"NO correlaciona con la cadena previa ({codigos_cadena}). "
+                    f"No se considera prórroga."
+                )
     
     except Exception as e:
         print(f"⚠️ Error en verificar_prorroga_contexto_maternidad: {e}")
@@ -444,6 +444,8 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
     # Marcar qué casos ya están en una cadena
     asignados = set()
     cadenas = []
+    # Días sobrantes de casos con traslapo parcial (índice j → dias sobrantes)
+    dias_sobrantes_map: dict = {}
     
     for i, caso_inicial in enumerate(casos):
         if i in asignados:
@@ -454,7 +456,9 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
             "caso_inicial": _caso_a_dict(caso_inicial),
             "prorrogas": [],
             "codigos_cie10": set(),
-            "dias_acumulados": caso_inicial.dias_incapacidad or 0,
+            # Si este caso tuvo un traslapo parcial con cadena anterior, usar solo
+            # los días sobrantes (fuera del traslapo) como base de la nueva cadena
+            "dias_acumulados": dias_sobrantes_map.get(i, caso_inicial.dias_incapacidad or 0),
             "fecha_inicio_cadena": caso_inicial.fecha_inicio,
             "fecha_fin_cadena": caso_inicial.fecha_fin or caso_inicial.fecha_inicio,
             "huecos_ignorados": [],  # v3: huecos temporales <30d
@@ -512,6 +516,26 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
                 asignados.add(j)
                 ultimo_caso = caso_siguiente
             else:
+                # ─── Manejo especial de traslapos ───
+                tipo_resultado = resultado.get("tipo", "")
+
+                if tipo_resultado == "cubierta_completamente":
+                    # La incapacidad j queda 100% dentro del período ya cubierto.
+                    # No aporta días: se absorbe y no forma cadena propia.
+                    asignados.add(j)
+                    continue
+
+                if tipo_resultado in ("traslapo_sin_correlacion", "traslapo_sin_cie10"):
+                    # Los diagnósticos no correlacionan (o faltan CIE-10).
+                    # Los días sobrantes formarán su propia cadena/evaluación.
+                    dias_sob = resultado.get("dias_sobrantes", 0)
+                    if dias_sob > 0:
+                        dias_sobrantes_map[j] = dias_sob
+                    # No marcar j como asignado: formará cadena propia con días sobrantes.
+                    # No es hueco temporal: rompe la cadena actual aquí.
+                    huecos_pendientes = []  # descartar huecos pendientes
+                    continue
+
                 # ─── v3: DETECTOR DE HUECOS TEMPORALES ───
                 brecha = resultado.get("brecha_dias")
                 dias_caso_sig = caso_siguiente.dias_incapacidad or 0
@@ -671,19 +695,89 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
     brecha = (fecha_inicio_nuevo.date() - fecha_fin_anterior.date()).days
     resultado_base["brecha_dias"] = brecha
     
-    # Si la brecha es negativa = TRASLAPO (superposición de fechas)
-    # Traslapos SÍ son parte de la cadena, solo se descuentan los días superpuestos
+    # ─── TRASLAPO (brecha negativa = fechas superpuestas) ───
+    # Regla: la incapacidad ya en la cadena "gana" los días traslapados.
+    # La nueva incapacidad solo aporta los días sobrantes (fuera del traslape).
+    # Esos días sobrantes pueden ser prórroga (si CIE-10 correlaciona) o no.
     if brecha < 0:
         dias_traslapo_calc = abs(brecha)
-        return {
-            "es_prorroga": True,
-            "tipo": "traslapo",
-            "confianza": "MUY_ALTA",
-            "asertividad": 98.0,
-            "brecha_dias": brecha,
-            "dias_traslapo": dias_traslapo_calc,
-            "explicacion": f"Incapacidades traslapadas ({dias_traslapo_calc} días de solapamiento). Los días traslapados se cuentan UNA sola vez."
-        }
+        dias_sobrantes = (caso_nuevo.dias_incapacidad or 0) - dias_traslapo_calc
+
+        # Sub-caso 1: la nueva incapacidad queda 100% cubierta → no aporta nada
+        if dias_sobrantes <= 0:
+            return {
+                "es_prorroga": False,
+                "tipo": "cubierta_completamente",
+                "confianza": "NINGUNA",
+                "asertividad": 0.0,
+                "brecha_dias": brecha,
+                "dias_traslapo": dias_traslapo_calc,
+                "dias_sobrantes": 0,
+                "explicacion": (
+                    f"Incapacidad completamente cubierta por la anterior "
+                    f"({dias_traslapo_calc}d de solapamiento, "
+                    f"{caso_nuevo.dias_incapacidad or 0}d de duración total). "
+                    f"No aporta días adicionales a ninguna cadena."
+                )
+            }
+
+        # Sub-caso 2: hay días sobrantes → evaluar si son prórroga via CIE-10
+        codigo_ant = caso_anterior.codigo_cie10 or ""
+        codigo_nvo = caso_nuevo.codigo_cie10 or ""
+
+        if not codigo_ant or not codigo_nvo:
+            # Sin CIE-10 en alguna de las dos → días sobrantes son incapacidad independiente
+            return {
+                "es_prorroga": False,
+                "tipo": "traslapo_sin_cie10",
+                "confianza": "NINGUNA",
+                "asertividad": 0.0,
+                "brecha_dias": brecha,
+                "dias_traslapo": dias_traslapo_calc,
+                "dias_sobrantes": dias_sobrantes,
+                "explicacion": (
+                    f"Traslapo de {dias_traslapo_calc}d sin códigos CIE-10 para verificar. "
+                    f"Los {dias_sobrantes}d sobrantes se tratan como incapacidad independiente."
+                )
+            }
+
+        # Verificar correlación CIE-10
+        correlacion_traslape = son_correlacionados(
+            codigo_ant, codigo_nvo, dias_entre=0, codigo_anterior=codigo_ant
+        )
+
+        if correlacion_traslape["correlacionados"]:
+            # Diagnósticos correlacionan → los {dias_sobrantes}d son PRÓRROGA
+            return {
+                "es_prorroga": True,
+                "tipo": "traslapo_con_prorroga",
+                "confianza": correlacion_traslape.get("confianza", "ALTA"),
+                "asertividad": correlacion_traslape.get("asertividad", 0.0),
+                "brecha_dias": brecha,
+                "dias_traslapo": dias_traslapo_calc,
+                "dias_sobrantes": dias_sobrantes,
+                "explicacion": (
+                    f"Traslapo de {dias_traslapo_calc}d. {codigo_ant}→{codigo_nvo} correlacionan "
+                    f"({correlacion_traslape.get('asertividad', 0):.0f}%). "
+                    f"Los {dias_sobrantes}d sobrantes se suman a la cadena como prórroga."
+                ),
+                "requiere_validacion_medica": correlacion_traslape.get("requiere_validacion_medica", False),
+            }
+        else:
+            # Diagnósticos NO correlacionan → días sobrantes son incapacidad independiente
+            return {
+                "es_prorroga": False,
+                "tipo": "traslapo_sin_correlacion",
+                "confianza": "NINGUNA",
+                "asertividad": 0.0,
+                "brecha_dias": brecha,
+                "dias_traslapo": dias_traslapo_calc,
+                "dias_sobrantes": dias_sobrantes,
+                "explicacion": (
+                    f"Traslapo de {dias_traslapo_calc}d pero {codigo_ant}→{codigo_nvo} NO correlacionan. "
+                    f"Los {dias_sobrantes}d sobrantes son incapacidad independiente con diagnóstico {codigo_nvo}."
+                )
+            }
     
     if brecha > VENTANA_CORTE_PRORROGA:
         resultado_base["explicacion"] = f"Brecha de {brecha} días — CADENA CORTADA (regla >30d sin incapacidad)"
