@@ -27,7 +27,10 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
 GOOGLE_AUTH_MODE = (os.environ.get("GOOGLE_AUTH_MODE") or "").strip().lower()
-DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+DRIVE_SCOPES = [
+    "https://www.googleapis.com/auth/drive",        # Acceso completo — necesario para Shared Drives
+    "https://www.googleapis.com/auth/drive.file",   # Archivos creados por la app
+]
 
 # Archivo de cache del token (ruta temporal portable)
 TOKEN_FILE = Path(tempfile.gettempdir()) / "google_token.json"
@@ -443,7 +446,10 @@ def create_folder_if_not_exists(service, folder_name, parent_folder_id='root'):
     
     # Buscar carpeta existente
     query = f"name='{folder_name_bytes.decode()}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
-    results = service.files().list(q=query, spaces='drive', fields="files(id, name)").execute()
+    results = service.files().list(
+        q=query, spaces='drive', fields="files(id, name)",
+        supportsAllDrives=True, includeItemsFromAllDrives=True
+    ).execute()
     folders = results.get('files', [])
     
     if folders:
@@ -457,7 +463,9 @@ def create_folder_if_not_exists(service, folder_name, parent_folder_id='root'):
         'parents': [parent_id]
     }
     
-    folder = service.files().create(body=folder_metadata, fields='id').execute()
+    folder = service.files().create(
+        body=folder_metadata, fields='id', supportsAllDrives=True
+    ).execute()
     print(f"✅ Carpeta '{folder_name_bytes.decode()}' creada (ID: {folder.get('id')})")
     return folder.get('id')
 
@@ -592,14 +600,16 @@ def upload_to_drive(
         file = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,webViewLink,webContentLink'
+            fields='id,webViewLink,webContentLink',
+            supportsAllDrives=True
         ).execute()
         
         # Hacer público
         try:
             service.permissions().create(
                 fileId=file.get('id'),
-                body={'role': 'reader', 'type': 'anyone'}
+                body={'role': 'reader', 'type': 'anyone'},
+                supportsAllDrives=True
             ).execute()
         except Exception as e:
             print(f"⚠️ No se pudo hacer público: {e}")
@@ -765,14 +775,16 @@ def upload_certificado_o_prelicencia(
         file = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id,webViewLink,webContentLink'
+            fields='id,webViewLink,webContentLink',
+            supportsAllDrives=True
         ).execute()
         
         # Hacer público
         try:
             service.permissions().create(
                 fileId=file.get('id'),
-                body={'role': 'reader', 'type': 'anyone'}
+                body={'role': 'reader', 'type': 'anyone'},
+                supportsAllDrives=True
             ).execute()
         except Exception as e:
             print(f"⚠️ No se pudo hacer público: {e}")
