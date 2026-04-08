@@ -46,7 +46,8 @@ class DriveFileManager:
             updated_file = self.service.files().update(
                 fileId=file_id,
                 media_body=media,
-                fields='id, webViewLink, modifiedTime'
+                fields='id, webViewLink, modifiedTime',
+                supportsAllDrives=True
             ).execute()
             
             print(f"✅ Archivo actualizado en Drive: {file_id}")
@@ -60,7 +61,9 @@ class DriveFileManager:
     def move_file(self, file_id, new_parent_folder_id):
         """Mueve un archivo a una nueva carpeta"""
         # Obtener los padres actuales
-        file = self.service.files().get(fileId=file_id, fields='parents').execute()
+        file = self.service.files().get(
+            fileId=file_id, fields='parents', supportsAllDrives=True
+        ).execute()
         previous_parents = ",".join(file.get('parents', []))
         
         # Mover archivo
@@ -68,7 +71,8 @@ class DriveFileManager:
             fileId=file_id,
             addParents=new_parent_folder_id,
             removeParents=previous_parents,
-            fields='id, parents, webViewLink'
+            fields='id, parents, webViewLink',
+            supportsAllDrives=True
         ).execute()
         
         return file
@@ -276,7 +280,8 @@ class CaseFileOrganizer:
             # Copiar archivo al Historico
             copied_file = self.drive_manager.service.files().copy(
                 fileId=file_id,
-                body={'parents': [tipo_folder_id]}
+                body={'parents': [tipo_folder_id]},
+                supportsAllDrives=True
             ).execute()
             
             copied_link = f"https://drive.google.com/file/d/{copied_file.get('id')}/view"
@@ -369,7 +374,8 @@ class IncompleteFileManager:
                 q=query,
                 spaces='drive',
                 fields='files(id, name, parents, webViewLink)',
-                pageSize=100
+                pageSize=100,
+                supportsAllDrives=True, includeItemsFromAllDrives=True
             ).execute()
             
             files = results.get('files', [])
@@ -382,7 +388,8 @@ class IncompleteFileManager:
                         try:
                             folder = self.drive_manager.service.files().get(
                                 fileId=parent_id,
-                                fields='name'
+                                fields='name',
+                                supportsAllDrives=True
                             ).execute()
                             
                             # Si alguno de los padres contiene "Incompletas"
@@ -405,7 +412,9 @@ class IncompleteFileManager:
     def eliminar_version_incompleta(self, file_id: str):
         """Elimina archivo de Incompletas/ cuando se aprueba el reenvío"""
         try:
-            self.drive_manager.service.files().delete(fileId=file_id).execute()
+            self.drive_manager.service.files().delete(
+                fileId=file_id, supportsAllDrives=True
+            ).execute()
             print(f"🗑️ Versión incompleta eliminada: {file_id}")
             return True
         except Exception as e:
@@ -419,7 +428,7 @@ class IncompleteFileManager:
         """
         try:
             archivo = self.drive_manager.service.files().get(
-                fileId=file_id, fields='parents'
+                fileId=file_id, fields='parents', supportsAllDrives=True
             ).execute()
             parents = archivo.get('parents', [])
             
@@ -437,7 +446,8 @@ class IncompleteFileManager:
                 
                 try:
                     folder = self.drive_manager.service.files().get(
-                        fileId=parent_id, fields='name, parents'
+                        fileId=parent_id, fields='name, parents',
+                        supportsAllDrives=True
                     ).execute()
                     nombre = folder.get('name', '')
                     if 'Incompletas' in nombre or 'incompletas' in nombre.lower():
@@ -472,7 +482,8 @@ class IncompleteFileManager:
                 q=query,
                 spaces='drive',
                 fields='files(id, name, parents)',
-                pageSize=50
+                pageSize=50,
+                supportsAllDrives=True, includeItemsFromAllDrives=True
             ).execute()
             
             archivos = results.get('files', [])
@@ -491,7 +502,9 @@ class IncompleteFileManager:
                 if self.archivo_esta_en_incompletas(fid):
                     print(f"   🗑️ Eliminando de Incompletas: {fname} ({fid})")
                     try:
-                        self.drive_manager.service.files().delete(fileId=fid).execute()
+                        self.drive_manager.service.files().delete(
+                            fileId=fid, supportsAllDrives=True
+                        ).execute()
                         eliminados += 1
                         print(f"   ✅ Eliminado exitosamente")
                     except Exception as del_err:
@@ -519,7 +532,9 @@ class IncompleteFileManager:
         """
         try:
             if self.archivo_esta_en_incompletas(file_id):
-                self.drive_manager.service.files().delete(fileId=file_id).execute()
+                self.drive_manager.service.files().delete(
+                    fileId=file_id, supportsAllDrives=True
+                ).execute()
                 print(f"🗑️ Archivo {file_id} eliminado de Incompletas")
                 return True
             else:
