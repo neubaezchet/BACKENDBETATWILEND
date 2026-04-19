@@ -27,6 +27,7 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
 GOOGLE_AUTH_MODE = (os.environ.get("GOOGLE_AUTH_MODE") or "").strip().lower()
+GOOGLE_SHARED_DRIVE_ID = os.environ.get("GOOGLE_SHARED_DRIVE_ID", "root")  # ← Tu Shared Drive
 DRIVE_SCOPES = [
     "https://www.googleapis.com/auth/drive",        # Acceso completo — necesario para Shared Drives
     "https://www.googleapis.com/auth/drive.file",   # Archivos creados por la app
@@ -546,7 +547,9 @@ def upload_to_drive(
         
         # Crear estructura de carpetas
         print(f"📁 Creando estructura de carpetas en Drive...")
-        main_folder_id = create_folder_if_not_exists(service, b"Incapacidades", 'root')
+        # ✅ Usar Shared Drive si está configurada, sino 'root'
+        base_folder_id = GOOGLE_SHARED_DRIVE_ID if GOOGLE_SHARED_DRIVE_ID != "root" else 'root'
+        main_folder_id = create_folder_if_not_exists(service, b"Incapacidades", base_folder_id)
         empresa_folder_id = create_folder_if_not_exists(service, empresa.encode() if isinstance(empresa, str) else empresa, main_folder_id)
         year_folder_id = create_folder_if_not_exists(service, año_actual.encode(), empresa_folder_id)
         
@@ -647,7 +650,9 @@ def get_folder_link(empresa: str) -> str:
     """Obtiene el link de la carpeta de una empresa"""
     try:
         service = get_authenticated_service()
-        main_folder_id = create_folder_if_not_exists(service, b"Incapacidades", 'root')
+        # ✅ Usar Shared Drive si está configurada
+        base_folder_id = GOOGLE_SHARED_DRIVE_ID if GOOGLE_SHARED_DRIVE_ID != "root" else 'root'
+        main_folder_id = create_folder_if_not_exists(service, b"Incapacidades", base_folder_id)
         empresa_folder_id = create_folder_if_not_exists(service, empresa.encode() if isinstance(empresa, str) else empresa, main_folder_id)
         return f"https://drive.google.com/drive/folders/{empresa_folder_id}"
     except Exception as e:

@@ -6,7 +6,7 @@ IncaNeurobaeza - 2024
 import os
 from pathlib import Path
 from googleapiclient.http import MediaFileUpload
-from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists
+from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists, GOOGLE_SHARED_DRIVE_ID
 
 class DriveFileManager:
     """Gestor de archivos en Google Drive"""
@@ -88,16 +88,19 @@ class DriveFileManager:
         """
         from datetime import datetime
         
+        # ✅ Usar Shared Drive si está configurada
+        base_root = GOOGLE_SHARED_DRIVE_ID if GOOGLE_SHARED_DRIVE_ID != "root" else 'root'
+        
         # Determinar la carpeta según el estado
         if estado in ['INCOMPLETA', 'ILEGIBLE', 'INCOMPLETA_ILEGIBLE', 'EPS_TRANSCRIPCION', 'DERIVADO_TTHH']:
             # ✅ Incompletas va en RAÍZ (no dentro de Incapacidades)
-            base_folder_id = create_folder_if_not_exists(self.service, b'Incompletas', 'root')
+            base_folder_id = create_folder_if_not_exists(self.service, b'Incompletas', base_root)
         elif estado == 'COMPLETA':
             # ✅ Completas va en RAÍZ
-            base_folder_id = create_folder_if_not_exists(self.service, b'Completas', 'root')
+            base_folder_id = create_folder_if_not_exists(self.service, b'Completas', base_root)
         else:
             # NUEVO y otros → Incapacidades (histórico)
-            base_folder_id = create_folder_if_not_exists(self.service, b'Incapacidades', 'root')
+            base_folder_id = create_folder_if_not_exists(self.service, b'Incapacidades', base_root)
         
         # Crear/obtener carpeta de empresa
         empresa_folder_id = create_folder_if_not_exists(self.service, empresa.encode(), base_folder_id)

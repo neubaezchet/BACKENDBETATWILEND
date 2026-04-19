@@ -14,7 +14,7 @@ import zipfile
 import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
-from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists
+from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists, GOOGLE_SHARED_DRIVE_ID
 from app.database import SessionLocal, Case, EstadoCaso, Company
 
 
@@ -36,8 +36,10 @@ class CompletesManager:
         """Inicializa estructura Completas y _Respaldos_24h"""
         self._get_service()
         if not self.completes_root_id:
+            # ✅ Usar Shared Drive si está configurada
+            base_root = GOOGLE_SHARED_DRIVE_ID if GOOGLE_SHARED_DRIVE_ID != "root" else 'root'
             self.completes_root_id = create_folder_if_not_exists(
-                self.service, b'Completas', 'root'
+                self.service, b'Completas', base_root
             )
         
         if not self.respaldos_root_id:
