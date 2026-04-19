@@ -28,7 +28,7 @@ from app.waha_rate_limiter import waha_limiter
 GMAIL_USER = os.environ.get("GMAIL_USER", "soporte@incaneurobaeza.com")
 GMAIL_PASSWORD = os.environ.get("GMAIL_PASSWORD", "")  # App password, not regular password
 GMAIL_SMTP_SERVER = "smtp.gmail.com"
-GMAIL_SMTP_PORT = 465  # Puerto SSL directo (Railway bloquea 587/STARTTLS)
+GMAIL_SMTP_PORT = 587  # ✅ STARTTLS en lugar de SSL directo (Railway bloquea 465)
 
 # WAHA API para WhatsApp
 WAHA_BASE_URL = os.environ.get(
@@ -389,9 +389,10 @@ def _enviar_email_smtp(
             except Exception as e:
                 print(f"  ✗ Error adjuntando {nombre}: {e}")
         
-        # Conectar a Gmail — puerto 465 SSL directo (Railway bloquea 587)
+        # Conectar a Gmail — STARTTLS (puerto 587)
         print(f"  Conectando a {GMAIL_SMTP_SERVER}:{GMAIL_SMTP_PORT}...")
-        with smtplib.SMTP_SSL(GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, timeout=30) as server:
+        with smtplib.SMTP(GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, timeout=30) as server:
+            server.starttls()  # ← Inicia seguridad TLS
             server.login(GMAIL_USER, GMAIL_PASSWORD)
             
             # Enviar (TO + CC)

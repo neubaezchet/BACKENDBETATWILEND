@@ -2222,11 +2222,14 @@ async def exportar_a_drive_temporal(
     print(f"📁 Exportación Drive temporal: {len(casos)} PDFs a copiar")
     
     try:
-        from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists
+        from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists, GOOGLE_SHARED_DRIVE_ID
         service = get_authenticated_service()
         
+        # ✅ Usar Shared Drive si está configurada
+        base_root = GOOGLE_SHARED_DRIVE_ID if GOOGLE_SHARED_DRIVE_ID != "root" else 'root'
+        
         # Buscar o crear carpeta raíz "Exportaciones_Temporales"
-        export_root_id = create_folder_if_not_exists(service, "Exportaciones_Temporales")
+        export_root_id = create_folder_if_not_exists(service, "Exportaciones_Temporales", base_root)
         
         # Crear carpeta de esta exportación con timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
