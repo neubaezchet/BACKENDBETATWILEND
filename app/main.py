@@ -3,6 +3,7 @@ from fastapi import FastAPI, UploadFile, Form, File, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 import pandas as pd
 import os, uuid
 from pathlib import Path
@@ -23,6 +24,7 @@ from app.database import (
 from app.validador import router as validador_router, obtener_emails_empresa_directorio
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
 from app.serial_generator import generar_serial_unico  # ✅ NUEVO
+from app.ocr_service import extraer_texto_pdf
 
 from app.email_service import enviar_notificacion  # ✅ Backend nativo
 from fastapi import Request, Header
@@ -37,6 +39,47 @@ from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ✅ Cola resiliente persistente (Drive)
 from app.resilient_queue import resilient_queue, guardar_pendiente_drive
+
+
+def _aplicar_ocr_a_metadata(metadata: dict, pdf_path: Path) -> dict:
+    """GLM-OCR sobre el PDF fusionado; guarda resumen y texto en metadata_form."""
+    resultado = extraer_texto_pdf(str(pdf_path))
+    metadata["ocr_glm"] = {
+        "exito": resultado["exito"],
+        "paginas": resultado["paginas"],
+        "error": resultado["error"] or None,
+    }
+    if resultado["exito"] and resultado.get("texto"):
+        metadata["texto_ocr_glm"] = resultado["texto"]
+    elif not resultado["exito"]:
+        print(f"⚠️ OCR GLM: {resultado['error']}")
+    return resultado
+
+
+def _ocr_respuesta_api(resultado: dict) -> dict:
+    """Payload ligero para el frontend (sin volcar todo el texto)."""
+    texto = (resultado.get("texto") or "")
+    preview = texto[:500] + ("…" if len(texto) > 500 else "")
+    exito = bool(resultado.get("exito"))
+    return {
+        "exito": exito,
+        "paginas": int(resultado.get("paginas") or 0),
+        "error": resultado.get("error") or None,
+        "texto_preview": preview if exito and texto else None,
+    }
+
+
+def _mensaje_drive_usuario(error_texto: str) -> str:
+    """Normaliza errores técnicos de Drive a mensaje claro para frontend."""
+    if not error_texto:
+        return "No se pudo subir el archivo a Drive."
+    err = error_texto.lower()
+    if "service accounts do not have storage quota" in err or "storagequotaexceeded" in err:
+        return "Drive rechazó la subida: la cuenta de servicio no tiene cuota en esa ubicación. Usa una carpeta dentro de la Unidad Compartida."
+    if "json inválido en credenciales de cuenta de servicio" in err or "expecting property name enclosed in double quotes" in err:
+        return "Credenciales de cuenta de servicio inválidas. Revisa el JSON de GOOGLE_SERVICE_ACCOUNT_JSON en variables de entorno."
+    return f"No se pudo subir el archivo a Drive: {error_texto[:240]}"
+
 
 # ==================== FUNCIÓN: DOCUMENTOS REQUERIDOS ====================
 def obtener_documentos_requeridos(tipo: str, dias: int = None, phantom: bool = None, mother_works: bool = None) -> list:
@@ -896,6 +939,9 @@ async def reenviar_caso_incompleto(
             caso.cedula,
             caso.tipo.value if caso.tipo else "general"
         )
+
+        ocr_patch = {}
+        resultado_ocr_reenvio = _aplicar_ocr_a_metadata(ocr_patch, pdf_final_path)
         
         # 3. Subir NUEVO archivo a Drive (NO reemplazar el viejo aún)
         from app.serial_generator import extraer_iniciales
@@ -919,6 +965,10 @@ async def reenviar_caso_incompleto(
         if not caso.metadata_form:
             caso.metadata_form = {}
         
+        caso.metadata_form['ocr_glm'] = ocr_patch.get('ocr_glm')
+        if 'texto_ocr_glm' in ocr_patch:
+            caso.metadata_form['texto_ocr_glm'] = ocr_patch['texto_ocr_glm']
+        
         if 'reenvios' not in caso.metadata_form:
             caso.metadata_form['reenvios'] = []
         
@@ -926,8 +976,10 @@ async def reenviar_caso_incompleto(
             'fecha': datetime.now().isoformat(),
             'link': nuevo_link,
             'archivos': original_filenames,
-            'estado': 'PENDIENTE_REVISION'
+            'estado': 'PENDIENTE_REVISION',
+            'ocr_glm': ocr_patch.get('ocr_glm'),
         })
+        flag_modified(caso, 'metadata_form')
         
         # 5. Cambiar estado a "NUEVO" para que validador lo vea
         estado_anterior = caso.estado.value
@@ -993,7 +1045,8 @@ async def reenviar_caso_incompleto(
             "serial": serial,
             "mensaje": "Documentos reenviados exitosamente. El validador revisará tu caso.",
             "total_reenvios": len(caso.metadata_form['reenvios']),
-            "nuevo_link": nuevo_link
+            "nuevo_link": nuevo_link,
+            "ocr_glm": _ocr_respuesta_api(resultado_ocr_reenvio),
         }
         
     except Exception as e:
@@ -1041,6 +1094,9 @@ async def completar_caso_incompleto(
             caso.cedula, 
             caso.tipo.value if caso.tipo else "general"
         )
+
+        ocr_patch = {}
+        resultado_ocr_completar = _aplicar_ocr_a_metadata(ocr_patch, pdf_final_path)
         
         # 3. Actualizar archivo en Drive (MISMO file_id)
         from app.drive_manager import DriveFileManager, CaseFileOrganizer
@@ -1072,6 +1128,13 @@ async def completar_caso_incompleto(
         
         # Limpiar archivo temporal
         pdf_final_path.unlink()
+
+        if not caso.metadata_form:
+            caso.metadata_form = {}
+        caso.metadata_form['ocr_glm'] = ocr_patch.get('ocr_glm')
+        if 'texto_ocr_glm' in ocr_patch:
+            caso.metadata_form['texto_ocr_glm'] = ocr_patch['texto_ocr_glm']
+        flag_modified(caso, 'metadata_form')
         
         # 4. Cambiar estado a NUEVO para que validador revise de nuevo
         estado_anterior = caso.estado.value
@@ -1106,13 +1169,14 @@ async def completar_caso_incompleto(
             actualizar_caso_en_sheet(caso, accion="actualizar")
         except Exception as e:
             print(f"⚠️ Error sincronizando con Sheets: {e}")
-        
+
         return {
             "success": True,
             "serial": serial,
             "mensaje": "Documentos completados exitosamente. El caso será revisado nuevamente.",
             "nuevo_estado": "NUEVO",
-            "nuevo_link": nuevo_link
+            "nuevo_link": nuevo_link,
+            "ocr_glm": _ocr_respuesta_api(resultado_ocr_completar),
         }
         
     except Exception as e:
@@ -1160,8 +1224,9 @@ async def verificar_duplicado(
     
     # Si se proporciona tipo, validar que exista en el enum ANTES de consultar
     if tipo:
+        tipo_normalizado = tipo.strip().lower()
         try:
-            tipo_enum = TipoIncapacidad(tipo)
+            tipo_enum = TipoIncapacidad(tipo_normalizado)
             filtros.append(Case.tipo == tipo_enum)
         except ValueError:
             # Si el tipo no existe en el enum, ignorar el filtro de tipo
@@ -1338,10 +1403,15 @@ async def subir_incapacidad(
     
     
     
+    resultado_ocr = {"exito": False, "texto": "", "error": "", "paginas": 0}
+    drive_error_detalle = None
+    drive_error_usuario = None
     try:
         empresa_destino = empleado_bd.empresa.nombre if empleado_bd else "OTRA_EMPRESA"
 
         pdf_final_path, original_filenames = await merge_pdfs_from_uploads(archivos, cedula, tipo)
+
+        resultado_ocr = _aplicar_ocr_a_metadata(metadata_form, pdf_final_path)
 
         link_pdf = None
         drive_en_cola = False
@@ -1362,6 +1432,8 @@ async def subir_incapacidad(
         except Exception as drive_err:
             # ✅ Drive falló → guardar PDF en /tmp con nombre seguro y meter en cola
             print(f"⚠️ Drive falló ({drive_err}) — caso se guardará en BD y PDF en cola")
+            drive_error_detalle = str(drive_err)
+            drive_error_usuario = _mensaje_drive_usuario(drive_error_detalle)
             import shutil
             import tempfile
             tmp_dir = Path(tempfile.gettempdir()) / "incapacidades_cola"
@@ -1572,7 +1644,10 @@ _Automatico por Incapacidades_""".strip()
             },
             "fecha_inicio": fecha_inicio.isoformat() if fecha_inicio else None,
             "fecha_fin": fecha_fin.isoformat() if fecha_fin else None,
-            "serial": consecutivo
+            "serial": consecutivo,
+            "ocr_glm": _ocr_respuesta_api(resultado_ocr),
+            "drive_error": drive_error_usuario,
+            "drive_error_detalle": drive_error_detalle,
         }
         
         print(f"Respondiendo con: {respuesta_final}")
@@ -1647,7 +1722,10 @@ Gracias por usar IncaNeurobaeza.
             "canales_notificados": {
                 "email": notificacion_exitosa,
                 "whatsapp": notificacion_exitosa and bool(telefono)
-            }
+            },
+            "ocr_glm": _ocr_respuesta_api(resultado_ocr),
+            "drive_error": drive_error_usuario,
+            "drive_error_detalle": drive_error_detalle,
         }
 
 @app.post("/admin/migrar-excel")
