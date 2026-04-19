@@ -9,6 +9,8 @@ venv/
 .env
 token.pickle
 credentials.json
+credentials_gmail.json
+oauth_tokens.json
 *.log
 .DS_Store
 data/~$*

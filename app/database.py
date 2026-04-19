@@ -370,6 +370,21 @@ class PendienteEnvio(Base):
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     procesado = Column(Boolean, default=False)
 
+class OAuthToken(Base):
+    """
+    Tokens OAuth guardados (Gmail, Drive, etc).
+    Se guarda el access_token y refresh_token después de autorizar.
+    """
+    __tablename__ = "oauth_tokens"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    servicio = Column(String(50), nullable=False, unique=True, index=True)  # 'gmail', 'drive', etc
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    autorizado_en = Column(DateTime, default=get_utc_now)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
 
 def get_database_url():
