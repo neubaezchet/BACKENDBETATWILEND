@@ -2,15 +2,17 @@
 ======================================================================================
 Email Service — Backend Nativo
 ======================================================================================
-Envía emails via Gmail SMTP + WhatsApp via WAHA API.
-Sin dependencia de webhooks externos. Incluye retry automático y logging detallado.
+Envía emails via Gmail API usando Service Account (PRODUCCIÓN).
+Sin contraseña de app, sin OAuth manual, sin expiración.
+Sin dependencia de webhooks externos. Incluye logging detallado.
 """
 
-import smtplib
 import os
 import time
 import re
+import json
 from typing import Optional, List, Dict
+from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -21,14 +23,23 @@ import base64
 import requests
 from app.waha_rate_limiter import waha_limiter
 
+# Google Auth
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+
 # ═══════════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN GMAIL SMTP
+# CONFIGURACIÓN GMAIL — USA LA MISMA SERVICE ACCOUNT QUE DRIVE
 # ═══════════════════════════════════════════════════════════════════════════════════
 
 GMAIL_USER = os.environ.get("GMAIL_USER", "soporte@incaneurobaeza.com")
-GMAIL_PASSWORD = os.environ.get("GMAIL_PASSWORD", "")  # App password, not regular password
-GMAIL_SMTP_SERVER = "smtp.gmail.com"
-GMAIL_SMTP_PORT = 587  # ✅ STARTTLS en lugar de SSL directo (Railway bloquea 465)
+
+# ✅ MISMAS VARIABLES QUE DRIVE
+GOOGLE_SERVICE_ACCOUNT_KEY = os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+GOOGLE_SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+
+# Scopes para Gmail
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
 # WAHA API para WhatsApp
 WAHA_BASE_URL = os.environ.get(
@@ -271,29 +282,23 @@ def enviar_notificacion(
     print(f"📧 CC final: {cc_email_final or 'N/A'}\n")
     
     # ─────────────────────────────────────────────────────────────────────
-    # 3. ENVIAR EMAIL CON REINTENTOS
+    # 3. ENVIAR EMAIL — SERVICE ACCOUNT (Gmail API sin expiración)
     # ─────────────────────────────────────────────────────────────────────
-    email_enviado = False
-    for intento in range(max_retries):
-        try:
-            email_enviado = _enviar_email_smtp(
-                email=email,
-                cc_list=cc_list,
-                subject=subject,
-                html_content=html_content,
-                adjuntos_base64=adjuntos_base64
-            )
-            if email_enviado:
-                print(f"✅ EMAIL ENVIADO (intento {intento + 1}/{max_retries})")
-                break
-        except Exception as e:
-            print(f"❌ Error en intento {intento + 1}/{max_retries}: {e}")
-            if intento < max_retries - 1:
-                time.sleep(2 ** intento)  # Backoff exponencial: 1s, 2s, 4s
+    
+    print(f"  📧 Enviando via Service Account...")
+    email_enviado = _enviar_email_service_account(
+        email=email,
+        cc_list=cc_list,
+        subject=subject,
+        html_content=html_content,
+        adjuntos_base64=adjuntos_base64
+    )
     
     if not email_enviado:
-        print(f"❌ EMAIL FALLÓ después de {max_retries} intentos")
+        print(f"❌ EMAIL FALLÓ — Service Account no disponible")
         return False
+    
+    print(f"✅ EMAIL ENVIADO VIA SERVICE ACCOUNT")
     
     # ─────────────────────────────────────────────────────────────────────
     # 4. ENVIAR WHATSAPP (si existe)
@@ -330,10 +335,59 @@ def enviar_notificacion(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════
-# FUNCIÓN AUXILIAR — ENVIAR EMAIL VIA SMTP
+# FUNCIÓN AUXILIAR — CARGAR CREDENCIALES SERVICE ACCOUNT (igual a Drive)
 # ═══════════════════════════════════════════════════════════════════════════════════
 
-def _enviar_email_smtp(
+def _load_service_account_credentials():
+    """
+    ✅ Carga las MISMAS credenciales que Drive
+    Intenta cargar desde (en orden de prioridad):
+    1. GOOGLE_SERVICE_ACCOUNT_KEY (JSON como string)
+    2. GOOGLE_CREDENTIALS_JSON
+    3. GOOGLE_SHEETS_CREDENTIALS
+    4. GOOGLE_SERVICE_ACCOUNT_FILE (ruta al archivo)
+    """
+    
+    # Opción 1: JSON como string en variable
+    raw_json = GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_CREDENTIALS_JSON or GOOGLE_SHEETS_CREDENTIALS
+    if raw_json:
+        try:
+            service_account_info = json.loads(raw_json)
+            return ServiceAccountCredentials.from_service_account_info(
+                service_account_info,
+                scopes=GMAIL_SCOPES
+            )
+        except Exception as e:
+            print(f"  ❌ Error al parsear JSON de Service Account: {e}")
+            return None
+    
+    # Opción 2: JSON desde archivo
+    if GOOGLE_SERVICE_ACCOUNT_FILE:
+        try:
+            sa_path = Path(GOOGLE_SERVICE_ACCOUNT_FILE)
+            if sa_path.exists():
+                with open(sa_path, 'r', encoding='utf-8') as f:
+                    service_account_info = json.load(f)
+                return ServiceAccountCredentials.from_service_account_info(
+                    service_account_info,
+                    scopes=GMAIL_SCOPES
+                )
+            else:
+                print(f"  ❌ Archivo no existe: {sa_path}")
+        except Exception as e:
+            print(f"  ❌ Error al cargar archivo Service Account: {e}")
+            return None
+    
+    # Sin Service Account configurada
+    print(f"  ❌ No hay Service Account configurada (ni GOOGLE_SERVICE_ACCOUNT_KEY ni GOOGLE_SERVICE_ACCOUNT_FILE)")
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════
+# FUNCIÓN AUXILIAR — ENVIAR EMAIL VIA SERVICE ACCOUNT (Gmail API)
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+def _enviar_email_service_account(
     email: str,
     cc_list: List[str],
     subject: str,
@@ -341,11 +395,20 @@ def _enviar_email_smtp(
     adjuntos_base64: List[Dict] = []
 ) -> bool:
     """
-    Envía email via Gmail SMTP con soporte para CC y adjuntos.
+    Envía email via Gmail API usando Service Account.
+    
+    ✅ Usa las MISMAS credenciales que Drive (no hay variables adicionales)
+    - Cargar desde GOOGLE_SERVICE_ACCOUNT_KEY o GOOGLE_SERVICE_ACCOUNT_FILE
+    - Los scopes se agregan automáticamente (gmail.send)
     """
     
     try:
-        # Crear mensaje
+        # Cargar credenciales (IGUAL A COMO DRIVE LAS CARGA)
+        credentials = _load_service_account_credentials()
+        if not credentials:
+            return False
+        
+        # Construir mensaje MIME
         msg = MIMEMultipart('alternative')
         msg['From'] = GMAIL_USER
         msg['To'] = email
@@ -357,7 +420,7 @@ def _enviar_email_smtp(
         # Agregar HTML
         msg.attach(MIMEText(html_content, 'html', 'utf-8'))
         
-        # Agregar adjuntos (si existen)
+        # Agregar adjuntos si existen
         for adj in adjuntos_base64:
             nombre = adj.get('nombre', 'archivo.pdf')
             contenido_b64 = adj.get('base64', '')
@@ -375,41 +438,40 @@ def _enviar_email_smtp(
                 else:
                     mime_type = 'application/octet-stream'
                 
-                # Adjuntar
                 part = MIMEBase(*mime_type.split('/'))
                 part.set_payload(contenido)
                 encoders.encode_base64(part)
-                part.add_header(
-                    'Content-Disposition',
-                    f'attachment; filename= {nombre}'
-                )
+                part.add_header('Content-Disposition', f'attachment; filename={nombre}')
                 msg.attach(part)
                 print(f"  ✓ Adjunto agregado: {nombre}")
-            
             except Exception as e:
                 print(f"  ✗ Error adjuntando {nombre}: {e}")
         
-        # Conectar a Gmail — STARTTLS (puerto 587)
-        print(f"  Conectando a {GMAIL_SMTP_SERVER}:{GMAIL_SMTP_PORT}...")
-        with smtplib.SMTP(GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, timeout=30) as server:
-            server.starttls()  # ← Inicia seguridad TLS
-            server.login(GMAIL_USER, GMAIL_PASSWORD)
-            
-            # Enviar (TO + CC)
-            recipients = [email] + cc_list
-            server.sendmail(GMAIL_USER, recipients, msg.as_string())
+        # Codificar mensaje para la API
+        raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
         
-        print(f"  ✅ Email enviado exitosamente")
-        return True
+        # Llamar Gmail API
+        print(f"  📧 Enviando via Gmail API (Service Account)...")
+        url = "https://www.googleapis.com/gmail/v1/users/me/messages/send"
+        headers = {
+            "Authorization": f"Bearer {credentials.token}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "raw": raw_message
+        }
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        
+        if response.status_code in [200, 201, 202]:
+            print(f"  ✅ Email enviado exitosamente via Service Account")
+            return True
+        else:
+            print(f"  ❌ Error Gmail API {response.status_code}: {response.text[:200]}")
+            return False
     
-    except smtplib.SMTPAuthenticationError:
-        print(f"  ❌ Error de autenticación — verificar GMAIL_USER y GMAIL_PASSWORD")
-        return False
-    except smtplib.SMTPException as e:
-        print(f"  ❌ Error SMTP: {e}")
-        return False
     except Exception as e:
-        print(f"  ❌ Error inesperado: {e}")
+        print(f"  ❌ Error en Service Account: {e}")
         return False
 
 
@@ -456,9 +518,9 @@ def _enviar_whatsapp(numero: str, mensaje: str) -> bool:
 
 # Health check
 def verificar_salud_email() -> bool:
-    """Verifica que Gmail esté accesible"""
+    """Verifica que Service Account de Gmail esté configurada"""
     try:
-        with smtplib.SMTP_SSL(GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, timeout=5) as server:
-            return True
+        credentials = _load_service_account_credentials()
+        return credentials is not None
     except:
         return False

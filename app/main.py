@@ -2058,6 +2058,137 @@ async def ver_pendientes_envio(tipo: str = None):
     ])
 
 
+# ==================== OAUTH ENDPOINTS - Gmail Authorization ====================
+
+@app.get("/auth/authorize")
+async def oauth_authorize():
+    """
+    📧 PASO 1: Redirige al usuario a Google para autorizar el acceso a Gmail.
+    
+    Endpoint: GET /auth/authorize
+    Usuario hace click en un botón que lo lleva aquí,
+    luego Google lo redirige a /auth/callback con un código.
+    """
+    from app.gmail_oauth import obtener_url_autorizacion
+    
+    try:
+        auth_url = obtener_url_autorizacion()
+        print(f"✅ URL de autorización generada")
+        print(f"   {auth_url[:100]}...")
+        
+        return JSONResponse({
+            "mensaje": "Abre este enlace en tu navegador para autorizar el acceso a Gmail",
+            "url": auth_url,
+            "instrucciones": [
+                "1. Haz click en el enlace",
+                "2. Selecciona tu cuenta de Google",
+                "3. Autoriza el acceso",
+                "4. Se te redirigirá automáticamente"
+            ]
+        })
+    except Exception as e:
+        print(f"❌ Error generando URL de autorización: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error: {str(e)}"}
+        )
+
+
+@app.get("/auth/callback")
+async def oauth_callback(code: str = None, error: str = None, db: Session = Depends(get_db)):
+    """
+    📧 PASO 2: Google redirige aquí después de que el usuario autoriza.
+    
+    Endpoint: GET /auth/callback?code=...
+    Intercambia el código por tokens y los guarda en BD.
+    """
+    from app.gmail_oauth import procesar_codigo_autorizacion
+    from fastapi.responses import HTMLResponse
+    
+    if error:
+        print(f"❌ Error en Google OAuth: {error}")
+        return HTMLResponse(f"""
+        <h1>❌ Error en Autorización</h1>
+        <p>{error}</p>
+        <p><a href="/auth/status">Volver a intentar</a></p>
+        """, status_code=400)
+    
+    if not code:
+        return HTMLResponse("""
+        <h1>❌ No Authorization Code</h1>
+        <p>No se recibió código de autorización</p>
+        """, status_code=400)
+    
+    try:
+        print(f"🔄 Procesando código de autorización...")
+        data = procesar_codigo_autorizacion(code)
+        
+        print(f"✅ Token guardado exitosamente en BD")
+        
+        return HTMLResponse(f"""
+        <html>
+        <head><title>✅ Autorización Exitosa</title></head>
+        <body style="font-family: Arial; text-align: center; padding: 50px;">
+            <h1>✅ ¡Autorización Exitosa!</h1>
+            <p>Gmail está ahora configurado para enviar emails automáticamente.</p>
+            <p style="color: green; font-weight: bold;">El sistema puede cerrar esta ventana.</p>
+            <hr>
+            <p><small>Token válido por {data.get('expires_in', 3600)} segundos</small></p>
+            <p><small>Se refrescará automáticamente cuando sea necesario</small></p>
+        </body>
+        </html>
+        """)
+    
+    except Exception as e:
+        print(f"❌ Error procesando código: {e}")
+        return HTMLResponse(f"""
+        <html>
+        <head><title>❌ Error</title></head>
+        <body style="font-family: Arial; text-align: center; padding: 50px;">
+            <h1>❌ Error en Autorización</h1>
+            <p>No se pudo guardar el token:</p>
+            <p style="color: red;"><code>{str(e)[:200]}</code></p>
+            <p><a href="/auth/authorize">Intentar de nuevo</a></p>
+        </body>
+        </html>
+        """, status_code=500)
+
+
+@app.get("/auth/status")
+async def oauth_status():
+    """
+    🔍 Verifica si Gmail ya está autorizado.
+    
+    Retorna:
+    - authorized: true/false
+    - Si es false, incluye botón para autorizar
+    """
+    from app.gmail_oauth import esta_autorizado
+    
+    autorizado = esta_autorizado()
+    
+    if autorizado:
+        return {
+            "authorized": True,
+            "servicio": "gmail",
+            "mensaje": "Gmail está configurado y funcionando",
+            "estado": "✅ Listo para enviar emails"
+        }
+    else:
+        return {
+            "authorized": False,
+            "servicio": "gmail",
+            "mensaje": "Gmail NO está autorizado aún",
+            "estado": "⚠️ Necesita autorización",
+            "action": "Visita /auth/authorize para configurar",
+            "instrucciones": {
+                "paso_1": "Abre: https://tudominio.com/auth/authorize",
+                "paso_2": "Autoriza el acceso a Gmail",
+                "paso_3": "Listo! El sistema enviará emails automáticamente"
+            }
+        }
+
+
 # ==================== INICIO DEL SERVIDOR ====================
 
 if __name__ == "__main__":
