@@ -341,12 +341,18 @@ def enviar_notificacion(
 
 def _load_service_account_credentials():
     """
-    ✅ Carga las MISMAS credenciales que Drive
+    ✅ Carga Service Account con DOMAIN-WIDE DELEGATION
+    Para enviar emails como usuario de Google Workspace
+    
     Intenta cargar desde (en orden de prioridad):
     1. GOOGLE_SERVICE_ACCOUNT_KEY (JSON como string)
     2. GOOGLE_CREDENTIALS_JSON
     3. GOOGLE_SHEETS_CREDENTIALS
     4. GOOGLE_SERVICE_ACCOUNT_FILE (ruta al archivo)
+    
+    ✅ IMPORTANTE: 
+    - Debe tener Domain-Wide Delegation configurado en Google Cloud
+    - El Service Account debe estar autorizado en Admin Console
     """
     # Opción 1: JSON como string en variable
     raw_json = GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_CREDENTIALS_JSON or GOOGLE_SHEETS_CREDENTIALS
@@ -357,9 +363,17 @@ def _load_service_account_credentials():
                 service_account_info,
                 scopes=GMAIL_SCOPES
             )
+            
+            # ✅ AGREGAR DOMAIN-WIDE DELEGATION
+            # Delegar al usuario de Workspace (GMAIL_USER)
+            credentials_delegated = credentials.with_subject(GMAIL_USER)
+            
             # ✅ CRUCIAL: Refrescar para obtener token válido
-            credentials.refresh(Request())
-            return credentials
+            credentials_delegated.refresh(Request())
+            
+            print(f"  ✅ Service Account con delegación activada → {GMAIL_USER}")
+            return credentials_delegated
+            
         except Exception as e:
             print(f"  ❌ Error al parsear JSON de Service Account: {e}")
             return None
@@ -375,9 +389,15 @@ def _load_service_account_credentials():
                     service_account_info,
                     scopes=GMAIL_SCOPES
                 )
+                
+                # ✅ AGREGAR DOMAIN-WIDE DELEGATION
+                credentials_delegated = credentials.with_subject(GMAIL_USER)
+                
                 # ✅ CRUCIAL: Refrescar para obtener token válido
-                credentials.refresh(Request())
-                return credentials
+                credentials_delegated.refresh(Request())
+                
+                print(f"  ✅ Service Account con delegación activada → {GMAIL_USER}")
+                return credentials_delegated
             else:
                 print(f"  ❌ Archivo no existe: {sa_path}")
         except Exception as e:
@@ -473,7 +493,19 @@ def _enviar_email_service_account(
             print(f"  ✅ Email enviado exitosamente via Service Account")
             return True
         else:
-            print(f"  ❌ Error Gmail API {response.status_code}: {response.text[:200]}")
+            error_msg = response.text[:300]
+            print(f"  ❌ Error Gmail API {response.status_code}: {error_msg}")
+            
+            # ✅ DIAGNÓSTICO específico
+            if response.status_code == 400:
+                if "Precondition check failed" in error_msg:
+                    print(f"\n  🔧 SOLUCIÓN:")
+                    print(f"     1. Verifica que GMAIL_USER = '{GMAIL_USER}' existe en tu Google Workspace")
+                    print(f"     2. Confirma que el Service Account tiene Domain-Wide Delegation")
+                    print(f"     3. En Google Admin Console → Security → API controls → Domain wide delegation")
+                    print(f"        - Client ID del Service Account debe estar autorizado")
+                    print(f"        - Debe tener scope: https://www.googleapis.com/auth/gmail.send\n")
+            
             return False
     
     except Exception as e:
