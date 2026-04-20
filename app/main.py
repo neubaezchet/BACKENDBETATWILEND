@@ -1602,6 +1602,14 @@ _Automatico por Incapacidades_""".strip()
         print(f"{'='*80}\n")
         
         if email:  # Email del formulario como TO principal
+            # ✅ MOSTRAR CONFIGURACIÓN DE EMAILS
+            print(f"📋 DETALLES DEL EMAIL CC:")
+            print(f"   TO (Formulario): {email}")
+            print(f"   CC (Empleado BD): {correo_empleado or '❌ VACÍO'}")
+            print(f"   CC (Directorio): {cc_empresa or '❌ VACÍO'}")
+            if not correo_empleado and not cc_empresa:
+                print(f"   ⚠️ ADVERTENCIA: No hay CCs configurados - Revisar BD")
+            print()
             
             resultado = enviar_notificacion(
                 tipo_notificacion='confirmacion',

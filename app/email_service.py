@@ -21,7 +21,10 @@ from email import encoders
 from datetime import datetime, timedelta
 import base64
 import requests
-from app.waha_rate_limiter import waha_limiter
+try:
+    from app.waha_rate_limiter import waha_limiter
+except:
+    waha_limiter = None  # ✅ Opcional - no se usa con Business API
 
 # Google Auth
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
@@ -62,13 +65,37 @@ if not _SERVICE_ACCOUNT_AVAILABLE:
     print("\nNo se permitirá fallback a OAuth personal.\n")
     print("="*90 + "\n")
 
-# WAHA API para WhatsApp
-WAHA_BASE_URL = os.environ.get(
-    "WAHA_BASE_URL",
-    "https://devlikeaprowaha-production-111a.up.railway.app"
-)
-WAHA_API_KEY = os.environ.get("WAHA_API_KEY", "1085043374")
-WAHA_SESSION_NAME = os.environ.get("WAHA_SESSION_NAME", "default")
+# ═══════════════════════════════════════════════════════════════════════════════════
+# CONFIGURACIÓN WHATSAPP BUSINESS API — Reemplaza WAHA
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+# ✅ NUEVA API: WhatsApp Business (Meta)
+WHATSAPP_BUSINESS_API_TOKEN = os.environ.get("WHATSAPP_BUSINESS_API_TOKEN")
+WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
+WHATSAPP_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID")  # Alias alternativo
+
+# Elegir cuál está disponible
+WHATSAPP_API_TOKEN = WHATSAPP_BUSINESS_API_TOKEN or os.environ.get("WHATSAPP_API_TOKEN")
+WHATSAPP_PHONE_ID_FINAL = WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_PHONE_ID
+
+# Versión de la API de Meta (Graph API)
+WHATSAPP_API_VERSION = "v19.0"
+WHATSAPP_API_BASE_URL = f"https://graph.instagram.com/{WHATSAPP_API_VERSION}"
+
+# ✅ VALIDACIÓN: WhatsApp Business está configurada
+_WHATSAPP_BUSINESS_AVAILABLE = bool(WHATSAPP_API_TOKEN and WHATSAPP_PHONE_ID_FINAL)
+
+if not _WHATSAPP_BUSINESS_AVAILABLE:
+    print("\n" + "="*90)
+    print("⚠️ ADVERTENCIA: WhatsApp Business API no completamente configurada")
+    print("="*90)
+    print("\nConfigura estas variables de entorno:")
+    print(f"  ✅ WHATSAPP_BUSINESS_API_TOKEN: {'✓' if WHATSAPP_API_TOKEN else '❌ FALTA'}")
+    print(f"  ✅ WHATSAPP_PHONE_NUMBER_ID: {'✓' if WHATSAPP_PHONE_ID_FINAL else '❌ FALTA'}")
+    print("\nSin esto, los mensajes de WhatsApp NO se enviarán.\n")
+    print("="*90 + "\n")
+else:
+    print("\n✅ WhatsApp Business API configurada correctamente\n")
 
 
 def _parsear_serial_wa(serial: str):
@@ -299,6 +326,28 @@ def enviar_notificacion(
     except Exception as e:
         print(f"⚠️ Advertencia en injection de empresas: {e}")
     
+    # ─────────────────────────────────────────────────────────────────────
+    # 2b. FALLBACK: Si cc_list vacío, intentar Company.email_copia
+    # ─────────────────────────────────────────────────────────────────────
+    if not cc_list and serial and serial != 'AUTO':
+        try:
+            from app.database import SessionLocal, Case, Company
+            _db = SessionLocal()
+            caso = _db.query(Case).filter(Case.serial == serial).first()
+            
+            if caso and caso.company_id:
+                company = _db.query(Company).filter(Company.id == caso.company_id).first()
+                if company and company.email_copia:
+                    for em in company.email_copia.split(','):
+                        em = em.strip().lower()
+                        if em and "@" in em and em != email.lower():
+                            cc_list.append(em)
+                            print(f"  📧 CC fallback desde Company.email_copia: {em}")
+            
+            _db.close()
+        except Exception as e:
+            print(f"⚠️ Error en fallback email_copia: {e}")
+    
     cc_email_final = ",".join(cc_list)
     print(f"📧 CC final: {cc_email_final or 'N/A'}\n")
     
@@ -326,27 +375,24 @@ def enviar_notificacion(
     # ─────────────────────────────────────────────────────────────────────
     if whatsapp:
         try:
-            # Verificar rate limit de WAHA
-            if waha_limiter.esperar_si_necesario():
-                print(f"✅ Rate limit OK — Enviando WhatsApp")
-                
-                if not whatsapp_message:
-                    whatsapp_message = generar_mensaje_whatsapp(
-                        tipo_notificacion, serial, subject, html_content, drive_link
-                    )
-                
-                wa_enviado = _enviar_whatsapp(
-                    numero=whatsapp,
-                    mensaje=whatsapp_message
+            # ✅ NUEVO: Sin rate limit restrictivo con Business API
+            # (WAHA tenía límites estrictos, Business API es más flexible)
+            
+            if not whatsapp_message:
+                whatsapp_message = generar_mensaje_whatsapp(
+                    tipo_notificacion, serial, subject, html_content, drive_link
                 )
-                
-                if wa_enviado:
-                    print(f"✅ WHATSAPP ENVIADO")
-                    waha_limiter.registrar_envio()
-                else:
-                    print(f"⚠️ WhatsApp falló — guardado en cola")
+            
+            print(f"📱 Enviando WhatsApp...")
+            wa_enviado = _enviar_whatsapp(
+                numero=whatsapp,
+                mensaje=whatsapp_message
+            )
+            
+            if wa_enviado:
+                print(f"✅ WHATSAPP ENVIADO")
             else:
-                print(f"⚠️ WhatsApp omitido por rate limit")
+                print(f"⚠️ WhatsApp falló — revisar configuración de Business API")
         
         except Exception as e:
             print(f"⚠️ Error en WhatsApp: {e}")
@@ -547,10 +593,17 @@ def _enviar_email_service_account(
 # FUNCIÓN AUXILIAR — ENVIAR WHATSAPP VIA WAHA
 # ═══════════════════════════════════════════════════════════════════════════════════
 
-def _enviar_whatsapp(numero: str, mensaje: str) -> bool:
+def _enviar_whatsapp_business(numero: str, mensaje: str) -> bool:
     """
-    Envía WhatsApp via WAHA API.
+    ✅ NUEVA: Envía WhatsApp via WhatsApp Business API (Meta Graph API).
+    
+    Reemplaza la vieja API de WAHA.
+    Más confiable, sin rate limiting, conectado a Meta directamente.
     """
+    
+    if not _WHATSAPP_BUSINESS_AVAILABLE:
+        print(f"  ❌ WhatsApp Business API no configurada")
+        return False
     
     try:
         # Formatear número (asegurar que está en formato internacional)
@@ -559,29 +612,50 @@ def _enviar_whatsapp(numero: str, mensaje: str) -> bool:
         elif numero.startswith('+'):
             numero = numero[1:]
         
-        url = f"{WAHA_BASE_URL}/api/sendMessage"
+        # URL de la API de Meta
+        url = f"{WHATSAPP_API_BASE_URL}/{WHATSAPP_PHONE_ID_FINAL}/messages"
+        
+        # Payload según documentación de Meta
         payload = {
-            "chatId": f"{numero}@c.us",
-            "text": mensaje
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-API-Key": WAHA_API_KEY
+            "messaging_product": "whatsapp",
+            "to": numero,
+            "type": "text",
+            "text": {
+                "preview_url": False,
+                "body": mensaje
+            }
         }
         
-        print(f"  📱 Enviando WhatsApp a +{numero}...")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {WHATSAPP_API_TOKEN}"
+        }
+        
+        print(f"  📱 Enviando WhatsApp Business a +{numero}...")
         response = requests.post(url, json=payload, headers=headers, timeout=15)
         
         if response.status_code in [200, 201, 202]:
-            print(f"  ✅ WhatsApp enviado")
+            print(f"  ✅ WhatsApp Business enviado")
             return True
         else:
-            print(f"  ❌ Error WAHA {response.status_code}: {response.text[:100]}")
+            try:
+                error_data = response.json()
+                error_msg = error_data.get("error", {}).get("message", response.text[:100])
+            except:
+                error_msg = response.text[:100]
+            
+            print(f"  ❌ Error WhatsApp Business {response.status_code}: {error_msg}")
             return False
     
     except Exception as e:
-        print(f"  ❌ Error enviando WhatsApp: {e}")
+        print(f"  ❌ Error enviando WhatsApp Business: {e}")
         return False
+
+
+# ✅ ALIAS para compatibilidad con código existente
+def _enviar_whatsapp(numero: str, mensaje: str) -> bool:
+    """Alias que redirecciona a WhatsApp Business API"""
+    return _enviar_whatsapp_business(numero, mensaje)
 
 
 # Health check

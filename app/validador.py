@@ -109,42 +109,56 @@ def registrar_evento(db: Session, case_id: int, accion: str, actor: str = "Siste
 
 def obtener_emails_empresa_directorio(company_id, db=None):
     """Obtiene emails CC por empresa.
-    Busca en: 1) correos_notificacion area='empresas', 2) Company.email_copia como fallback."""
+    Orden de prioridad: 1) correos_notificacion area='empresas', 2) Company.email_copia fallback
+    """
     emails = set()
     close_db = False
+    fuentes = []
     try:
         if not db:
             from app.database import SessionLocal
             db = SessionLocal()
             close_db = True
         
-        # Fuente 1: tabla correos_notificacion (directorio admin)
+        # ✅ Fuente 1: tabla correos_notificacion (directorio admin) - PRIORITARIO
         correos = db.query(CorreoNotificacion).filter(
             CorreoNotificacion.area == 'empresas',
             CorreoNotificacion.activo == True
         ).all()
         
         for c in correos:
+            # Toma: emails específicos de la empresa O emails generales (company_id=None)
             if c.company_id is None or c.company_id == company_id:
                 if c.email and c.email.strip():
                     emails.add(c.email.strip().lower())
+                    if c.company_id == company_id:
+                        fuentes.append(f"directorio[empresa]:{c.email}")
+                    else:
+                        fuentes.append(f"directorio[general]:{c.email}")
         
-        # Fuente 2: Company.email_copia (fallback directo)
-        if company_id:
+        # ✅ Fuente 2: Company.email_copia (FALLBACK) - Solo si directorio está vacío
+        if not emails and company_id:
             company = db.query(Company).filter(Company.id == company_id).first()
             if company and company.email_copia:
                 for em in company.email_copia.split(","):
                     em = em.strip().lower()
                     if em and "@" in em:
                         emails.add(em)
+                        fuentes.append(f"fallback[email_copia]:{em}")
         
         emails = list(emails)
         if emails:
-            print(f"📧 CC empresa → {len(emails)} emails para company_id={company_id}: {emails}")
+            print(f"📧 CC empresa → {len(emails)} emails para company_id={company_id}")
+            for f in fuentes:
+                print(f"     {f}")
         else:
             print(f"⚠️ CC empresa → Sin emails para company_id={company_id}")
+            print(f"     Verifica: correos_notificacion O companies.email_copia")
+        
+        return emails
     except Exception as e:
         print(f"⚠️ Error obteniendo emails CC empresa: {e}")
+        return []
     finally:
         if close_db and db:
             db.close()
