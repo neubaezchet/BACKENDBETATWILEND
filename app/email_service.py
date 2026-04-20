@@ -25,6 +25,7 @@ from app.waha_rate_limiter import waha_limiter
 
 # Google Auth
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.auth.transport.requests import Request
 
 # ═══════════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN GMAIL — USA LA MISMA SERVICE ACCOUNT QUE DRIVE
@@ -347,16 +348,18 @@ def _load_service_account_credentials():
     3. GOOGLE_SHEETS_CREDENTIALS
     4. GOOGLE_SERVICE_ACCOUNT_FILE (ruta al archivo)
     """
-    
     # Opción 1: JSON como string en variable
     raw_json = GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_CREDENTIALS_JSON or GOOGLE_SHEETS_CREDENTIALS
     if raw_json:
         try:
             service_account_info = json.loads(raw_json)
-            return ServiceAccountCredentials.from_service_account_info(
+            credentials = ServiceAccountCredentials.from_service_account_info(
                 service_account_info,
                 scopes=GMAIL_SCOPES
             )
+            # ✅ CRUCIAL: Refrescar para obtener token válido
+            credentials.refresh(Request())
+            return credentials
         except Exception as e:
             print(f"  ❌ Error al parsear JSON de Service Account: {e}")
             return None
@@ -368,10 +371,13 @@ def _load_service_account_credentials():
             if sa_path.exists():
                 with open(sa_path, 'r', encoding='utf-8') as f:
                     service_account_info = json.load(f)
-                return ServiceAccountCredentials.from_service_account_info(
+                credentials = ServiceAccountCredentials.from_service_account_info(
                     service_account_info,
                     scopes=GMAIL_SCOPES
                 )
+                # ✅ CRUCIAL: Refrescar para obtener token válido
+                credentials.refresh(Request())
+                return credentials
             else:
                 print(f"  ❌ Archivo no existe: {sa_path}")
         except Exception as e:
