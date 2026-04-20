@@ -42,6 +42,26 @@ GOOGLE_SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
 # Scopes para Gmail
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
+# ✅ VALIDACIÓN: FORZAR SOLO SERVICE ACCOUNT (sin fallback a OAuth personal)
+_SERVICE_ACCOUNT_AVAILABLE = bool(
+    GOOGLE_SERVICE_ACCOUNT_KEY 
+    or GOOGLE_CREDENTIALS_JSON 
+    or GOOGLE_SHEETS_CREDENTIALS 
+    or GOOGLE_SERVICE_ACCOUNT_FILE
+)
+
+if not _SERVICE_ACCOUNT_AVAILABLE:
+    print("\n" + "="*90)
+    print("❌ CRÍTICO: Service Account NO configurada para Gmail")
+    print("="*90)
+    print("\nConfigura UNA de estas variables de entorno:")
+    print("  1. GOOGLE_SERVICE_ACCOUNT_KEY (JSON como string)")
+    print("  2. GOOGLE_CREDENTIALS_JSON")
+    print("  3. GOOGLE_SHEETS_CREDENTIALS")
+    print("  4. GOOGLE_SERVICE_ACCOUNT_FILE (ruta al JSON)")
+    print("\nNo se permitirá fallback a OAuth personal.\n")
+    print("="*90 + "\n")
+
 # WAHA API para WhatsApp
 WAHA_BASE_URL = os.environ.get(
     "WAHA_BASE_URL",
@@ -353,6 +373,7 @@ def _load_service_account_credentials():
     ✅ IMPORTANTE: 
     - Debe tener Domain-Wide Delegation configurado en Google Cloud
     - El Service Account debe estar autorizado en Admin Console
+    - NO hay fallback a OAuth personal (fuerza Service Account)
     """
     # Opción 1: JSON como string en variable
     raw_json = GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_CREDENTIALS_JSON or GOOGLE_SHEETS_CREDENTIALS
@@ -376,7 +397,7 @@ def _load_service_account_credentials():
             
         except Exception as e:
             print(f"  ❌ Error al parsear JSON de Service Account: {e}")
-            return None
+            raise ValueError(f"Service Account JSON inválido: {e}")
     
     # Opción 2: JSON desde archivo
     if GOOGLE_SERVICE_ACCOUNT_FILE:
@@ -399,14 +420,21 @@ def _load_service_account_credentials():
                 print(f"  ✅ Service Account con delegación activada → {GMAIL_USER}")
                 return credentials_delegated
             else:
-                print(f"  ❌ Archivo no existe: {sa_path}")
+                raise FileNotFoundError(f"Archivo no existe: {sa_path}")
         except Exception as e:
             print(f"  ❌ Error al cargar archivo Service Account: {e}")
-            return None
+            raise ValueError(f"Service Account file inválido: {e}")
     
-    # Sin Service Account configurada
-    print(f"  ❌ No hay Service Account configurada (ni GOOGLE_SERVICE_ACCOUNT_KEY ni GOOGLE_SERVICE_ACCOUNT_FILE)")
-    return None
+    # ❌ FUERZA ERROR si no hay Service Account (sin fallback a OAuth personal)
+    raise ValueError(
+        f"❌ CRÍTICO: Service Account NO disponible para Gmail.\n"
+        f"   Configura UNA de estas variables de entorno:\n"
+        f"   - GOOGLE_SERVICE_ACCOUNT_KEY\n"
+        f"   - GOOGLE_CREDENTIALS_JSON\n"
+        f"   - GOOGLE_SHEETS_CREDENTIALS\n"
+        f"   - GOOGLE_SERVICE_ACCOUNT_FILE\n"
+        f"   NO se permite fallback a OAuth personal."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════
@@ -429,10 +457,12 @@ def _enviar_email_service_account(
     """
     
     try:
-        # Cargar credenciales (IGUAL A COMO DRIVE LAS CARGA)
-        credentials = _load_service_account_credentials()
-        if not credentials:
-            return False
+        # Cargar credenciales (LANZA ERROR si no está disponible)
+        try:
+            credentials = _load_service_account_credentials()
+        except ValueError as e:
+            print(f"  ❌ {e}")
+            raise
         
         # Construir mensaje MIME
         msg = MIMEMultipart('alternative')
