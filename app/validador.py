@@ -1250,7 +1250,7 @@ async def obtener_estadisticas(
         "total_casos": query.count(),
         "incompletas": query.filter(Case.estado == EstadoCaso.INCOMPLETA).count(),
         "eps": query.filter(Case.estado == EstadoCaso.EPS_TRANSCRIPCION).count(),
-        "tthh": query.filter(Case.estado == EstadoCaso.DERIVADO_TTHH).count(),
+        "posible_fraude": query.filter(Case.estado == EstadoCaso.DERIVADO_TTHH).count(),
         "completas": query.filter(Case.estado == EstadoCaso.COMPLETA).count(),
         "nuevos": query.filter(Case.estado == EstadoCaso.NUEVO).count(),
         "causa_extra": query.filter(Case.estado == EstadoCaso.CAUSA_EXTRA).count(),
@@ -1615,10 +1615,10 @@ async def exportar_casos(
         empleado = caso.empleado
         empresa_obj = caso.empresa
         
-        # Extraer estado (reemplazar DERIVADO_TTHH con PRESUNTO FRAUDE)
+        # Extraer estado (reemplazar DERIVADO_TTHH con ES POSIBLE FRAUDE)
         estado_val = caso.estado.value if caso.estado else None
         if estado_val in ["DERIVADO_TTHH", "TTHH"]:
-            estado_val = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
+            estado_val = "ES POSIBLE FRAUDE - En espera de respuesta de EPS"
         
         # Extraer día de la semana del created_at
         dia_semana = ""
