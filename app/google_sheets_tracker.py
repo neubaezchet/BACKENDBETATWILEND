@@ -53,6 +53,13 @@ def actualizar_caso_en_sheet(caso, accion="actualizar"):
         empresa_nombre = caso.empresa.nombre if caso.empresa else "Otra"
         dias_pendiente = (datetime.now() - caso.created_at).days
         
+        # Mapear estado correctamente
+        estado_display = caso.estado.value if caso.estado else "NUEVO"
+        if estado_display in ["DERIVADO_TTHH", "TTHH"]:
+            estado_display = "ES POSIBLE FRAUDE"
+        elif estado_display == "ADULTERADA":
+            estado_display = "ADULTERADA"
+        
         # Obtener última nota como observación
         ultima_nota = ""
         if caso.notas:
@@ -65,7 +72,7 @@ def actualizar_caso_en_sheet(caso, accion="actualizar"):
             caso.cedula,
             empresa_nombre,
             caso.tipo.value if caso.tipo else "N/A",
-            caso.estado.value,
+            estado_display,
             caso.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             dias_pendiente,
             caso.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -123,6 +130,12 @@ def registrar_cambio_estado_sheet(caso, estado_anterior, estado_nuevo, validador
             return False
         
         spreadsheet_id = os.environ.get("GOOGLE_SHEETS_ID")
+        
+        # Mapear estados para display
+        if estado_anterior in ["DERIVADO_TTHH", "TTHH"]:
+            estado_anterior = "ES POSIBLE FRAUDE"
+        if estado_nuevo in ["DERIVADO_TTHH", "TTHH"]:
+            estado_nuevo = "ES POSIBLE FRAUDE"
         
         valores = [[
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

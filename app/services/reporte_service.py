@@ -15,6 +15,33 @@ from app.services.prorroga_detector import analizar_historial_empleado
 logger = logging.getLogger(__name__)
 
 
+def _formatear_fecha_segura(fecha_obj, formato="%d/%m/%Y"):
+    """
+    Formatea una fecha de manera segura, evitando errores con None o fechas inválidas.
+    Nunca retorna "0000"
+    """
+    try:
+        if fecha_obj is None:
+            return ""
+        
+        # Si es datetime, formatear
+        if isinstance(fecha_obj, datetime):
+            # Verificar que no sea año 0000 o muy antiguo
+            if fecha_obj.year < 1900:
+                return ""
+            return fecha_obj.strftime(formato)
+        
+        # Si es string, validar primero
+        if isinstance(fecha_obj, str):
+            if not fecha_obj or fecha_obj.startswith("0000"):
+                return ""
+            return fecha_obj
+        
+        return ""
+    except Exception:
+        return ""
+
+
 class ReporteService:
     """Servicio para manejo de reportes y tabla viva"""
     
@@ -270,7 +297,7 @@ class ReporteService:
 
                 estado_val = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
                 if estado_val in ["DERIVADO_TTHH", "TTHH"]:
-                    estado_val = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
+                    estado_val = "ES POSIBLE FRAUDE"
 
                 # Extraer día de la semana de la fecha de envío
                 dia_semana = ""
@@ -286,15 +313,15 @@ class ReporteService:
                     "TIPO": caso.tipo.value if caso.tipo else "GENERAL",
                     "ESTADO": estado_val,
                     "DIAS": caso.dias_incapacidad or 0,
-                    "FECHA INICIO": caso.fecha_inicio.strftime("%d/%m/%Y") if caso.fecha_inicio else "",
-                    "FECHA FIN": caso.fecha_fin.strftime("%d/%m/%Y") if caso.fecha_fin else "",
+                    "FECHA INICIO": _formatear_fecha_segura(caso.fecha_inicio),
+                    "FECHA FIN": _formatear_fecha_segura(caso.fecha_fin),
                     "EPS": caso.eps or (caso.empleado.eps if caso.empleado and caso.empleado.eps else ""),
                     "CODIGO CIE10": caso.codigo_cie10 or "",
                     "DIAGNOSTICO": caso.diagnostico or "",
                     "ES PRORROGA": "SI" if (caso.serial in seriales_prorroga or caso.es_prorroga) else "NO",
-                    "FECHA ENVIO": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else "",
+                    "FECHA ENVIO": _formatear_fecha_segura(caso.created_at),
                     "DIA ENVIO": dia_semana,
-                    "HORA ENVIO": caso.created_at.strftime("%H:%M") if caso.created_at else "",
+                    "HORA ENVIO": _formatear_fecha_segura(caso.created_at, formato="%H:%M") if caso.created_at else "",
                     "PROCESADO": "SI" if caso.procesado else "NO",
                 })
             
