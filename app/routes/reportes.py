@@ -428,21 +428,28 @@ async def get_dashboard_completo(
                 if c.dias_incapacidad:
                     dias_validacion = validar_dias(c.codigo_cie10, c.dias_incapacidad)
             
+            # Mapear estado correctamente
+            estado_display = c.estado.value if c.estado else "NUEVO"
+            if estado_display in ["DERIVADO_TTHH", "TTHH"]:
+                estado_display = "ES POSIBLE FRAUDE"
+            elif estado_display == "ADULTERADA":
+                estado_display = "ADULTERADA"
+            
             tabla_principal.append({
                 "serial": c.serial,
-                "cedula": c.cedula,
-                "nombre": emp_nombre,
-                "empresa": empresa_nombre,
-                "area": emp_area,
-                "cargo": emp_cargo,
-                "centro_costo": emp_centro_costo,
-                "ciudad": emp_ciudad,
-                "tipo_contrato": emp_tipo_contrato,
+                "cedula": (c.cedula or "").upper(),
+                "nombre": (emp_nombre or "").upper(),
+                "empresa": (empresa_nombre or "").upper(),
+                "area": (emp_area or "").upper() if emp_area else None,
+                "cargo": (emp_cargo or "").upper() if emp_cargo else None,
+                "centro_costo": (emp_centro_costo or "").upper() if emp_centro_costo else None,
+                "ciudad": (emp_ciudad or "").upper() if emp_ciudad else None,
+                "tipo_contrato": (emp_tipo_contrato or "").upper() if emp_tipo_contrato else None,
                 "fecha_ingreso": emp_fecha_ingreso,
-                "eps": emp_eps or c.eps,
-                "tipo": c.tipo.value if c.tipo else "N/A",
-                "subtipo": c.subtipo,
-                "estado": c.estado.value if c.estado else "NUEVO",
+                "eps": (emp_eps or c.eps or "").upper(),
+                "tipo": (c.tipo.value if c.tipo else "N/A").upper(),
+                "subtipo": (c.subtipo or "").upper() if c.subtipo else None,
+                "estado": estado_display.upper(),
                 "diagnostico": c.diagnostico if c.diagnostico else ("En Proceso" if not subido_kactus else None),
                 "codigo_cie10": c.codigo_cie10 if c.codigo_cie10 else ("En Proceso" if not subido_kactus else None),
                 "cie10_descripcion": cie10_info.get("descripcion") if cie10_info else ("En Proceso" if not subido_kactus else None),
@@ -455,9 +462,10 @@ async def get_dashboard_completo(
                 "prorroga_explicacion": prorroga_auto.get("explicacion"),
                 "prorroga_caso_original": prorroga_auto.get("caso_original_serial"),
                 "numero_incapacidad": c.numero_incapacidad if c.numero_incapacidad else ("En Proceso" if not subido_kactus else None),
-                "fecha_inicio": (c.fecha_inicio_kactus or c.fecha_inicio).isoformat() if (c.fecha_inicio_kactus or c.fecha_inicio) else None,
-                "fecha_fin": (c.fecha_fin_kactus or c.fecha_fin).isoformat() if (c.fecha_fin_kactus or c.fecha_fin) else None,
-                "fecha_radicacion": c.created_at.isoformat() if c.created_at else None,
+                "fecha_inicio": (c.fecha_inicio_kactus or c.fecha_inicio).strftime("%d/%m/%Y") if (c.fecha_inicio_kactus or c.fecha_inicio) else "",
+                "fecha_fin": (c.fecha_fin_kactus or c.fecha_fin).strftime("%d/%m/%Y") if (c.fecha_fin_kactus or c.fecha_fin) else "",
+                "fecha_radicacion": c.created_at.strftime("%d/%m/%Y") if c.created_at else "",
+                "hora_envio": c.created_at.strftime("%H:%M") if c.created_at else "",
                 "dias_en_portal": dias_en_portal,
                 "observacion": ultimo_motivo,
                 "observacion_detalle": observacion_detalle,

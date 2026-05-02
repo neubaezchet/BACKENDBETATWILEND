@@ -126,20 +126,21 @@ class ReporteService:
 
                 estado_resumen = 'ADULTERADA' if (caso.metadata_form and isinstance(caso.metadata_form, dict) and caso.metadata_form.get('fraude_confirmado')) else (caso.estado.value if caso.estado else "NUEVO")
                 if estado_resumen in ["DERIVADO_TTHH", "TTHH"]:
-                    estado_resumen = "PRESUNTO FRAUDE - En espera de respuesta de EPS"
+                    estado_resumen = "ES POSIBLE FRAUDE"
 
                 casos_resumen.append({
                     "id": caso.id,
                     "serial": caso.serial or f"CASO-{caso.id}",
-                    "empresa": empresa_nombre,
-                    "empleado": empleado_nombre,
-                    "tipo": caso.tipo.value if caso.tipo else "general",
-                    "estado": estado_resumen,
-                    "fecha_inicio": caso.fecha_inicio.strftime("%d/%m/%Y") if caso.fecha_inicio else "N/A",
-                    "fecha_fin": caso.fecha_fin.strftime("%d/%m/%Y") if caso.fecha_fin else "N/A",
-                    "fecha_creacion": caso.created_at.strftime("%d/%m/%Y") if caso.created_at else "N/A",
-                    "hora_creacion": caso.created_at.strftime("%H:%M") if caso.created_at else "N/A",
-                    "dias": caso.dias_incapacidad or None
+                    "cedula": (caso.cedula or "").upper(),
+                    "empleado": (empleado_nombre or "").upper(),
+                    "empresa": (empresa_nombre or "").upper(),
+                    "tipo": (caso.tipo.value if caso.tipo else "general").upper(),
+                    "estado": estado_resumen.upper(),
+                    "fecha_inicio": _formatear_fecha_segura(caso.fecha_inicio),
+                    "fecha_fin": _formatear_fecha_segura(caso.fecha_fin),
+                    "fecha_envio": _formatear_fecha_segura(caso.created_at),
+                    "hora_envio": _formatear_fecha_segura(caso.created_at, formato="%H:%M") if caso.created_at else "",
+                    "dias": caso.dias_incapacidad or 0
                 })
             
             return {
