@@ -90,6 +90,7 @@ class ExcelFormatter:
         - Texto en MAYÚSCULAS
         - Fechas limpias
         - Encabezados con estilo
+        - Tamaño de fuente estandarizado (10pt)
         """
         try:
             # Normalizar datos
@@ -104,7 +105,7 @@ class ExcelFormatter:
                 worksheet = writer.sheets['Datos']
                 
                 # Estilo de encabezados
-                header_font = Font(bold=True, color="FFFFFF", size=11)
+                header_font = Font(bold=True, color="FFFFFF", size=10)
                 header_fill = PatternFill(patternType="solid", fgColor="1F4E78")
                 header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 
@@ -113,10 +114,12 @@ class ExcelFormatter:
                     cell.fill = header_fill
                     cell.alignment = header_align
                 
-                # Formato de celdas de datos
-                data_align = Alignment(vertical="center")
+                # Formato de celdas de datos: fuente tamaño 10, alineamiento vertical
+                data_font = Font(size=10)
+                data_align = Alignment(vertical="center", wrap_text=False)
                 for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, max_col=worksheet.max_column):
                     for cell in row:
+                        cell.font = data_font
                         cell.alignment = data_align
                 
                 # Ajustar ancho de columnas
