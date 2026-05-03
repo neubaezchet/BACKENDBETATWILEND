@@ -35,6 +35,7 @@ from app.routes.reportes import router as reportes_router
 from app.routes.cie10 import router as cie10_router
 from app.routes.alertas import router as alertas_router
 from app.routes.admin import router as admin_router
+from app.routes.ocr import router as ocr_router
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ✅ Cola resiliente persistente (Drive)
@@ -148,6 +149,9 @@ app.include_router(alertas_router)
 
 # ⭐ Panel Admin - Auth, Correos, Usuarios, Consola
 app.include_router(admin_router)
+
+# ⭐ OCR con Mistral - Extracción de texto de documentos
+app.include_router(ocr_router)
 
 app.include_router(validador_router)
 

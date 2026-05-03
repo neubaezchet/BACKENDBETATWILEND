@@ -46,6 +46,7 @@ reportlab==4.0.9
 
 # IA
 anthropic==0.40.0
+mistralai==1.0.2
 
 # HTML/Markdown conversion
 html2text==2024.2.26
