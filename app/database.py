@@ -4,7 +4,7 @@ Modelos SQLAlchemy para gestión de casos de incapacidades
 VERSIÓN 3.0 - Con soporte para jefes y recordatorios
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index, Float
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
