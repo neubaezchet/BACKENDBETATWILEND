@@ -385,6 +385,45 @@ class OAuthToken(Base):
     autorizado_en = Column(DateTime, default=get_utc_now)
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
 
+
+class ExtractoIncapacidad(Base):
+    """
+    ✅ NUEVO: Tabla para almacenar texto extraído de documentos de incapacidad
+    Permite consultar y exportar el texto extraído por Mistral
+    """
+    __tablename__ = 'extractos_incapacidades'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Referencias
+    cedula = Column(String(50), nullable=False, index=True)
+    caso_id = Column(Integer, ForeignKey('cases.id', ondelete='CASCADE'), nullable=True, index=True)
+    
+    # Metadata del documento
+    tipo_documento = Column(String(100))  # 'incapacidad', 'epicrisis', 'soat', etc
+    tipo_incapacidad = Column(String(100))  # 'maternidad', 'enfermedad_general', etc
+    
+    # Texto extraído
+    texto_extraido = Column(Text, nullable=False)
+    
+    # Calidad y metadata
+    calidad_score = Column(Float)  # Score del validador (0.0 a 1.0)
+    modelo_ocr = Column(String(100), default='pixtral-12b-2409')  # Modelo usado
+    
+    # Control de procesamiento
+    procesado = Column(Boolean, default=True)
+    error_procesamiento = Column(String(500))  # Si hubo error
+    
+    # Auditoría
+    creado_en = Column(DateTime, default=get_utc_now, index=True)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    
+    # Índices para búsqueda rápida
+    __table_args__ = (
+        Index('idx_cedula_tipo', 'cedula', 'tipo_documento'),
+        Index('idx_caso_creado', 'caso_id', 'creado_en'),
+    )
+
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
 
 def get_database_url():
