@@ -7,7 +7,7 @@ Costo ultra bajo, máxima flexibilidad
 import os
 import base64
 from pathlib import Path
-from mistralai.client import Mistral
+from mistralai import Mistral
 
 # ──────────────────────────────────────────────
 #  CONFIGURACIÓN
