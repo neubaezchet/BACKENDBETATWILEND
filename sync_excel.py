@@ -105,6 +105,7 @@ def sincronizar_excel_completo():
     """
     Sincroniza TODO el Excel a PostgreSQL
     Ahora incluye Hoja 2: Emails de copia por empresa
+    ✅ DESACTIVA empresas y empleados que no están en el Excel
     """
     db = SessionLocal()
     try:
@@ -120,6 +121,8 @@ def sincronizar_excel_completo():
         print(f"📊 Empleados en Excel: {len(df_empleados)} filas")
         
         cedulas_excel = set(str(int(row["cedula"])) for _, row in df_empleados.iterrows() if pd.notna(row["cedula"]))
+        empresas_excel = set(str(row["empresa"]).strip() for _, row in df_empleados.iterrows() if pd.notna(row.get("empresa")))
+        
         empleados_bd = db.query(Employee).all()
         cedulas_bd = {emp.cedula for emp in empleados_bd}
         nuevos = actualizados = desactivados = 0
@@ -142,6 +145,12 @@ def sincronizar_excel_completo():
                     db.add(company)
                     db.commit()
                     db.refresh(company)
+                else:
+                    # ✅ Si la empresa estaba desactivada, reactivarla
+                    if not company.activa:
+                        company.activa = True
+                        db.commit()
+                        print(f"  🔄 Empresa reactivada: {empresa_nombre}")
                 
                 empleado = db.query(Employee).filter(Employee.cedula == cedula).first()
                 if not empleado:
@@ -172,7 +181,7 @@ def sincronizar_excel_completo():
                 print(f"❌ Error en fila {row.get('cedula', 'N/A')}: {e}")
                 db.rollback()
         
-        # Desactivar empleados que ya no están en Excel
+        # ✅ Desactivar empleados que ya no están en Excel
         for empleado in empleados_bd:
             if empleado.cedula not in cedulas_excel and empleado.activo:
                 empleado.activo = False
@@ -189,18 +198,26 @@ def sincronizar_excel_completo():
             print(f"📊 Empresas con emails: {len(df_emails)} filas")
             
             emails_actualizados = 0
+            empresas_en_hoja2 = set()
             
             for _, row in df_emails.iterrows():
                 try:
                     if pd.isna(row.get("empresa")):
                         continue
                     
-                    empresa_nombre = row["empresa"]
+                    empresa_nombre = str(row["empresa"]).strip()
+                    empresas_en_hoja2.add(empresa_nombre)
                     email_copia = str(row.get("email_copia", "")) if pd.notna(row.get("email_copia")) else None
                     
                     company = db.query(Company).filter(Company.nombre == empresa_nombre).first()
                     
                     if company:
+                        # ✅ Reactivar si estaba desactivada
+                        if not company.activa:
+                            company.activa = True
+                            db.commit()
+                            print(f"  🔄 {empresa_nombre} reactivada desde Hoja 2")
+                        
                         if company.email_copia != email_copia:
                             company.email_copia = email_copia
                             db.commit()
@@ -221,13 +238,30 @@ def sincronizar_excel_completo():
                     print(f"  ❌ Error en empresa {row.get('empresa', 'N/A')}: {e}")
                     db.rollback()
             
+            # ✅ Combinar empresas de ambas hojas
+            todas_empresas_excel = empresas_excel | empresas_en_hoja2
+            
             print(f"✅ Emails de copia: {emails_actualizados} actualizados")
         
         except Exception as e:
             print(f"⚠️ No se pudo leer Hoja 2 (Emails_Copia): {e}")
             print(f"   Si no existe, crea una segunda hoja con columnas: empresa | email_copia")
+            todas_empresas_excel = empresas_excel
         
-        print("\n✅ Sync completado\n")
+        # ========== DESACTIVAR EMPRESAS NO PRESENTES EN EXCEL ==========
+        print(f"\n🏢 Procesando desactivación de empresas...")
+        empresas_bd = db.query(Company).all()
+        empresas_desactivadas = 0
+        
+        for empresa in empresas_bd:
+            if empresa.nombre not in todas_empresas_excel and empresa.activa:
+                empresa.activa = False
+                db.commit()
+                empresas_desactivadas += 1
+                print(f"  ✅ Empresa desactivada: {empresa.nombre}")
+        
+        print(f"✅ Empresas: {empresas_desactivadas} desactivadas")
+        print(f"\n✅ Sync completado\n")
         
     except Exception as e:
         print(f"❌ Error en sync: {e}")

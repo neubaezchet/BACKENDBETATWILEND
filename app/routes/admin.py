@@ -421,7 +421,10 @@ async def listar_correos(
     if area != "all":
         query = query.filter(CorreoNotificacion.area == area)
     if empresa != "all":
-        company = db.query(Company).filter(Company.nombre == empresa).first()
+        company = db.query(Company).filter(
+            Company.nombre == empresa,
+            Company.activa == True
+        ).first()
         if company:
             query = query.filter(
                 (CorreoNotificacion.company_id == company.id) |
@@ -471,9 +474,12 @@ async def crear_correo(
         raise HTTPException(status_code=400, detail=f"'{data.email}' ya existe para área '{data.area}'")
 
     if data.company_id:
-        company = db.query(Company).filter(Company.id == data.company_id).first()
+        company = db.query(Company).filter(
+            Company.id == data.company_id,
+            Company.activa == True
+        ).first()
         if not company:
-            raise HTTPException(status_code=404, detail="Empresa no encontrada")
+            raise HTTPException(status_code=404, detail="Empresa no encontrada o desactivada")
 
     nuevo = CorreoNotificacion(
         area=data.area,
