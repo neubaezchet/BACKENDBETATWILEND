@@ -51,7 +51,10 @@ async def listar_emails_alerta(
         query = db.query(AlertaEmail)
         
         if empresa != "all":
-            company = db.query(Company).filter(Company.nombre == empresa).first()
+            company = db.query(Company).filter(
+                Company.nombre == empresa,
+                Company.activa == True
+            ).first()
             if company:
                 # Emails de esa empresa + emails globales (company_id IS NULL)
                 query = query.filter(
@@ -97,9 +100,12 @@ async def crear_email_alerta(
         
         # Validar company_id si se proporcionó
         if data.company_id:
-            company = db.query(Company).filter(Company.id == data.company_id).first()
+            company = db.query(Company).filter(
+                Company.id == data.company_id,
+                Company.activa == True
+            ).first()
             if not company:
-                raise HTTPException(status_code=404, detail=f"Empresa con ID {data.company_id} no encontrada")
+                raise HTTPException(status_code=404, detail=f"Empresa con ID {data.company_id} no encontrada o desactivada")
         
         nuevo = AlertaEmail(
             email=data.email,
@@ -279,7 +285,10 @@ async def listar_correos_notificacion(
             query = query.filter(CorreoNotificacion.area == area)
         
         if empresa != "all":
-            company = db.query(Company).filter(Company.nombre == empresa).first()
+            company = db.query(Company).filter(
+                Company.nombre == empresa,
+                Company.activa == True
+            ).first()
             if company:
                 query = query.filter(
                     (CorreoNotificacion.company_id == company.id) |
