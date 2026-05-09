@@ -424,6 +424,63 @@ class ExtractoIncapacidad(Base):
         Index('idx_caso_creado', 'caso_id', 'creado_en'),
     )
 
+
+# ==================== CONFIGURACIÓN DE BOTS POR EMPRESA ====================
+
+class EmpresaBotConfig(Base):
+    """
+    ✅ NUEVO: Configuración de bots de radicación por empresa
+    Vincula empresas con los bots disponibles (SURA, Famisanar, etc)
+    y almacena sus credenciales en vivo.
+    
+    Una empresa puede tener múltiples bots configurados.
+    El estado indica si el bot está activo, en configuración, etc.
+    
+    Ejemplo:
+    - Empresa: "EMPRESA ABC"
+    - Bot: "sura_eps"
+    - Credenciales: {"usuario": "900123456", "tipo_doc": "NIT", "clave": "****"}
+    """
+    __tablename__ = 'empresa_bot_config'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Referencia a empresa (por nombre como solicitó el usuario)
+    nombre_empresa = Column(String(200), nullable=False, index=True)
+    
+    # Nombre del bot (ej: sura_eps, famisanar, compensar, arl_sura, etc)
+    bot_nombre = Column(String(100), nullable=False)
+    
+    # Tipo de bot: portal, email, api, etc
+    bot_tipo_medio = Column(String(50), default='portal')  # portal | email | api
+    
+    # Estado del bot para esta empresa
+    estado = Column(String(50), default='configuracion')  # configuracion | activo | inactivo | suspendido
+    
+    # Credenciales almacenadas (JSON)
+    # Estructura varía según el bot:
+    # - SURA: {"usuario": "...", "tipo_doc": "C|A|E", "clave": "..."}
+    # - Famisanar: {"correo_destino": "..."}
+    # - etc
+    credenciales = Column(JSON, default=dict)
+    
+    # Metadata adicional
+    observaciones = Column(Text, nullable=True)
+    
+    # Auditoría
+    creado_por = Column(String(200))  # Usuario admin que lo creó
+    actualizado_por = Column(String(200))  # Usuario admin que lo actualizó
+    
+    creado_en = Column(DateTime, default=get_utc_now, index=True)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    
+    # Índices para búsquedas rápidas
+    __table_args__ = (
+        Index('idx_empresa_bot', 'nombre_empresa', 'bot_nombre', unique=True),
+        Index('idx_empresa_activo', 'nombre_empresa', 'estado'),
+    )
+
+
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
 
 def get_database_url():
