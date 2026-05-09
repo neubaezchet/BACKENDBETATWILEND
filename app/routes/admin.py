@@ -22,7 +22,7 @@ from passlib.context import CryptContext
 
 from app.database import (
     get_db, AdminUser, Company, CorreoNotificacion, AlertaEmail,
-    Case, Employee, Alerta180Log, CaseEvent, EstadoCaso
+    Case, Employee, Alerta180Log, CaseEvent, EstadoCaso, EmpresaBotConfig
 )
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,24 @@ class CorreoUpdate(BaseModel):
     nombre_contacto: Optional[str] = None
     email: Optional[str] = None
     activo: Optional[bool] = None
+
+
+# ═══════════════════════════════════════════════════════════
+# SCHEMAS - BOTS RADICACIÓN
+# ═══════════════════════════════════════════════════════════
+
+class BotConfigCreate(BaseModel):
+    nombre_empresa: str = Field(..., description="Nombre exacto de la empresa")
+    bot_nombre: str = Field(..., description="ej: sura_eps, famisanar, compensar, arl_sura")
+    bot_tipo_medio: str = Field("portal", description="portal | email | api")
+    estado: str = Field("configuracion", description="configuracion | activo | inactivo | suspendido")
+    credenciales: dict = Field(default_factory=dict, description="Credenciales dinámicas del bot")
+    observaciones: Optional[str] = None
+
+class BotConfigUpdate(BaseModel):
+    estado: Optional[str] = None
+    credenciales: Optional[dict] = None
+    observaciones: Optional[str] = None
 
 
 # ═══════════════════════════════════════════════════════════
@@ -724,3 +742,309 @@ async def listar_tablas_bd(
         "tablas_faltantes": faltantes,
         "mensaje": "✅ Todas las tablas críticas existen" if not faltantes else f"⚠️ Faltan tablas: {faltantes}"
     }
+
+
+# ═══════════════════════════════════════════════════════════
+# 6. GESTIÓN DE BOTS DE RADICACIÓN POR EMPRESA
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/empresas/{nombre_empresa}/bots")
+async def listar_bots_empresa(
+    nombre_empresa: str,
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """🤖 Lista bots configurados para una empresa"""
+    try:
+        bots = db.query(EmpresaBotConfig).filter(
+            EmpresaBotConfig.nombre_empresa == nombre_empresa
+        ).order_by(EmpresaBotConfig.bot_nombre).all()
+        
+        return {
+            "ok": True,
+            "empresa": nombre_empresa,
+            "total": len(bots),
+            "bots": [{
+                "id": b.id,
+                "bot_nombre": b.bot_nombre,
+                "bot_tipo_medio": b.bot_tipo_medio,
+                "estado": b.estado,
+                "credenciales_guardadas": bool(b.credenciales),
+                "observaciones": b.observaciones,
+                "actualizado_en": b.actualizado_en.isoformat() if b.actualizado_en else None,
+                "actualizado_por": b.actualizado_por,
+            } for b in bots]
+        }
+    except Exception as e:
+        logger.error(f"Error listar bots: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/empresas/{nombre_empresa}/bots/{bot_nombre}/credenciales")
+async def obtener_credenciales_bot(
+    nombre_empresa: str,
+    bot_nombre: str,
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """🔐 Obtiene credenciales de un bot (SOLO para APIs internas y radicación)"""
+    try:
+        config = db.query(EmpresaBotConfig).filter(
+            EmpresaBotConfig.nombre_empresa == nombre_empresa,
+            EmpresaBotConfig.bot_nombre == bot_nombre,
+            EmpresaBotConfig.estado == "activo"
+        ).first()
+        
+        if not config:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Bot '{bot_nombre}' no encontrado o no activo para '{nombre_empresa}'"
+            )
+        
+        return {
+            "ok": True,
+            "empresa": nombre_empresa,
+            "bot": bot_nombre,
+            "tipo_medio": config.bot_tipo_medio,
+            "credenciales": config.credenciales,
+            "vigentes_desde": config.actualizado_en.isoformat() if config.actualizado_en else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obtener credenciales: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/empresas/{nombre_empresa}/bots")
+async def crear_bot_empresa(
+    nombre_empresa: str,
+    data: BotConfigCreate,
+    user: AdminUser = Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db)
+):
+    """➕ Asigna un bot a una empresa"""
+    try:
+        # Validar que la empresa exista
+        empresa = db.query(Company).filter(Company.nombre == nombre_empresa).first()
+        if not empresa:
+            raise HTTPException(status_code=404, detail=f"Empresa '{nombre_empresa}' no encontrada")
+        
+        # Validar duplicado
+        existente = db.query(EmpresaBotConfig).filter(
+            EmpresaBotConfig.nombre_empresa == nombre_empresa,
+            EmpresaBotConfig.bot_nombre == data.bot_nombre
+        ).first()
+        
+        if existente:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bot '{data.bot_nombre}' ya asignado a '{nombre_empresa}'"
+            )
+        
+        nuevo_config = EmpresaBotConfig(
+            nombre_empresa=nombre_empresa,
+            bot_nombre=data.bot_nombre,
+            bot_tipo_medio=data.bot_tipo_medio,
+            estado=data.estado,
+            credenciales=data.credenciales,
+            observaciones=data.observaciones,
+            creado_por=user.username,
+            actualizado_por=user.username,
+        )
+        
+        db.add(nuevo_config)
+        db.commit()
+        db.refresh(nuevo_config)
+        
+        logger.info(f"🤖 Bot '{data.bot_nombre}' asignado a empresa '{nombre_empresa}' por {user.username}")
+        
+        return {
+            "ok": True,
+            "mensaje": f"Bot '{data.bot_nombre}' asignado a '{nombre_empresa}'",
+            "id": nuevo_config.id,
+            "estado": nuevo_config.estado,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error crear bot config: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/empresas/{nombre_empresa}/bots/{bot_nombre}")
+async def actualizar_bot_empresa(
+    nombre_empresa: str,
+    bot_nombre: str,
+    data: BotConfigUpdate,
+    user: AdminUser = Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db)
+):
+    """✏️ Actualiza configuración de un bot en una empresa"""
+    try:
+        config = db.query(EmpresaBotConfig).filter(
+            EmpresaBotConfig.nombre_empresa == nombre_empresa,
+            EmpresaBotConfig.bot_nombre == bot_nombre
+        ).first()
+        
+        if not config:
+            raise HTTPException(status_code=404, detail=f"Bot '{bot_nombre}' no encontrado")
+        
+        # Actualizar campos
+        if data.estado is not None:
+            config.estado = data.estado
+        if data.credenciales is not None:
+            config.credenciales = data.credenciales
+        if data.observaciones is not None:
+            config.observaciones = data.observaciones
+        
+        config.actualizado_por = user.username
+        db.commit()
+        
+        logger.info(f"🤖 Bot '{bot_nombre}' actualizado en empresa '{nombre_empresa}' por {user.username}")
+        
+        return {
+            "ok": True,
+            "mensaje": f"Bot '{bot_nombre}' actualizado en '{nombre_empresa}'",
+            "estado": config.estado,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error actualizar bot config: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/empresas/{nombre_empresa}/bots/{bot_nombre}")
+async def eliminar_bot_empresa(
+    nombre_empresa: str,
+    bot_nombre: str,
+    user: AdminUser = Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db)
+):
+    """🗑️ Desvincula un bot de una empresa"""
+    try:
+        config = db.query(EmpresaBotConfig).filter(
+            EmpresaBotConfig.nombre_empresa == nombre_empresa,
+            EmpresaBotConfig.bot_nombre == bot_nombre
+        ).first()
+        
+        if not config:
+            raise HTTPException(status_code=404, detail=f"Bot '{bot_nombre}' no encontrado")
+        
+        db.delete(config)
+        db.commit()
+        
+        logger.info(f"🤖 Bot '{bot_nombre}' removido de empresa '{nombre_empresa}' por {user.username}")
+        
+        return {
+            "ok": True,
+            "mensaje": f"Bot '{bot_nombre}' desvinculado de '{nombre_empresa}'",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminar bot config: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/bots/disponibles")
+async def listar_bots_disponibles(
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """🤖 Lista todos los bots disponibles en el sistema (desde radicación)"""
+    # Este endpoint puede obtener dinámicamente de radicación API
+    # Por ahora, retorna el catálogo conocido
+    bots_disponibles = [
+        {
+            "id": "sura_eps",
+            "nombre": "EPS SURA",
+            "categoria": "EPS",
+            "medio": "portal",
+            "campos": [
+                {"key": "usuario", "label": "Número de documento", "tipo": "text", "requerido": True},
+                {"key": "tipo_doc", "label": "Tipo de documento", "tipo": "select", "opciones": ["NIT", "CEDULA"], "requerido": True},
+                {"key": "clave", "label": "Clave del portal", "tipo": "password", "requerido": True},
+            ],
+        },
+        {
+            "id": "famisanar",
+            "nombre": "Famisanar",
+            "categoria": "EPS",
+            "medio": "email",
+            "campos": [
+                {"key": "correo_destino", "label": "Correo destino", "tipo": "email", "requerido": True},
+            ],
+        },
+        {
+            "id": "compensar",
+            "nombre": "Compensar",
+            "categoria": "EPS",
+            "medio": "portal",
+            "campos": [
+                {"key": "usuario", "label": "Usuario portal", "tipo": "text", "requerido": True},
+                {"key": "clave", "label": "Contraseña", "tipo": "password", "requerido": True},
+            ],
+        },
+        {
+            "id": "nueva_eps",
+            "nombre": "Nueva EPS",
+            "categoria": "EPS",
+            "medio": "portal",
+            "campos": [],
+        },
+        {
+            "id": "arl_sura",
+            "nombre": "ARL SURA",
+            "categoria": "ARL",
+            "medio": "portal",
+            "campos": [
+                {"key": "usuario", "label": "Usuario portal", "tipo": "text", "requerido": True},
+                {"key": "clave", "label": "Contraseña", "tipo": "password", "requerido": True},
+            ],
+        },
+    ]
+    
+    return {
+        "ok": True,
+        "total": len(bots_disponibles),
+        "bots": bots_disponibles,
+        "fuente": "Catálogo local del admin (puede sincronizarse con radicación API)",
+    }
+
+
+@router.post("/bots/sync-radicacion")
+async def sincronizar_bots_radicacion(
+    user: AdminUser = Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db)
+):
+    """🔄 Sincroniza bots disponibles desde API de radicación"""
+    import httpx
+    
+    try:
+        radicacion_api = os.environ.get("RADICACION_API_URL", "http://localhost:8000")
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{radicacion_api}/")
+            resp.raise_for_status()
+            
+            data = resp.json()
+            tipos_doc = data.get("tipos_documento", {})
+            
+            logger.info(f"📡 Sincronización con radicación API exitosa. Tipos documento: {len(tipos_doc)}")
+            
+            return {
+                "ok": True,
+                "mensaje": f"Sincronizado con radicación API",
+                "tipos_documento_disponibles": tipos_doc,
+            }
+    except Exception as e:
+        logger.error(f"Error sincronizando con radicación: {e}")
+        return {
+            "ok": False,
+            "mensaje": f"No se pudo conectar con radicación API: {str(e)}",
+        }
