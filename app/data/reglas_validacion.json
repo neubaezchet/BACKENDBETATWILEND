@@ -1,0 +1,117 @@
+{
+  "version": "1.0",
+  "nombre": "Criterios de Validación de Incapacidades",
+  "descripcion": "Reglas para validar integridad, completitud y coherencia de soportes de incapacidad",
+  "reglas": [
+    {
+      "id": "R01",
+      "nombre": "Unicidad del documento",
+      "descripcion": "El archivo adjunto debe contener una única incapacidad. Si se detectan dos o más incapacidades en un mismo archivo PDF, el soporte es rechazado.",
+      "decision": "RECHAZAR",
+      "tipo": "estructural",
+      "motivo_rechazo": "Se han detectado {n} incapacidades en un mismo archivo. El sistema solo permite adjuntar una incapacidad por formulario. Por favor, envíe cada incapacidad en un archivo independiente."
+    },
+    {
+      "id": "R02",
+      "nombre": "Concordancia del número de identificación",
+      "descripcion": "El número de identificación registrado en el formulario debe coincidir exactamente con el que aparece en el soporte de incapacidad adjunto.",
+      "decision": "DEVOLVER",
+      "tipo": "identidad",
+      "motivo_rechazo": "El número de documento de identificación registrado en el formulario no corresponde al del soporte adjunto. El soporte indica el número {cedula_soporte}, mientras que el formulario registra el número {cedula_formulario}. Por favor, verifique y corrija la información antes de radicar nuevamente."
+    },
+    {
+      "id": "R03",
+      "nombre": "Concordancia de fechas con el resumen de atención",
+      "descripcion": "La fecha de expedición de la incapacidad debe coincidir con la fecha de atención registrada en el resumen de atención, epicrisis, historia clínica o evolución médica.",
+      "excepciones": [
+        "Hospitalización: el resumen de atención debe indicar fecha de ingreso, fecha de alta y motivo de egreso.",
+        "Alta médica: el resumen debe registrar explícitamente que el paciente fue dado de alta en la fecha de expedición de la incapacidad."
+      ],
+      "decision": "DEVOLVER",
+      "tipo": "coherencia",
+      "motivo_rechazo": "La fecha de la incapacidad ({fecha_incapacidad}) no concuerda con la fecha de atención registrada en el resumen de atención ({fecha_atencion}). Ambos documentos deben corresponder a la misma atención médica."
+    },
+    {
+      "id": "R04",
+      "nombre": "Presencia y validez del resumen de atención",
+      "descripcion": "El soporte debe incluir obligatoriamente un resumen de atención, epicrisis, historia clínica o evolución médica. Este documento debe estar completo y contener la firma del médico.",
+      "condiciones_minimas": [
+        "Descripción del procedimiento o atención realizada.",
+        "Firma, sello o nombre legible del médico tratante.",
+        "Coherencia entre el diagnóstico del resumen y el de la incapacidad."
+      ],
+      "decision": "DEVOLVER",
+      "tipo": "completitud",
+      "motivo_rechazo": "El soporte adjunto no contiene un resumen de atención válido. Se requiere epicrisis, historia clínica o evolución médica que describa la atención prestada y esté firmada por el médico tratante."
+    },
+    {
+      "id": "R05",
+      "nombre": "Validación de páginas del resumen de atención",
+      "descripcion": "Si el resumen de atención indica un conteo de páginas (por ejemplo: 3 de 5), deben estar presentes todas las páginas indicadas.",
+      "decision": "DEVOLVER",
+      "tipo": "completitud",
+      "motivo_rechazo": "El resumen de atención adjunto está incompleto. El documento indica {paginas_total} páginas y solo se han recibido {paginas_recibidas}."
+    },
+    {
+      "id": "R06",
+      "nombre": "Identificación correcta de la incapacidad",
+      "descripcion": "La incapacidad debe ser un documento independiente con los campos mínimos requeridos.",
+      "campos_minimos": [
+        "Fecha de inicio de la incapacidad.",
+        "Fecha de fin de la incapacidad.",
+        "Número de días.",
+        "Número de identificación del paciente.",
+        "Nombre del médico que expide.",
+        "Centro de atención o entidad que emite.",
+        "Diagnóstico CIE-10."
+      ],
+      "decision": "DEVOLVER",
+      "tipo": "completitud",
+      "motivo_rechazo": "El soporte adjunto no contiene una incapacidad válida. Los siguientes campos no están claramente identificados: {campos_faltantes}."
+    },
+    {
+      "id": "R07",
+      "nombre": "Integridad visual del documento",
+      "descripcion": "Todos los documentos adjuntos deben visualizarse completos, sin recortes que oculten información.",
+      "decision": "DEVOLVER",
+      "tipo": "calidad",
+      "motivo_rechazo": "El documento adjunto presenta recortes que impiden visualizar la información completa. Por favor, capture o escanee nuevamente el soporte asegurándose de que se visualicen todos los bordes."
+    },
+    {
+      "id": "R08",
+      "nombre": "Completitud del paquete de soportes",
+      "descripcion": "Toda radicación debe contener como mínimo la incapacidad y el resumen de atención.",
+      "soportes_requeridos": [
+        "Incapacidad médica.",
+        "Resumen de atención, epicrisis, historia clínica o evolución médica."
+      ],
+      "decision": "DEVOLVER",
+      "tipo": "completitud",
+      "motivo_rechazo": "La radicación está incompleta. El soporte faltante es: {soporte_faltante}."
+    },
+    {
+      "id": "R09",
+      "nombre": "Límite de días de incapacidad",
+      "descripcion": "Una incapacidad no puede superar 30 días. El número de días debe coincidir entre la fecha de inicio y fin.",
+      "decision": "DEVOLVER",
+      "tipo": "validacion",
+      "motivo_rechazo": "La incapacidad presenta inconsistencias en los días: {detalle}. El límite máximo es 30 días por incapacidad."
+    },
+    {
+      "id": "R10",
+      "nombre": "Concordancia del origen de la incapacidad",
+      "descripcion": "El origen indicado en la incapacidad debe coincidir con el registrado en el resumen de atención.",
+      "decision": "DEVOLVER",
+      "tipo": "coherencia",
+      "motivo_rechazo": "El origen registrado en la incapacidad ({origen_incapacidad}) no corresponde al indicado en el resumen de atención ({origen_resumen})."
+    },
+    {
+      "id": "R11",
+      "nombre": "Validación de accidente de tránsito - FURIPS y SOAT",
+      "descripcion": "Cuando el origen sea accidente de tránsito, se debe validar el formulario FURIPS y el soporte SOAT.",
+      "decision": "RECHAZAR",
+      "tipo": "especializada",
+      "motivo_rechazo": "Para accidentes de tránsito se requieren FURIPS (2 páginas) y soporte SOAT válido con placa concordante."
+    }
+  ]
+}
