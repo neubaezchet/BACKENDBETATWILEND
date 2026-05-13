@@ -51,6 +51,12 @@ class TipoIncapacidad(str, enum.Enum):
     CERTIFICADO = "certificado"
     OTHER = "other"  # ✅ Para tipos no mapeados
 
+class DecisionValidacion(str, enum.Enum):
+    """Decisiones de validación de incapacidades con IA"""
+    ACEPTAR = "ACEPTAR"
+    RECHAZAR = "RECHAZAR"
+    REVISAR = "REVISAR"
+
 # ==================== MODELOS ====================
 
 class Company(Base):
@@ -422,6 +428,51 @@ class ExtractoIncapacidad(Base):
     __table_args__ = (
         Index('idx_cedula_tipo', 'cedula', 'tipo_documento'),
         Index('idx_caso_creado', 'caso_id', 'creado_en'),
+    )
+
+
+class ResultadoValidacion(Base):
+    """
+    ✅ NUEVO: Resultados de validación con IA (Gemini/Claude)
+    Almacena la decisión, reglas fallidas y datos extraídos
+    """
+    __tablename__ = 'resultados_validacion'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Referencias
+    cedula = Column(String(50), nullable=False, index=True)
+    extracto_id = Column(Integer, ForeignKey('extractos_incapacidades.id', ondelete='CASCADE'), nullable=True, index=True)
+    caso_id = Column(Integer, ForeignKey('cases.id', ondelete='CASCADE'), nullable=True, index=True)
+    
+    # Resultado de validación
+    decision = Column(Enum(DecisionValidacion), default=DecisionValidacion.REVISAR, nullable=False)
+    motivo = Column(Text)  # Explicación de la decisión
+    
+    # Reglas y análisis
+    reglas_fallidas = Column(JSON, default=list)  # Array de IDs de reglas que fallaron
+    reglas_procesadas = Column(Integer, default=0)  # Total de reglas evaluadas
+    
+    # Datos extraídos por la IA
+    datos_extraidos = Column(JSON, default=dict)  # Nombre, cédula, fechas, diagnóstico, etc
+    
+    # Metadata
+    modelo_ia = Column(String(100), default='gemini-2.0-flash')  # Modelo usado
+    version_reglas = Column(String(50), default='1.0')  # Versión de ruleset
+    
+    # Control
+    validado_exitosamente = Column(Boolean, default=True)
+    error_validacion = Column(String(500))  # Si hubo error
+    
+    # Auditoría
+    creado_en = Column(DateTime, default=get_utc_now, index=True)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+    
+    # Índices
+    __table_args__ = (
+        Index('idx_cedula_decision', 'cedula', 'decision'),
+        Index('idx_extracto_validacion', 'extracto_id'),
+        Index('idx_caso_validacion', 'caso_id'),
     )
 
 

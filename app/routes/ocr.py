@@ -11,13 +11,30 @@ import tempfile
 import base64
 from pathlib import Path
 from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional
 
-from app.database import Base, get_db, ExtractoIncapacidad, Case
+from app.database import Base, get_db, ExtractoIncapacidad, Case, ResultadoValidacion, DecisionValidacion
 from app.mistral_ocr_service import mistral_ocr
+from app.validators import validador_ia
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ocr", tags=["OCR"])
+
+
+# ──────────────────────────────────────────────
+#  MODELOS PYDANTIC
+# ──────────────────────────────────────────────
+class ValidarPorTextoRequest(BaseModel):
+    cedula: str
+    texto_ocr: str
+    tipo_documento: str = "incapacidad"
+    tipo_incapacidad: Optional[str] = None
+
+class ValidarExtratoRequest(BaseModel):
+    extracto_id: int
+    cedula: str
 
 
 # ──────────────────────────────────────────────
@@ -296,6 +313,285 @@ async def exportar_csv(cedula: str, db: Session = Depends(get_db)):
         "csv": csv,
         "total_filas": len(datos),
         "filename": f"extractos_{cedula}.csv"
+    }
+
+
+# ──────────────────────────────────────────────
+#  GET: Health check
+# ──────────────────────────────────────────────
+@router.get("/health")
+async def health_check():
+    """Verifica si Mistral OCR está disponible"""
+    if not mistral_ocr:
+        return {
+            "status": "error",
+            "mensaje": "MISTRAL_API_KEY no configurada",
+            "modelo": None
+        }
+    
+    return {
+        "status": "ok",
+        "mensaje": "Servicio OCR disponible",
+        "modelo": mistral_ocr.model
+    }
+
+
+# ──────────────────────────────────────────────
+#  POST: Validar texto OCR con IA
+# ──────────────────────────────────────────────
+@router.post("/validar")
+async def validar_texto(
+    request: ValidarPorTextoRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    ✅ Valida un texto OCR usando IA (Gemini/Claude)
+    
+    Args:
+        cedula: Cédula del empleado
+        texto_ocr: Texto extraído por OCR (Mistral)
+        tipo_documento: Tipo de documento
+        tipo_incapacidad: Tipo de incapacidad
+        
+    Returns:
+        {
+            "exito": bool,
+            "decision": "ACEPTAR" | "RECHAZAR" | "REVISAR",
+            "motivo": str,
+            "reglas_fallidas": List[str],
+            "datos_extraidos": Dict,
+            "id_resultado": int,
+            "error": str
+        }
+    """
+    if not validador_ia:
+        raise HTTPException(
+            status_code=503,
+            detail="Servicio de validación IA no disponible. Configura GEMINI_API_KEY o CLAUDE_API_KEY"
+        )
+    
+    try:
+        # Validar con IA
+        resultado_validacion = validador_ia.validar(request.texto_ocr)
+        
+        if not resultado_validacion["exito"]:
+            logger.error(f"❌ Error en validación: {resultado_validacion['error']}")
+            raise HTTPException(status_code=400, detail=resultado_validacion["error"])
+        
+        # Guardar resultado en BD
+        resultado_bd = ResultadoValidacion(
+            cedula=request.cedula,
+            decision=DecisionValidacion(resultado_validacion["decision"]),
+            motivo=resultado_validacion["motivo"],
+            reglas_fallidas=resultado_validacion["reglas_fallidas"],
+            reglas_procesadas=resultado_validacion["reglas_procesadas"],
+            datos_extraidos=resultado_validacion["datos_extraidos"],
+            modelo_ia=resultado_validacion["modelo"],
+            validado_exitosamente=True
+        )
+        
+        db.add(resultado_bd)
+        db.commit()
+        db.refresh(resultado_bd)
+        
+        logger.info(f"✅ Validación exitosa: Cédula {request.cedula}, Decisión: {resultado_validacion['decision']}")
+        
+        return {
+            "exito": True,
+            "decision": resultado_validacion["decision"],
+            "motivo": resultado_validacion["motivo"],
+            "reglas_fallidas": resultado_validacion["reglas_fallidas"],
+            "reglas_procesadas": resultado_validacion["reglas_procesadas"],
+            "datos_extraidos": resultado_validacion["datos_extraidos"],
+            "id_resultado": resultado_bd.id,
+            "modelo_ia": resultado_validacion["modelo"],
+            "error": ""
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error validando: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al validar: {str(e)}")
+
+
+# ──────────────────────────────────────────────
+#  POST: Validar un extracto específico
+# ──────────────────────────────────────────────
+@router.post("/validar/extracto/{extracto_id}")
+async def validar_extracto(
+    extracto_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    ✅ Valida un extracto OCR existente usando IA
+    
+    Busca el extracto en la BD y lo valida
+    """
+    if not validador_ia:
+        raise HTTPException(
+            status_code=503,
+            detail="Servicio de validación IA no disponible"
+        )
+    
+    try:
+        # Obtener extracto
+        extracto = db.query(ExtractoIncapacidad).filter(
+            ExtractoIncapacidad.id == extracto_id
+        ).first()
+        
+        if not extracto:
+            raise HTTPException(status_code=404, detail=f"Extracto {extracto_id} no encontrado")
+        
+        # Validar con IA
+        resultado_validacion = validador_ia.validar(extracto.texto_extraido)
+        
+        if not resultado_validacion["exito"]:
+            raise HTTPException(status_code=400, detail=resultado_validacion["error"])
+        
+        # Guardar resultado
+        resultado_bd = ResultadoValidacion(
+            cedula=extracto.cedula,
+            extracto_id=extracto_id,
+            decision=DecisionValidacion(resultado_validacion["decision"]),
+            motivo=resultado_validacion["motivo"],
+            reglas_fallidas=resultado_validacion["reglas_fallidas"],
+            reglas_procesadas=resultado_validacion["reglas_procesadas"],
+            datos_extraidos=resultado_validacion["datos_extraidos"],
+            modelo_ia=resultado_validacion["modelo"],
+            validado_exitosamente=True
+        )
+        
+        db.add(resultado_bd)
+        db.commit()
+        db.refresh(resultado_bd)
+        
+        logger.info(f"✅ Extracto {extracto_id} validado: {resultado_validacion['decision']}")
+        
+        return {
+            "exito": True,
+            "id_resultado": resultado_bd.id,
+            "decision": resultado_validacion["decision"],
+            "motivo": resultado_validacion["motivo"],
+            "reglas_fallidas": resultado_validacion["reglas_fallidas"],
+            "datos_extraidos": resultado_validacion["datos_extraidos"],
+            "error": ""
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validando extracto {extracto_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+# ──────────────────────────────────────────────
+#  GET: Obtener validaciones de un empleado
+# ──────────────────────────────────────────────
+@router.get("/validaciones/{cedula}")
+async def obtener_validaciones(
+    cedula: str,
+    decision: Optional[str] = Query(None),
+    limite: int = Query(100),
+    db: Session = Depends(get_db)
+):
+    """
+    Obtiene todos los resultados de validación de un empleado
+    
+    Args:
+        cedula: Cédula del empleado
+        decision: Filtrar por decisión (ACEPTAR, RECHAZAR, REVISAR)
+        limite: Máximo de resultados
+    """
+    query = db.query(ResultadoValidacion).filter(
+        ResultadoValidacion.cedula == cedula
+    )
+    
+    if decision:
+        query = query.filter(ResultadoValidacion.decision == decision)
+    
+    resultados = query.order_by(desc(ResultadoValidacion.creado_en)).limit(limite).all()
+    
+    return {
+        "cedula": cedula,
+        "total": len(resultados),
+        "resultados": [
+            {
+                "id": r.id,
+                "decision": r.decision.value,
+                "motivo": r.motivo,
+                "reglas_fallidas": r.reglas_fallidas,
+                "datos_extraidos": r.datos_extraidos,
+                "modelo_ia": r.modelo_ia,
+                "creado_en": r.creado_en.isoformat() if r.creado_en else None
+            }
+            for r in resultados
+        ]
+    }
+
+
+# ──────────────────────────────────────────────
+#  GET: Resumen de validaciones
+# ──────────────────────────────────────────────
+@router.get("/resumen-validaciones/{cedula}")
+async def resumen_validaciones(cedula: str, db: Session = Depends(get_db)):
+    """
+    Obtiene un resumen de las validaciones de un empleado
+    
+    Returns:
+        {
+            "cedula": str,
+            "total_validaciones": int,
+            "por_decision": {"ACEPTAR": int, "RECHAZAR": int, "REVISAR": int},
+            "reglas_fallidas_frecuentes": List[str],
+            "ultima_validacion": datetime,
+            "tasa_aceptacion": float
+        }
+    """
+    resultados = db.query(ResultadoValidacion).filter(
+        ResultadoValidacion.cedula == cedula
+    ).all()
+    
+    if not resultados:
+        return {
+            "cedula": cedula,
+            "total_validaciones": 0,
+            "por_decision": {"ACEPTAR": 0, "RECHAZAR": 0, "REVISAR": 0},
+            "reglas_fallidas_frecuentes": [],
+            "ultima_validacion": None,
+            "tasa_aceptacion": 0.0
+        }
+    
+    # Contar por decisión
+    conteo_decision = {
+        "ACEPTAR": len([r for r in resultados if r.decision == DecisionValidacion.ACEPTAR]),
+        "RECHAZAR": len([r for r in resultados if r.decision == DecisionValidacion.RECHAZAR]),
+        "REVISAR": len([r for r in resultados if r.decision == DecisionValidacion.REVISAR])
+    }
+    
+    # Reglas fallidas frecuentes
+    todas_reglas_fallidas = []
+    for r in resultados:
+        todas_reglas_fallidas.extend(r.reglas_fallidas or [])
+    
+    from collections import Counter
+    reglas_frecuencia = Counter(todas_reglas_fallidas)
+    reglas_frecuentes = [r[0] for r in reglas_frecuencia.most_common(5)]
+    
+    # Tasa de aceptación
+    total = len(resultados)
+    tasa_aceptacion = conteo_decision["ACEPTAR"] / total if total > 0 else 0.0
+    
+    # Última validación
+    ultima = max(resultados, key=lambda r: r.creado_en) if resultados else None
+    
+    return {
+        "cedula": cedula,
+        "total_validaciones": total,
+        "por_decision": conteo_decision,
+        "reglas_fallidas_frecuentes": reglas_frecuentes,
+        "ultima_validacion": ultima.creado_en.isoformat() if ultima else None,
+        "tasa_aceptacion": round(tasa_aceptacion, 2)
     }
 
 
