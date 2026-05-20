@@ -7,7 +7,7 @@ Costo ultra bajo, máxima flexibilidad
 import os
 import base64
 from pathlib import Path
-from mistralai import Mistral
+from mistralai.client import Mistral
 
 # ──────────────────────────────────────────────
 #  CONFIGURACIÓN
@@ -77,13 +77,12 @@ class MistralDocumentAIOCR:
     
     def procesar_pdf_base64(self, pdf_base64: str) -> dict:
         """
-        Procesa un PDF desde base64
-        
-        Args:
-            pdf_base64: PDF codificado en base64
-            
-        Returns:
-            Dict con texto extraído
+        Procesa un PDF desde base64.
+
+        Returns dict con:
+          exito, texto, paginas, modelo, error  — compatibles con el resto del backend
+          raw_pages  — lista completa por página: markdown, tables, images (bboxes), dimensions
+          usage_info — pages_processed, doc_size_bytes
         """
         try:
             response = self.client.ocr.process(
@@ -94,28 +93,69 @@ class MistralDocumentAIOCR:
                 },
                 table_format="markdown"
             )
-            
+
             textos_paginas = []
+            raw_pages = []
+
             for page in response.pages:
-                textos_paginas.append(page.markdown)
-            
-            texto_completo = "\n\n---\n\n".join(textos_paginas)
-            
+                textos_paginas.append(page.markdown or "")
+
+                page_dict = {
+                    "index": page.index,
+                    "markdown": page.markdown or "",
+                }
+                if hasattr(page, "images") and page.images:
+                    page_dict["images"] = [
+                        {
+                            "id": img.id,
+                            "top_left_x": img.top_left_x,
+                            "top_left_y": img.top_left_y,
+                            "bottom_right_x": img.bottom_right_x,
+                            "bottom_right_y": img.bottom_right_y,
+                        }
+                        for img in page.images
+                    ]
+                if hasattr(page, "tables") and page.tables:
+                    page_dict["tables"] = [
+                        {"id": t.id, "markdown": getattr(t, "markdown", None)}
+                        for t in page.tables
+                    ]
+                if hasattr(page, "dimensions") and page.dimensions:
+                    d = page.dimensions
+                    page_dict["dimensions"] = {
+                        "dpi": getattr(d, "dpi", None),
+                        "height": getattr(d, "height", None),
+                        "width": getattr(d, "width", None),
+                    }
+                raw_pages.append(page_dict)
+
+            usage = {}
+            if hasattr(response, "usage_info") and response.usage_info:
+                u = response.usage_info
+                usage = {
+                    "pages_processed": getattr(u, "pages_processed", None),
+                    "doc_size_bytes": getattr(u, "doc_size_bytes", None),
+                }
+
             return {
                 "exito": True,
-                "texto": texto_completo,
+                "texto": "\n\n---\n\n".join(textos_paginas),
                 "paginas": len(response.pages),
                 "modelo": response.model,
-                "error": ""
+                "error": "",
+                "raw_pages": raw_pages,
+                "usage_info": usage,
             }
-            
+
         except Exception as e:
             return {
                 "exito": False,
                 "texto": "",
                 "paginas": 0,
                 "modelo": self.model,
-                "error": f"Error OCR: {str(e)}"
+                "error": f"Error OCR: {str(e)}",
+                "raw_pages": [],
+                "usage_info": {},
             }
     
     def procesar_imagen_url(self, url_imagen: str) -> dict:
