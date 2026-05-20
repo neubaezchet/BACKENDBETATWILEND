@@ -1,4 +1,4 @@
-"""
+n"""
 Sistema de Base de Datos - IncaNeurobaeza
 Modelos SQLAlchemy para gestión de casos de incapacidades
 VERSIÓN 3.0 - Con soporte para jefes y recordatorios
