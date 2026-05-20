@@ -25,6 +25,7 @@ from app.validador import router as validador_router, obtener_emails_empresa_dir
 from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
 from app.serial_generator import generar_serial_unico  # ✅ NUEVO
 from app.ocr_service import extraer_texto_pdf
+from app.mistral_ocr_service import mistral_ocr as _mistral_ocr_instance
 
 from app.email_service import enviar_notificacion  # ✅ Backend nativo
 from fastapi import Request, Header
@@ -54,6 +55,40 @@ def _aplicar_ocr_a_metadata(metadata: dict, pdf_path: Path) -> dict:
         metadata["texto_ocr_glm"] = resultado["texto"]
     elif not resultado["exito"]:
         print(f"⚠️ OCR GLM: {resultado['error']}")
+    return resultado
+
+
+def _aplicar_mistral_ocr_a_metadata(metadata: dict, pdf_path: Path) -> dict:
+    """OCR con Mistral Document AI sobre el PDF fusionado (envío base64).
+
+    Usa base64 en lugar de URL porque los links de Drive no son accesibles
+    públicamente por la API de Mistral.
+    """
+    import base64
+
+    if _mistral_ocr_instance is None:
+        err = "MISTRAL_API_KEY no configurada"
+        print(f"⚠️ Mistral OCR: {err}")
+        metadata["ocr_mistral"] = {"exito": False, "paginas": 0, "error": err}
+        return {"exito": False, "texto": "", "paginas": 0, "modelo": "", "error": err}
+
+    try:
+        pdf_b64 = base64.b64encode(pdf_path.read_bytes()).decode("utf-8")
+        resultado = _mistral_ocr_instance.procesar_pdf_base64(pdf_b64)
+    except Exception as e:
+        resultado = {"exito": False, "texto": "", "paginas": 0, "modelo": "", "error": str(e)}
+
+    metadata["ocr_mistral"] = {
+        "exito": resultado["exito"],
+        "paginas": resultado["paginas"],
+        "modelo": resultado.get("modelo", ""),
+        "error": resultado.get("error") or None,
+    }
+    if resultado["exito"] and resultado.get("texto"):
+        metadata["texto_ocr_mistral"] = resultado["texto"]
+        print(f"✅ Mistral OCR: {resultado['paginas']} página(s), modelo={resultado.get('modelo','')}")
+    else:
+        print(f"⚠️ Mistral OCR: {resultado.get('error')}")
     return resultado
 
 
@@ -1415,7 +1450,7 @@ async def subir_incapacidad(
 
         pdf_final_path, original_filenames = await merge_pdfs_from_uploads(archivos, cedula, tipo)
 
-        resultado_ocr = _aplicar_ocr_a_metadata(metadata_form, pdf_final_path)
+        resultado_ocr = _aplicar_mistral_ocr_a_metadata(metadata_form, pdf_final_path)
 
         link_pdf = None
         drive_en_cola = False
