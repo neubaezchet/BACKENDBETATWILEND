@@ -26,6 +26,7 @@ from app.sync_excel import sincronizar_empleado_desde_excel  # ✅ NUEVO
 from app.serial_generator import generar_serial_unico  # ✅ NUEVO
 from app.ocr_service import extraer_texto_pdf
 from app.mistral_ocr_service import mistral_ocr as _mistral_ocr_instance
+from app.gemini_plano_service import gemini_plano as _gemini_plano_instance
 
 from app.email_service import enviar_notificacion  # ✅ Backend nativo
 from fastapi import Request, Header
@@ -90,6 +91,27 @@ def _aplicar_mistral_ocr_a_metadata(metadata: dict, pdf_path: Path) -> dict:
     else:
         print(f"⚠️ Mistral OCR: {resultado.get('error')}")
     return resultado
+
+
+def _estructurar_plano_con_gemini(metadata: dict, texto_ocr: str) -> None:
+    """Pasa el texto OCR de Mistral a Gemini 3 Flash para estructurar el plano de incapacidades.
+    Guarda el resultado en metadata['plano_incapacidad'].
+    """
+    if _gemini_plano_instance is None:
+        print("[Gemini Plano] GEMINI_API_KEY no configurada — se omite estructuración")
+        metadata["plano_incapacidad"] = {"exito": False, "error": "GEMINI_API_KEY no configurada"}
+        return
+
+    resultado = _gemini_plano_instance.estructurar_plano(texto_ocr)
+    metadata["plano_incapacidad"] = resultado
+    if resultado["exito"]:
+        plano = resultado.get("plano", {})
+        print(
+            f"[Gemini Plano] OK: origen={plano.get('origen')}, "
+            f"dias={plano.get('dias_incapacidad')}, cie10={plano.get('codigo_cie10')}"
+        )
+    else:
+        print(f"[Gemini Plano] Error: {resultado.get('error')}")
 
 
 def _ocr_respuesta_api(resultado: dict) -> dict:
@@ -1451,6 +1473,10 @@ async def subir_incapacidad(
         pdf_final_path, original_filenames = await merge_pdfs_from_uploads(archivos, cedula, tipo)
 
         resultado_ocr = _aplicar_mistral_ocr_a_metadata(metadata_form, pdf_final_path)
+
+        # Estructurar plano con Gemini 3 Flash si Mistral devolvió texto
+        if resultado_ocr.get("exito") and resultado_ocr.get("texto"):
+            _estructurar_plano_con_gemini(metadata_form, resultado_ocr["texto"])
 
         link_pdf = None
         drive_en_cola = False

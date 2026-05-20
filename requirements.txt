@@ -47,6 +47,7 @@ reportlab==4.0.9
 # IA
 anthropic==0.40.0
 google-generativeai==0.3.1
+google-genai>=2.4.0
 mistralai==1.0.2
 
 # HTML/Markdown conversion
