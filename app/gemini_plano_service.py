@@ -1,10 +1,9 @@
 """
-Servicio Gemini 3 Flash — Estructuración de Plano de Incapacidades
+Servicio Gemini Flash — Estructuración de Plano de Incapacidades
 Recibe el texto OCR de Mistral y extrae los campos del plano en JSON limpio.
 
 SDK: google-genai >= 2.4.0  (from google import genai)
-Modelo: gemini-3-flash-preview
-Thinking: level="low" — velocidad máxima, costo mínimo para extracción de campos
+Modelo: gemini-2.0-flash — estable, rápido, sin thinking requerido
 """
 
 import os
@@ -16,7 +15,7 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
-GEMINI_PLANO_MODEL = "gemini-3-flash-preview"
+GEMINI_PLANO_MODEL = "gemini-2.0-flash"
 
 PROMPT_TEMPLATE = """Eres un experto en documentos médicos colombianos (incapacidades, epicrisis, certificados).
 Tu única tarea es extraer campos específicos del texto OCR que te doy y devolver un JSON válido.
@@ -96,8 +95,7 @@ class GeminiPlanoService:
                 model=self.model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(thinking_level="low"),
-                    temperature=1.0,
+                    temperature=0.0,
                 ),
             )
 
