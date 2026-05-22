@@ -373,7 +373,14 @@ async def get_dashboard_completo(
             
             # Calcular días en portal (desde creación hasta ahora o hasta estado final)
             dias_en_portal = (ahora - c.created_at).days if c.created_at else 0
-            
+
+            # ⭐ Extraer campos del Plano IA (Gemini) guardados en metadata_form
+            plano_ia = {}
+            if c.metadata_form and isinstance(c.metadata_form, dict):
+                plano_result = c.metadata_form.get('plano_incapacidad', {})
+                if isinstance(plano_result, dict) and plano_result.get('exito'):
+                    plano_ia = plano_result.get('plano', {}) or {}
+
             # Obtener último motivo/observación de eventos
             ultimo_motivo = None
             observacion_detalle = None
@@ -479,6 +486,12 @@ async def get_dashboard_completo(
                 "procesado": getattr(c, 'procesado', False) or False,
                 "fecha_procesado": c.fecha_procesado.isoformat() if getattr(c, 'fecha_procesado', None) else None,
                 "usuario_procesado": getattr(c, 'usuario_procesado', None),
+                # ⭐ CAMPOS PLANO INCAPACIDADES (desde Gemini IA → metadata_form)
+                "tipo_documento": plano_ia.get('tipo_documento') or 'CC',
+                "medico": plano_ia.get('medico') or '',
+                "registro_medico": plano_ia.get('registro_medico') or '',
+                "lugar_atencion": plano_ia.get('lugar_atencion') or '',
+                "nit_lugar_atencion": plano_ia.get('nit_lugar_atencion') or '',
             })
         
         # ═══ 3. INCOMPLETAS / OBSERVACIÓN ═══
