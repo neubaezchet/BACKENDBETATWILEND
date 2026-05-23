@@ -98,11 +98,25 @@ class MistralDocumentAIOCR:
             raw_pages = []
 
             for page in response.pages:
-                textos_paginas.append(page.markdown or "")
+                md = page.markdown or ""
+
+                # ── CRÍTICO: Mistral devuelve tablas como [tbl-0.md](tbl-0.md)
+                # El contenido real está en page.tables. Lo reemplazamos inline
+                # para que Gemini reciba el texto completo (tablas + texto plano).
+                if hasattr(page, "tables") and page.tables:
+                    for tabla in page.tables:
+                        tabla_id = getattr(tabla, "id", None)
+                        tabla_md = getattr(tabla, "markdown", None)
+                        if tabla_id and tabla_md:
+                            # Reemplazar tanto formato imagen como link
+                            md = md.replace(f"![{tabla_id}]({tabla_id})", tabla_md)
+                            md = md.replace(f"[{tabla_id}]({tabla_id})", tabla_md)
+
+                textos_paginas.append(md)
 
                 page_dict = {
                     "index": page.index,
-                    "markdown": page.markdown or "",
+                    "markdown": md,   # Ya con tablas expandidas
                 }
                 if hasattr(page, "images") and page.images:
                     page_dict["images"] = [
@@ -137,15 +151,18 @@ class MistralDocumentAIOCR:
                     "doc_size_bytes": getattr(u, "doc_size_bytes", None),
                 }
 
+            texto_final = "\n\n---\n\n".join(textos_paginas)
+
             return {
                 "exito": True,
-                "texto": "\n\n---\n\n".join(textos_paginas),
+                "texto": texto_final,
                 "paginas": len(response.pages),
                 "modelo": response.model,
                 "error": "",
                 "raw_pages": raw_pages,
                 "usage_info": usage,
             }
+
 
         except Exception as e:
             return {
