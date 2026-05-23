@@ -661,6 +661,89 @@ async def get_dashboard_completo(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/plano-ocr")
+async def get_plano_ocr(
+    empresa: str = Query("all"),
+    periodo: str = Query("mes_actual"),
+    fecha_desde: str = Query(None),
+    fecha_hasta: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    📋 PLANO INCAPACIDADES — 100% OCR
+    Todos los campos vienen del texto extraído por Mistral + Gemini.
+    El único campo que trae la BD es 'empresa' (Company).
+    """
+    try:
+        fecha_inicio, fecha_fin = _calcular_fechas_periodo(periodo, fecha_desde, fecha_hasta)
+
+        query = (
+            db.query(Case)
+            .options(joinedload(Case.empresa))
+            .filter(
+                Case.es_historico == False,
+                Case.created_at >= fecha_inicio,
+                Case.created_at <= fecha_fin,
+            )
+        )
+        if empresa != "all":
+            query = query.join(Company, Case.company_id == Company.id).filter(
+                Company.nombre == empresa
+            )
+
+        casos = query.order_by(Case.created_at.desc()).all()
+
+        filas = []
+        for c in casos:
+            # ── único campo de BD ──
+            empresa_nombre = (c.empresa.nombre if c.empresa else "") or ""
+
+            # ── campos OCR (Mistral → Gemini) ──
+            plano: dict = {}
+            if c.metadata_form and isinstance(c.metadata_form, dict):
+                plano_result = c.metadata_form.get("plano_incapacidad", {})
+                if isinstance(plano_result, dict) and plano_result.get("exito"):
+                    plano = plano_result.get("plano") or {}
+
+            # Formatear fechas si vienen como YYYY-MM-DD → DD/MM/YYYY
+            def fmt_fecha(f):
+                if not f:
+                    return ""
+                try:
+                    return datetime.strptime(f, "%Y-%m-%d").strftime("%d/%m/%Y")
+                except Exception:
+                    return f
+
+            filas.append({
+                "serial":            c.serial or "",
+                # ── sólo BD ──
+                "empresa":           empresa_nombre.upper(),
+                # ── todo OCR ──
+                "tipo_documento":    (plano.get("tipo_documento") or "CC").upper(),
+                "cedula":            str(plano.get("numero_documento") or ""),
+                "eps":               (plano.get("eps") or "").upper(),
+                "dias_incapacidad":  plano.get("dias_incapacidad") or 0,
+                "fecha_inicio":      fmt_fecha(plano.get("fecha_inicio")),
+                "fecha_fin":         fmt_fecha(plano.get("fecha_fin")),
+                "medico":            (plano.get("medico") or "").upper(),
+                "registro_medico":   (plano.get("registro_medico") or "").upper(),
+                "lugar_atencion":    (plano.get("lugar_atencion") or "").upper(),
+                "nit_lugar_atencion":(plano.get("nit_lugar_atencion") or ""),
+                "diagnostico":       (plano.get("diagnostico") or "").upper(),
+                "codigo_cie10":      (plano.get("codigo_cie10") or "").upper(),
+                "origen":            plano.get("origen") or "",
+                "tipo":              (plano.get("tipo_incapacidad") or "").upper(),
+                # indicador de si el OCR ya procesó este caso
+                "tiene_ocr":         bool(plano),
+            })
+
+        return {"casos": filas, "total": len(filas)}
+
+    except Exception as e:
+        logger.error(f"Error plano-ocr: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _calcular_dias_prorroga_activa(cadenas: list) -> int:
     """
     Calcula los días de la cadena de prórroga activa más reciente.
