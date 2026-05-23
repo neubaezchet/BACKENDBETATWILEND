@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🧪 Test Plano OCR — NeuroBAEZA</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0a0d14;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    .container { max-width: 920px; margin: 0 auto; }
+
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 900;
+      background: linear-gradient(135deg, #818cf8, #a78bfa, #38bdf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: .25rem;
+    }
+
+    .subtitle { font-size: .85rem; color: #64748b; margin-bottom: 2rem; }
+
+    /* Card */
+    .card {
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .card-title {
+      font-size: .75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #64748b;
+      margin-bottom: 1rem;
+    }
+
+    /* Form */
+    .form-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .form-group { display: flex; flex-direction: column; gap: .4rem; flex: 1; min-width: 180px; }
+    label { font-size: .78rem; font-weight: 600; color: #94a3b8; }
+    input[type="text"], select {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #f1f5f9;
+      border-radius: 8px;
+      padding: .55rem .85rem;
+      font-size: .88rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input[type="text"]:focus, select:focus { border-color: #818cf8; }
+
+    /* Drop zone */
+    .dropzone {
+      border: 2px dashed #334155;
+      border-radius: 12px;
+      padding: 2.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .dropzone:hover, .dropzone.over { border-color: #818cf8; background: #818cf810; }
+    .dropzone input[type="file"] {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      opacity: 0; cursor: pointer;
+    }
+    .dropzone-icon { font-size: 2.5rem; margin-bottom: .5rem; }
+    .dropzone-text { font-size: .9rem; color: #94a3b8; }
+    .dropzone-text span { color: #818cf8; font-weight: 600; }
+    .file-name {
+      margin-top: .75rem;
+      font-size: .85rem;
+      color: #38bdf8;
+      font-weight: 500;
+      display: none;
+    }
+
+    /* Button */
+    .btn {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .75rem 2rem;
+      border-radius: 10px;
+      border: none;
+      font-size: .95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      width: 100%;
+      justify-content: center;
+      margin-top: 1rem;
+    }
+    .btn-primary:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+    /* Spinner */
+    .spinner {
+      display: none;
+      width: 18px; height: 18px;
+      border: 2px solid #ffffff40;
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Status */
+    .status-bar {
+      display: none;
+      padding: .75rem 1rem;
+      border-radius: 10px;
+      font-size: .85rem;
+      font-weight: 500;
+      margin-bottom: 1rem;
+    }
+    .status-bar.loading { background: #1e3a5f; color: #93c5fd; border: 1px solid #2563eb40; }
+    .status-bar.error   { background: #4c1d1d; color: #fca5a5; border: 1px solid #dc262640; }
+    .status-bar.success { background: #14532d; color: #86efac; border: 1px solid #16a34a40; }
+
+    /* Result sections */
+    .result-section { display: none; }
+
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .75rem; }
+    .field-item {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: .75rem 1rem;
+    }
+    .field-label { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: #64748b; margin-bottom: .25rem; }
+    .field-value { font-size: .9rem; font-weight: 600; color: #f1f5f9; word-break: break-all; }
+    .field-value.empty { color: #475569; font-style: italic; font-weight: 400; }
+    .field-value.highlight { color: #a78bfa; }
+    .field-value.date { color: #38bdf8; font-family: monospace; }
+    .field-value.dias { color: #4ade80; font-size: 1.2rem; }
+
+    /* OCR text */
+    .ocr-text {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: .8rem;
+      color: #94a3b8;
+      white-space: pre-wrap;
+      max-height: 400px;
+      overflow-y: auto;
+      line-height: 1.6;
+    }
+
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: .2rem .6rem;
+      border-radius: 999px;
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-ok  { background: #14532d; color: #86efac; }
+    .badge-err { background: #4c1d1d; color: #fca5a5; }
+
+    .section-header {
+      display: flex; align-items: center; gap: .75rem;
+      margin-bottom: 1rem;
+    }
+    .section-header h3 { font-size: .95rem; font-weight: 700; }
+    .model-tag {
+      font-size: .7rem;
+      color: #64748b;
+      background: #1e293b;
+      padding: .15rem .5rem;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>🧪 Test Plano OCR</h1>
+  <p class="subtitle">Prueba Mistral + Gemini directamente — sin guardar en base de datos</p>
+
+  <!-- FORM -->
+  <div class="card">
+    <div class="card-title">📋 Parámetros</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Cédula</label>
+        <input type="text" id="cedula" value="1085043374" placeholder="Número de documento" />
+      </div>
+      <div class="form-group">
+        <label>Backend URL</label>
+        <input type="text" id="apiUrl" value="https://web-production-95ed.up.railway.app" />
+      </div>
+    </div>
+
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" accept=".pdf,application/pdf" />
+      <div class="dropzone-icon">📄</div>
+      <div class="dropzone-text">
+        Arrastra el PDF aquí o <span>haz clic para seleccionar</span>
+      </div>
+      <div class="file-name" id="fileName"></div>
+    </div>
+
+    <button class="btn btn-primary" id="btnEnviar" disabled onclick="enviar()">
+      <div class="spinner" id="spinner"></div>
+      <span id="btnText">🚀 Analizar con Mistral + Gemini</span>
+    </button>
+  </div>
+
+  <!-- STATUS -->
+  <div class="status-bar" id="statusBar"></div>
+
+  <!-- RESULTADO PLANO -->
+  <div class="result-section card" id="resultPlano">
+    <div class="section-header">
+      <h3>📊 Campos extraídos por Gemini</h3>
+      <span class="badge" id="planoBadge"></span>
+      <span class="model-tag" id="modeloGemini"></span>
+    </div>
+    <div class="field-grid" id="fieldGrid"></div>
+  </div>
+
+  <!-- OCR TEXT -->
+  <div class="result-section card" id="resultOcr">
+    <div class="section-header">
+      <h3>🔍 Texto OCR de Mistral</h3>
+      <span class="badge" id="ocrBadge"></span>
+      <span class="model-tag" id="modeloMistral"></span>
+    </div>
+    <div class="ocr-text" id="ocrText"></div>
+  </div>
+
+</div>
+
+<script>
+  const fileInput = document.getElementById('fileInput');
+  const fileName  = document.getElementById('fileName');
+  const btnEnviar = document.getElementById('btnEnviar');
+  const dropzone  = document.getElementById('dropzone');
+  let selectedFile = null;
+
+  // Drag & drop visual
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') setFile(f);
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) setFile(fileInput.files[0]);
+  });
+
+  function setFile(f) {
+    selectedFile = f;
+    fileName.textContent = '📎 ' + f.name + ' (' + (f.size / 1024).toFixed(1) + ' KB)';
+    fileName.style.display = 'block';
+    btnEnviar.disabled = false;
+  }
+
+  function setStatus(msg, type) {
+    const el = document.getElementById('statusBar');
+    el.textContent = msg;
+    el.className = 'status-bar ' + type;
+    el.style.display = 'block';
+  }
+
+  function showSection(id) {
+    document.getElementById(id).style.display = 'block';
+  }
+
+  function formatVal(val, key) {
+    if (val === null || val === undefined || val === '') return null;
+    return val;
+  }
+
+  const FIELD_META = {
+    tipo_documento:    { label: 'Tipo Doc.',       cls: 'highlight' },
+    numero_documento:  { label: 'Nº Documento',    cls: 'highlight' },
+    empresa:           { label: 'Empresa',          cls: '' },
+    eps:               { label: 'EPS',              cls: 'highlight' },
+    dias_incapacidad:  { label: 'Días',             cls: 'dias' },
+    fecha_inicio:      { label: 'Fecha Inicio',     cls: 'date' },
+    fecha_fin:         { label: 'Fecha Fin',        cls: 'date' },
+    medico:            { label: 'Médico',           cls: '' },
+    registro_medico:   { label: 'Reg. Médico',      cls: '' },
+    lugar_atencion:    { label: 'Lugar Atención',   cls: '' },
+    nit_lugar_atencion:{ label: 'NIT Lugar',        cls: '' },
+    diagnostico:       { label: 'Diagnóstico',      cls: '' },
+    codigo_cie10:      { label: 'CIE-10',           cls: 'highlight' },
+    origen:            { label: 'Origen',           cls: '' },
+    tipo_incapacidad:  { label: 'Tipo',             cls: '' },
+  };
+
+  async function enviar() {
+    if (!selectedFile) return;
+    const cedula = document.getElementById('cedula').value.trim();
+    const apiUrl = document.getElementById('apiUrl').value.trim();
+
+    // UI loading
+    btnEnviar.disabled = true;
+    document.getElementById('spinner').style.display = 'block';
+    document.getElementById('btnText').textContent = 'Analizando...';
+    document.getElementById('resultPlano').style.display = 'none';
+    document.getElementById('resultOcr').style.display = 'none';
+    setStatus('⏳ Enviando PDF a Mistral OCR...', 'loading');
+
+    const fd = new FormData();
+    fd.append('archivo', selectedFile);
+    fd.append('cedula', cedula);
+
+    try {
+      const resp = await fetch(`${apiUrl}/test-plano`, {
+        method: 'POST',
+        body: fd,
+      });
+      const data = await resp.json();
+
+      if (!resp.ok || !data.ok) {
+        setStatus('❌ Error: ' + (data.error || resp.statusText), 'error');
+        return;
+      }
+
+      // ── OCR ──
+      const ocr = data.ocr || {};
+      document.getElementById('ocrBadge').textContent  = ocr.exito ? 'OK' : 'ERROR';
+      document.getElementById('ocrBadge').className    = 'badge ' + (ocr.exito ? 'badge-ok' : 'badge-err');
+      document.getElementById('modeloMistral').textContent = ocr.modelo ? '🤖 ' + ocr.modelo : '';
+      document.getElementById('ocrText').textContent   = ocr.texto_completo || (ocr.error || 'Sin texto');
+      showSection('resultOcr');
+
+      // ── PLANO ──
+      const plano = data.plano || {};
+      const campos = plano.campos_extraidos || {};
+      document.getElementById('planoBadge').textContent = plano.exito ? 'OK' : 'ERROR';
+      document.getElementById('planoBadge').className   = 'badge ' + (plano.exito ? 'badge-ok' : 'badge-err');
+      document.getElementById('modeloGemini').textContent = plano.modelo_gemini ? '✨ ' + plano.modelo_gemini : '';
+
+      const grid = document.getElementById('fieldGrid');
+      grid.innerHTML = '';
+
+      if (plano.error && !plano.exito) {
+        grid.innerHTML = `<div style="color:#fca5a5;font-size:.85rem;padding:.5rem 0;">❌ ${plano.error}</div>`;
+      } else {
+        Object.entries(FIELD_META).forEach(([key, meta]) => {
+          const val = campos[key];
+          const hasVal = val !== null && val !== undefined && val !== '' && val !== 0;
+          const div = document.createElement('div');
+          div.className = 'field-item';
+          div.innerHTML = `
+            <div class="field-label">${meta.label}</div>
+            <div class="field-value ${hasVal ? meta.cls : 'empty'}">${hasVal ? val : '—'}</div>
+          `;
+          grid.appendChild(div);
+        });
+      }
+      showSection('resultPlano');
+
+      if (plano.exito && ocr.exito) {
+        setStatus(`✅ Análisis completo — ${ocr.paginas} página(s) procesadas por Mistral · Gemini extrajo el plano`, 'success');
+      } else if (ocr.exito && !plano.exito) {
+        setStatus(`⚠️ OCR OK pero Gemini falló: ${plano.error}`, 'error');
+      } else {
+        setStatus(`❌ OCR falló: ${ocr.error}`, 'error');
+      }
+
+    } catch (err) {
+      setStatus('❌ Error de red: ' + err.message, 'error');
+    } finally {
+      btnEnviar.disabled = false;
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('btnText').textContent = '🚀 Analizar con Mistral + Gemini';
+    }
+  }
+</script>
+</body>
+</html>
