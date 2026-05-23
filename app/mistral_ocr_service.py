@@ -106,7 +106,9 @@ class MistralDocumentAIOCR:
                 if hasattr(page, "tables") and page.tables:
                     for tabla in page.tables:
                         tabla_id = getattr(tabla, "id", None)
-                        tabla_md = getattr(tabla, "markdown", None)
+                        # ⚠️ SDK mistralai v2.x usa 'content', no 'markdown'
+                        # Intentamos ambos por compatibilidad con versiones antiguas/nuevas
+                        tabla_md = getattr(tabla, "content", None) or getattr(tabla, "markdown", None)
                         if tabla_id and tabla_md:
                             # Reemplazar tanto formato imagen como link
                             # Mistral puede usar "tbl-0" o "tbl-0.md" como referencia
