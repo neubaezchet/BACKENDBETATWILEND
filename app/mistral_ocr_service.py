@@ -100,29 +100,49 @@ class MistralDocumentAIOCR:
             for page in response.pages:
                 md = page.markdown or ""
 
-                # ── CRÍTICO: Mistral devuelve tablas como [tbl-0.md](tbl-0.md)
-                # El contenido real está en page.tables. Lo reemplazamos inline
-                # para que Gemini reciba el texto completo (tablas + texto plano).
+                # ── Recopila contenido de tablas (SDK v2.x: .content; v1.x: .markdown) ──
+                # Los soportes de incapacidad vienen en 3 formatos:
+                #   1. Foto/escaneado   → Mistral OCR ya extrae texto en page.markdown
+                #   2. PDF digital con tablas → page.markdown tiene [tbl-N.md](tbl-N.md)
+                #                               y el contenido real está en page.tables
+                #   3. PDF texto simple  → page.markdown tiene el texto directamente
+                # En todos los casos extraemos TODO el contenido disponible.
+                tablas_contenido = []  # (id, contenido) para fallback
                 if hasattr(page, "tables") and page.tables:
                     for tabla in page.tables:
                         tabla_id = getattr(tabla, "id", None)
-                        # ⚠️ SDK mistralai v2.x usa 'content', no 'markdown'
-                        # Intentamos ambos por compatibilidad con versiones antiguas/nuevas
-                        tabla_md = getattr(tabla, "content", None) or getattr(tabla, "markdown", None)
-                        if tabla_id and tabla_md:
-                            # Reemplazar tanto formato imagen como link
-                            # Mistral puede usar "tbl-0" o "tbl-0.md" como referencia
-                            md = md.replace(f"![{tabla_id}]({tabla_id})", tabla_md)
-                            md = md.replace(f"[{tabla_id}]({tabla_id})", tabla_md)
-                            # También manejar cuando el markdown agrega extensión .md al ID
-                            md = md.replace(f"![{tabla_id}.md]({tabla_id}.md)", tabla_md)
-                            md = md.replace(f"[{tabla_id}.md]({tabla_id}.md)", tabla_md)
+                        # SDK mistralai v2.x usa 'content'; v1.x usaba 'markdown'
+                        tabla_contenido = (
+                            getattr(tabla, "content", None)
+                            or getattr(tabla, "markdown", None)
+                            or ""
+                        )
+                        if tabla_id and tabla_contenido:
+                            tablas_contenido.append((tabla_id, tabla_contenido))
+                            # Reemplazar referencia en markdown (todos los formatos posibles)
+                            for ref_id in [tabla_id, f"{tabla_id}.md"]:
+                                md = md.replace(f"![{ref_id}]({ref_id})", tabla_contenido)
+                                md = md.replace(f"[{ref_id}]({ref_id})", tabla_contenido)
+
+                # ── Fallback garantizado: si aún quedan referencias sin resolver ──
+                # (ocurre cuando el ID en el markdown no coincide exactamente con tabla.id)
+                # Agregar el contenido de todas las tablas al final del texto
+                import re as _re
+                referencias_pendientes = _re.findall(r'\[tbl-\d+(?:\.md)?\]\([^)]+\)', md)
+                if referencias_pendientes and tablas_contenido:
+                    contenidos_extra = "\n\n".join(c for _, c in tablas_contenido)
+                    md = md + "\n\n" + contenidos_extra
+
+                # ── Fallback extra: si el markdown está vacío/mínimo pero hay tablas ──
+                # (casos donde page.markdown = "" y todo el contenido está en tables)
+                if len(md.strip()) < 30 and tablas_contenido:
+                    md = "\n\n".join(c for _, c in tablas_contenido)
 
                 textos_paginas.append(md)
 
                 page_dict = {
                     "index": page.index,
-                    "markdown": md,   # Ya con tablas expandidas
+                    "markdown": md,  # Texto final con tablas expandidas
                 }
                 if hasattr(page, "images") and page.images:
                     page_dict["images"] = [
@@ -135,10 +155,11 @@ class MistralDocumentAIOCR:
                         }
                         for img in page.images
                     ]
-                if hasattr(page, "tables") and page.tables:
+                if tablas_contenido:
+                    # Guardar con el campo correcto 'content' para raw_pages
                     page_dict["tables"] = [
-                        {"id": t.id, "markdown": getattr(t, "markdown", None)}
-                        for t in page.tables
+                        {"id": tid, "content": tc}
+                        for tid, tc in tablas_contenido
                     ]
                 if hasattr(page, "dimensions") and page.dimensions:
                     d = page.dimensions
