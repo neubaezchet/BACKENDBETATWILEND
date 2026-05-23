@@ -2586,3 +2586,100 @@ async def reocr_desde_drive(db: Session = Depends(get_db)):
         "detalles": resultados["detalles"],
     }
 
+
+# ══════════════════════════════════════════════════════════════
+# TEST EN PRODUCCIÓN: sube un PDF/imagen y ve qué extrae OCR+Gemini
+# POST /test-plano/upload  (multipart: archivo = el PDF o foto)
+# ══════════════════════════════════════════════════════════════
+@app.post("/test-plano/upload")
+async def test_plano_upload(archivo: UploadFile = File(...)):
+    """
+    Sube cualquier PDF o imagen (jpg/png) y devuelve:
+    - El texto que extrajo Mistral OCR
+    - Los campos que estructuró Gemini
+    - Estadísticas: páginas, chars, tablas detectadas
+    No guarda nada en BD. Solo sirve para probar el flujo OCR → Plano.
+    """
+    import base64
+
+    if _mistral_ocr_instance is None:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "MISTRAL_API_KEY no configurada"})
+    if _gemini_plano_instance is None:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "GEMINI_API_KEY no configurada"})
+
+    nombre = archivo.filename or "sin_nombre"
+    ext = Path(nombre).suffix.lower()
+    contenido = await archivo.read()
+    b64 = base64.b64encode(contenido).decode()
+
+    # ── PASO 1: Mistral OCR ──────────────────────────────────────
+    try:
+        if ext == ".pdf":
+            res_ocr = _mistral_ocr_instance.procesar_pdf_base64(b64)
+        elif ext in {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif"}:
+            mime_map = {
+                ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".png": "image/png",  ".webp": "image/webp",
+                ".tiff": "image/tiff", ".tif": "image/tiff",
+            }
+            res_ocr = _mistral_ocr_instance.procesar_imagen_base64(b64, tipo_mime=mime_map[ext])
+        else:
+            return JSONResponse(status_code=400, content={
+                "ok": False,
+                "error": f"Extensión '{ext}' no soportada. Usa pdf, jpg, png, webp o tiff."
+            })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"Error OCR: {e}"})
+
+    if not res_ocr.get("exito"):
+        return JSONResponse(status_code=422, content={
+            "ok": False,
+            "etapa": "ocr",
+            "error": res_ocr.get("error"),
+            "texto_ocr": "",
+            "campos": {},
+        })
+
+    texto_ocr = res_ocr.get("texto", "")
+    tablas_por_pagina = [
+        len(p.get("tables", [])) for p in res_ocr.get("raw_pages", [])
+    ]
+
+    # ── PASO 2: Gemini Plano ─────────────────────────────────────
+    try:
+        res_gemini = _gemini_plano_instance.estructurar_plano(texto_ocr)
+    except Exception as e:
+        res_gemini = {"exito": False, "plano": {}, "error": str(e), "modelo": "?"}
+
+    # ── Respuesta completa ───────────────────────────────────────
+    return {
+        "ok": True,
+        "archivo": nombre,
+        "tamano_bytes": len(contenido),
+        "ocr": {
+            "exito": res_ocr["exito"],
+            "modelo": res_ocr.get("modelo", ""),
+            "paginas": res_ocr.get("paginas", 0),
+            "chars_extraidos": len(texto_ocr),
+            "tablas_por_pagina": tablas_por_pagina,
+            "total_tablas": sum(tablas_por_pagina),
+            "texto_completo": texto_ocr,
+            "texto_preview": texto_ocr[:600] + ("…" if len(texto_ocr) > 600 else ""),
+        },
+        "gemini": {
+            "exito": res_gemini.get("exito"),
+            "modelo": res_gemini.get("modelo", ""),
+            "error": res_gemini.get("error", ""),
+            "campos": res_gemini.get("plano", {}),
+        },
+        "dashboard_preview": {
+            "medico":             res_gemini.get("plano", {}).get("medico") or "—",
+            "lugar_atencion":     res_gemini.get("plano", {}).get("lugar_atencion") or "—",
+            "nit_lugar_atencion": res_gemini.get("plano", {}).get("nit_lugar_atencion") or "—",
+            "tipo_documento":     res_gemini.get("plano", {}).get("tipo_documento") or "CC",
+            "codigo_cie10":       res_gemini.get("plano", {}).get("codigo_cie10") or "—",
+            "dias_incapacidad":   res_gemini.get("plano", {}).get("dias_incapacidad") or "—",
+            "origen":             res_gemini.get("plano", {}).get("origen") or "—",
+        },
+    }
+
