@@ -79,12 +79,26 @@ def actualizar_caso_en_sheet(caso, accion="actualizar"):
             ultima_nota[:100]  # Primeros 100 caracteres
         ]]
         
-        # Buscar si ya existe el caso
-        range_name = "Casos_Activos!A:A"
-        result = service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=range_name
-        ).execute()
+        # Buscar si ya existe el caso en la hoja
+        # ⚠️ Si la hoja 'Casos_Activos' no existe en el Sheet, la API da 400.
+        # Esto es un error de configuración, no del código — capturamos y retornamos False.
+        try:
+            range_name = "Casos_Activos!A:A"
+            result = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=range_name
+            ).execute()
+        except Exception as sheet_err:
+            err_msg = str(sheet_err)
+            if "Unable to parse range" in err_msg or "400" in err_msg:
+                print(
+                    f"⚠️ Sheets: La hoja 'Casos_Activos' no existe en el Spreadsheet "
+                    f"(ID: {spreadsheet_id}). Crea la pestaña con ese nombre exacto. "
+                    f"Error: {sheet_err}"
+                )
+            else:
+                print(f"❌ Error accediendo a Sheets: {sheet_err}")
+            return False
         
         serials = result.get('values', [])
         fila_existente = None

@@ -3,11 +3,9 @@ Servicio Gemini Flash — Estructuración de Plano de Incapacidades
 Recibe el texto OCR de Mistral y extrae los campos del plano en JSON limpio.
 
 SDK: google-genai >= 2.4.0  (from google import genai)
-Modelos (con fallback automático):
-  1. gemini-3.5-flash          (estable mayo 2026 — óptimo)
-  2. gemini-3-flash-preview    (preview)
-  3. gemini-2.5-flash          (estable, respaldo)
-  4. gemini-1.5-flash          (legacy, último recurso)
+Modelo principal: configurable via GEMINI_PLANO_MODEL en Railway.
+  - Por defecto: gemini-3.5-flash (estable mayo 2026, óptimo)
+  - Fallback automático si el modelo principal falla con 404.
 """
 
 import os
@@ -20,12 +18,22 @@ logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# Lista de modelos a intentar en orden. Si el primero falla con 404, se prueba el siguiente.
-GEMINI_MODELS_FALLBACK = [
-    "gemini-3.5-flash",          # Estable mayo 2026 — óptimo
-    "gemini-3-flash-preview",    # Preview mayo 2026
-    "gemini-2.5-flash",          # Estable, respaldo
-    "gemini-1.5-flash",          # Legacy, último recurso
+# ── Modelo principal ──────────────────────────────────────────────────────────
+# Configura GEMINI_PLANO_MODEL en las variables de entorno de Railway para
+# cambiar el modelo sin necesidad de hacer deploy.
+# Ejemplo: GEMINI_PLANO_MODEL=gemini-3.5-flash
+GEMINI_PLANO_MODEL = os.getenv("GEMINI_PLANO_MODEL", "gemini-3.5-flash")
+
+# ── Lista de fallback (se intenta en orden si el principal da 404) ─────────────
+_FALLBACK_EXTRA = [
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+]
+# El modelo principal siempre va primero; el resto son respaldo sin duplicados
+GEMINI_MODELS_FALLBACK = [GEMINI_PLANO_MODEL] + [
+    m for m in _FALLBACK_EXTRA if m != GEMINI_PLANO_MODEL
 ]
 
 PROMPT_TEMPLATE = """Eres un experto en documentos médicos colombianos (incapacidades, epicrisis, certificados).
@@ -79,7 +87,6 @@ class GeminiPlanoService:
         """Prueba los modelos en orden y retorna el primero disponible."""
         for modelo in GEMINI_MODELS_FALLBACK:
             try:
-                # Prueba mínima: generar 1 token para verificar disponibilidad
                 self.client.models.generate_content(
                     model=modelo,
                     contents="test",
@@ -88,7 +95,7 @@ class GeminiPlanoService:
                         max_output_tokens=1,
                     ),
                 )
-                logger.info(f"✅ GeminiPlanoService: modelo '{modelo}' disponible y seleccionado")
+                logger.info(f"✅ GeminiPlanoService: modelo '{modelo}' seleccionado")
                 return modelo
             except Exception as e:
                 err_str = str(e)
@@ -96,28 +103,24 @@ class GeminiPlanoService:
                     logger.warning(f"⚠️ Modelo '{modelo}' no disponible (404), probando siguiente...")
                     continue
                 else:
-                    # Error de red u otro — igual intentar siguiente
-                    logger.warning(f"⚠️ Modelo '{modelo}' error inesperado: {e}, probando siguiente...")
+                    logger.warning(f"⚠️ Modelo '{modelo}' error: {e}, probando siguiente...")
                     continue
-        # Si ninguno funcionó, usar el primero de la lista (fallará en runtime con mensaje claro)
-        logger.error("❌ Ningún modelo Gemini disponible. Usando gemini-1.5-flash como último recurso.")
+        logger.error("❌ Ningún modelo Gemini disponible.")
         return GEMINI_MODELS_FALLBACK[0]
 
     def estructurar_plano(self, texto_ocr: str) -> dict:
         """
-        Toma el texto markdown devuelto por Mistral OCR y pide a Gemini Flash
+        Toma el texto markdown devuelto por Mistral OCR y pide a Gemini
         que extraiga los campos del plano de incapacidades en JSON.
 
         Returns:
             {
                 "exito": bool,
-                "plano": {
-                    "tipo_documento", "numero_documento", "empresa", "eps",
-                    "dias_incapacidad", "fecha_inicio", "fecha_fin",
-                    "medico", "registro_medico", "lugar_atencion",
-                    "nit_lugar_atencion", "diagnostico", "codigo_cie10",
-                    "origen", "tipo_incapacidad"
-                },
+                "plano": { tipo_documento, numero_documento, empresa, eps,
+                           dias_incapacidad, fecha_inicio, fecha_fin,
+                           medico, registro_medico, lugar_atencion,
+                           nit_lugar_atencion, diagnostico, codigo_cie10,
+                           origen, tipo_incapacidad },
                 "modelo": str,
                 "error": str
             }
@@ -130,19 +133,18 @@ class GeminiPlanoService:
                 "error": "Texto OCR vacío — no hay nada que estructurar",
             }
 
-        prompt = PROMPT_TEMPLATE.format(texto_ocr=texto_ocr[:12000])  # límite seguro de tokens
+        prompt = PROMPT_TEMPLATE.format(texto_ocr=texto_ocr[:12000])
 
-        # Intentar con el modelo activo, y hacer fallback si da 404
+        # Intentar con el modelo activo y hacer fallback si da 404
         modelos_a_intentar = [self.model] + [m for m in GEMINI_MODELS_FALLBACK if m != self.model]
 
         for modelo in modelos_a_intentar:
+            raw = ""
             try:
                 response = self.client.models.generate_content(
                     model=modelo,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                    ),
+                    config=types.GenerateContentConfig(temperature=0.0),
                 )
 
                 raw = response.text.strip() if response.text else ""
@@ -157,28 +159,24 @@ class GeminiPlanoService:
 
                 plano = json.loads(raw)
 
-                # Asegurar tipo correcto en dias_incapacidad
                 try:
                     plano["dias_incapacidad"] = int(plano.get("dias_incapacidad") or 0)
                 except (ValueError, TypeError):
                     plano["dias_incapacidad"] = 0
 
-                # Si cambió de modelo, actualizar el activo para próximas llamadas
                 if modelo != self.model:
-                    logger.info(f"✅ Fallback exitoso: cambiando modelo activo a '{modelo}'")
+                    logger.info(f"✅ Fallback exitoso: nuevo modelo activo = '{modelo}'")
                     self.model = modelo
 
-                logger.info(f"✅ Gemini plano OK [{modelo}]: origen={plano.get('origen')}, dias={plano.get('dias_incapacidad')}")
+                logger.info(
+                    f"✅ Gemini plano OK [{modelo}]: "
+                    f"origen={plano.get('origen')}, dias={plano.get('dias_incapacidad')}"
+                )
 
-                return {
-                    "exito": True,
-                    "plano": plano,
-                    "modelo": modelo,
-                    "error": "",
-                }
+                return {"exito": True, "plano": plano, "modelo": modelo, "error": ""}
 
             except json.JSONDecodeError as e:
-                logger.error(f"⚠️ Gemini [{modelo}] devolvió JSON inválido: {e} | raw={raw[:300]}")
+                logger.error(f"⚠️ Gemini [{modelo}] JSON inválido: {e} | raw={raw[:300]}")
                 return {
                     "exito": False,
                     "plano": {},
@@ -191,27 +189,21 @@ class GeminiPlanoService:
                     logger.warning(f"⚠️ Modelo '{modelo}' no disponible, probando siguiente...")
                     continue
                 else:
-                    logger.error(f"❌ Error Gemini plano [{modelo}]: {e}")
-                    return {
-                        "exito": False,
-                        "plano": {},
-                        "modelo": modelo,
-                        "error": str(e),
-                    }
+                    logger.error(f"❌ Error Gemini [{modelo}]: {e}")
+                    return {"exito": False, "plano": {}, "modelo": modelo, "error": str(e)}
 
-        # Si llegamos aquí, todos los modelos fallaron
         return {
             "exito": False,
             "plano": {},
             "modelo": "none",
-            "error": f"Ningún modelo Gemini disponible. Modelos intentados: {modelos_a_intentar}",
+            "error": f"Ningún modelo Gemini disponible. Intentados: {modelos_a_intentar}",
         }
 
 
-# Instancia global — None si falta la key
+# ── Instancia global ──────────────────────────────────────────────────────────
 try:
     gemini_plano = GeminiPlanoService()
-    logger.info(f"✅ GeminiPlanoService listo: modelo activo = {gemini_plano.model}")
+    logger.info(f"✅ GeminiPlanoService listo. Modelo activo: {gemini_plano.model}")
 except Exception as e:
     logger.warning(f"⚠️ GeminiPlanoService no disponible: {e}")
     gemini_plano = None

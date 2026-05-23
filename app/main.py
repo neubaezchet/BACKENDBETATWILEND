@@ -365,19 +365,20 @@ def startup_event():
         print("✅ Auto-migración completada (columnas verificadas)")
         
         # ⭐ AUTO-MIGRACIÓN: Agregar valores faltantes al enum tipoincapacidad
-        with engine.connect() as conn:
-            enum_migrations = [
-                "ALTER TYPE tipoincapacidad ADD VALUE IF NOT EXISTS 'other';",
-                "ALTER TYPE tipoincapacidad ADD VALUE IF NOT EXISTS 'prelicencia';",
-                "ALTER TYPE tipoincapacidad ADD VALUE IF NOT EXISTS 'maternidad';",
-            ]
-            for sql in enum_migrations:
-                try:
-                    conn.execute(text(sql))
-                    conn.commit()
-                except Exception as e:
-                    # Si ya existen, no hay problema
-                    print(f"  ℹ️ Enum migration: {e}")
+        # IMPORTANTE: ALTER TYPE ADD VALUE no puede correr dentro de una transacción
+        # en PostgreSQL. Necesitamos AUTOCOMMIT para que funcione correctamente.
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                enum_values = ['other', 'prelicencia', 'maternidad', 'paternidad',
+                               'certificado', 'enfermedad_especial']
+                for val in enum_values:
+                    try:
+                        conn.execute(text(f"ALTER TYPE tipoincapacidad ADD VALUE IF NOT EXISTS '{val}';"))
+                        print(f"  ✅ Enum '{val}' verificado/agregado")
+                    except Exception as e:
+                        print(f"  ℹ️ Enum '{val}': {e}")
+        except Exception as e:
+            print(f"  ⚠️ Enum migration (modo transacción): {e}")
         print("✅ Auto-migración de enum completada")
         
         # ⭐ LIMPIEZA: Eliminar columnas obsoletas que ya no vienen de Kactus
