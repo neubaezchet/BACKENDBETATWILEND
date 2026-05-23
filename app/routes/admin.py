@@ -101,6 +101,8 @@ class UserCreate(BaseModel):
     rol: str = Field("viewer", description="superadmin | admin | th | sst | nomina | viewer")
     company_id: Optional[int] = None
     permisos: Optional[dict] = None
+    tenant_permisos: Optional[dict] = None
+    es_tenant_admin: Optional[bool] = False
 
 class UserUpdate(BaseModel):
     nombre: Optional[str] = None
@@ -108,6 +110,8 @@ class UserUpdate(BaseModel):
     rol: Optional[str] = None
     company_id: Optional[int] = None
     permisos: Optional[dict] = None
+    tenant_permisos: Optional[dict] = None
+    es_tenant_admin: Optional[bool] = None
     activo: Optional[bool] = None
     password: Optional[str] = None
 
@@ -161,7 +165,13 @@ async def login(data: LoginRequest, db: Session = Depends(get_db)):
     user.ultimo_login = datetime.now()
     db.commit()
 
-    token = create_access_token({"sub": user.username, "rol": user.rol})
+    es_tenant_admin = bool(getattr(user, 'es_tenant_admin', False))
+    token = create_access_token({
+        "sub": user.username,
+        "rol": user.rol,
+        "es_tenant_admin": es_tenant_admin,
+        "company_id": user.company_id,
+    })
     return {
         "ok": True,
         "token": token,
@@ -174,6 +184,8 @@ async def login(data: LoginRequest, db: Session = Depends(get_db)):
             "company_id": user.company_id,
             "empresa": user.empresa.nombre if user.empresa else None,
             "permisos": user.permisos or {},
+            "es_tenant_admin": es_tenant_admin,
+            "tenant_permisos": getattr(user, 'tenant_permisos', {}) or {},
         }
     }
 
@@ -192,6 +204,8 @@ async def whoami(user: AdminUser = Depends(get_current_user)):
             "company_id": user.company_id,
             "empresa": user.empresa.nombre if user.empresa else None,
             "permisos": user.permisos or {},
+            "es_tenant_admin": bool(getattr(user, 'es_tenant_admin', False)),
+            "tenant_permisos": getattr(user, 'tenant_permisos', {}) or {},
         }
     }
 
@@ -328,6 +342,8 @@ async def listar_usuarios(
             "company_id": u.company_id,
             "empresa": u.empresa.nombre if u.empresa else None,
             "permisos": u.permisos or {},
+            "es_tenant_admin": bool(getattr(u, 'es_tenant_admin', False)),
+            "tenant_permisos": getattr(u, 'tenant_permisos', {}) or {},
             "activo": u.activo,
             "ultimo_login": u.ultimo_login.isoformat() if u.ultimo_login else None,
             "created_at": u.created_at.isoformat() if u.created_at else None,
@@ -359,6 +375,8 @@ async def crear_usuario(
         rol=data.rol,
         company_id=data.company_id,
         permisos=data.permisos or {},
+        es_tenant_admin=data.es_tenant_admin or False,
+        tenant_permisos=data.tenant_permisos or {},
         activo=True,
     )
     db.add(nuevo)
@@ -394,6 +412,10 @@ async def actualizar_usuario(
         target.company_id = data.company_id if data.company_id != 0 else None
     if data.permisos is not None:
         target.permisos = data.permisos
+    if data.tenant_permisos is not None:
+        target.tenant_permisos = data.tenant_permisos
+    if data.es_tenant_admin is not None:
+        target.es_tenant_admin = data.es_tenant_admin
     if data.activo is not None:
         target.activo = data.activo
     if data.password:

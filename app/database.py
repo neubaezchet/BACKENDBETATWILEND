@@ -323,7 +323,7 @@ class AdminUser(Base):
     Roles: superadmin | admin | th | sst | nomina | viewer
     """
     __tablename__ = 'admin_users'
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(100), nullable=False, unique=True, index=True)
     password_hash = Column(String(300), nullable=False)
@@ -334,11 +334,78 @@ class AdminUser(Base):
     permisos = Column(JSON, default=dict)  # {"validador": true, "reportes": true, "powerbi": true, ...}
     activo = Column(Boolean, default=True)
     ultimo_login = Column(DateTime, nullable=True)
-    
+
+    # ✅ MULTI-TENANT: Columnas para gestión por empresa
+    es_tenant_admin = Column(Boolean, default=False)  # True = admin de una empresa cliente
+    tenant_permisos = Column(JSON, default=dict)      # {"tabla_viva":true,"reportes":true,...}
+    invited_by = Column(Integer, nullable=True)       # ID del AdminUser que lo invitó
+
     created_at = Column(DateTime, default=get_utc_now)
     updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
-    
+
     empresa = relationship("Company", backref="admin_users")
+
+
+# ==================== MULTI-TENANT ====================
+
+class TenantConfig(Base):
+    """
+    Configuración personalizada de un tenant (empresa cliente).
+    Una empresa puede tener exactamente una TenantConfig (relación 1:1).
+    """
+    __tablename__ = 'tenant_configs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=False, unique=True)
+
+    # Identidad
+    nit = Column(String(50))
+    logo_url = Column(String(500))
+
+    # Personalización visual
+    paleta_id = Column(String(50), default='ocean')
+    paleta_colores = Column(JSON, default=dict)       # {primary, secondary, accent}
+    estilo_ui = Column(String(50), default='default') # default | futurista | minimalista | ux_focus
+
+    # Estructura
+    tipo_estructura = Column(String(20), default='unica')  # unica | holding
+    sub_empresas = Column(JSON, default=list)              # lista de nombres si es holding
+
+    # Configuración operativa
+    ciclo_reporte = Column(String(20), default='mensual')  # quincenal | mensual
+    contacto_email = Column(String(200))
+    correo_drive = Column(String(200))
+    zona_horaria = Column(String(100), default='America/Bogota')
+
+    # Google Drive
+    google_workspace_drive_id = Column(String(200))
+    drive_verificado = Column(Boolean, default=False)
+
+    # Estado del onboarding
+    onboarding_completado = Column(Boolean, default=False)
+    onboarding_step = Column(Integer, default=1)
+    onboarding_data_json = Column(JSON, default=dict)  # Datos acumulados del wizard
+
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+    empresa = relationship("Company", backref="tenant_config")
+
+
+class TenantInvitation(Base):
+    """
+    Invitaciones de onboarding generadas por superadmin/admin.
+    Un token de un solo uso con expiración de 7 días.
+    """
+    __tablename__ = 'tenant_invitations'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String(128), unique=True, index=True, nullable=False)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
+    creado_por = Column(String(200))  # username del admin que generó la invitación
+    usado = Column(Boolean, default=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=get_utc_now)
 
 
 class Alerta180Log(Base):
@@ -604,7 +671,10 @@ def init_db():
                 Base.metadata.create_all(bind=engine, checkfirst=True)
         
         print(f"📊 Total tablas en BD: {len(tablas_existentes)}: {', '.join(sorted(tablas_existentes))}")
-        
+
+        # ✅ Migrar columnas tenant en admin_users (seguro de re-ejecutar)
+        migrar_columnas_tenant()
+
         # Verificar conexión
         db = SessionLocal()
         try:
@@ -747,6 +817,43 @@ def migrar_columnas_fechas():
         return False
 
 # ==================== PUNTO DE ENTRADA PARA MIGRACIÓN ====================
+
+def migrar_columnas_tenant():
+    """
+    Agrega columnas multi-tenant a admin_users si no existen.
+    Ejecutar después de agregar los modelos TenantConfig / TenantInvitation.
+    Seguro de re-ejecutar (IF NOT EXISTS).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando columnas multi-tenant en admin_users...")
+
+        migraciones = [
+            ("es_tenant_admin", "BOOLEAN DEFAULT FALSE"),
+            ("tenant_permisos",  "TEXT DEFAULT '{}'"),
+            ("invited_by",       "INTEGER"),
+        ]
+        for col, tipo in migraciones:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE admin_users ADD COLUMN {col} {tipo}"))
+                else:
+                    db.execute(text(f"ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en admin_users agregada")
+            except Exception as e:
+                if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                    print(f"   ℹ️  Columna '{col}' ya existe")
+                else:
+                    print(f"   ⚠️  {col}: {e}")
+
+        db.commit()
+        print("✅ Migración multi-tenant completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración tenant: {e}")
+        return False
+
 
 if __name__ == "__main__":
     print("=" * 60)
