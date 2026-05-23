@@ -2280,3 +2280,55 @@ if __name__ == "__main__":
         port=port,
         reload=False
     )
+
+
+# ══════════════════════════════════════════════════════════════
+# ENDPOINT DE PRUEBA: OCR + GEMINI SIN GUARDAR EN BD
+# ══════════════════════════════════════════════════════════════
+@app.post("/test-plano")
+async def test_plano_endpoint(
+    archivo: UploadFile = File(...),
+    cedula: str = Form(default=""),
+):
+    """🧪 PRUEBA: PDF → Mistral OCR → Gemini extrae plano. NO guarda en BD."""
+    import tempfile, base64 as b64lib
+    try:
+        content = await archivo.read()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        # Paso 1: Mistral OCR
+        ocr_res = {"exito": False, "texto": "", "paginas": 0, "error": "MISTRAL_API_KEY no configurada"}
+        if _mistral_ocr_instance:
+            pdf_b64 = b64lib.b64encode(tmp_path.read_bytes()).decode("utf-8")
+            ocr_res = _mistral_ocr_instance.procesar_pdf_base64(pdf_b64)
+
+        texto = ocr_res.get("texto", "")
+
+        # Paso 2: Gemini Plano
+        plano_res = {"exito": False, "plano": {}, "error": "GEMINI_API_KEY no configurada"}
+        if _gemini_plano_instance and texto:
+            plano_res = _gemini_plano_instance.estructurar_plano(texto)
+
+        tmp_path.unlink(missing_ok=True)
+
+        return {
+            "ok": True,
+            "cedula": cedula,
+            "ocr": {
+                "exito": ocr_res.get("exito"),
+                "paginas": ocr_res.get("paginas", 0),
+                "modelo": ocr_res.get("modelo", ""),
+                "error": ocr_res.get("error"),
+                "texto_completo": texto,
+            },
+            "plano": {
+                "exito": plano_res.get("exito"),
+                "modelo_gemini": plano_res.get("modelo", ""),
+                "error": plano_res.get("error"),
+                "campos_extraidos": plano_res.get("plano", {}),
+            },
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
