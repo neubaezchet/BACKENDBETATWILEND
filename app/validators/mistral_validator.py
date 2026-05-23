@@ -185,7 +185,7 @@ class ValidadorIncapacidadIA:
     
     def _validar_con_gemini(self, prompt: str) -> str:
         """Valida usando Gemini 2.0 Flash"""
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-3.5-flash")
         response = model.generate_content(prompt, timeout=30)
         return response.text.strip()
     

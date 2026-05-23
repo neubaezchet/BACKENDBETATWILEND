@@ -4,9 +4,10 @@ Recibe el texto OCR de Mistral y extrae los campos del plano en JSON limpio.
 
 SDK: google-genai >= 2.4.0  (from google import genai)
 Modelos (con fallback automático):
-  1. gemini-1.5-flash          (estable, amplio soporte)
-  2. gemini-2.5-flash-preview-05-20  (más nuevo)
-  3. gemini-1.5-pro            (fallback pro)
+  1. gemini-3.5-flash          (estable mayo 2026 — óptimo)
+  2. gemini-3-flash-preview    (preview)
+  3. gemini-2.5-flash          (estable, respaldo)
+  4. gemini-1.5-flash          (legacy, último recurso)
 """
 
 import os
@@ -21,9 +22,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Lista de modelos a intentar en orden. Si el primero falla con 404, se prueba el siguiente.
 GEMINI_MODELS_FALLBACK = [
-    "gemini-1.5-flash",
-    "gemini-2.5-flash-preview-05-20",
-    "gemini-1.5-pro",
+    "gemini-3.5-flash",          # Estable mayo 2026 — óptimo
+    "gemini-3-flash-preview",    # Preview mayo 2026
+    "gemini-2.5-flash",          # Estable, respaldo
+    "gemini-1.5-flash",          # Legacy, último recurso
 ]
 
 PROMPT_TEMPLATE = """Eres un experto en documentos médicos colombianos (incapacidades, epicrisis, certificados).
