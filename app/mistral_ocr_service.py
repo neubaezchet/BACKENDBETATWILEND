@@ -109,8 +109,12 @@ class MistralDocumentAIOCR:
                         tabla_md = getattr(tabla, "markdown", None)
                         if tabla_id and tabla_md:
                             # Reemplazar tanto formato imagen como link
+                            # Mistral puede usar "tbl-0" o "tbl-0.md" como referencia
                             md = md.replace(f"![{tabla_id}]({tabla_id})", tabla_md)
                             md = md.replace(f"[{tabla_id}]({tabla_id})", tabla_md)
+                            # También manejar cuando el markdown agrega extensión .md al ID
+                            md = md.replace(f"![{tabla_id}.md]({tabla_id}.md)", tabla_md)
+                            md = md.replace(f"[{tabla_id}.md]({tabla_id}.md)", tabla_md)
 
                 textos_paginas.append(md)
 

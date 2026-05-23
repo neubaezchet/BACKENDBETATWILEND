@@ -2423,3 +2423,166 @@ async def reextract_plano_todos(db: Session = Depends(get_db)):
         "detalles": resultados["detalles"],
     }
 
+
+def _es_ocr_malo(texto: str) -> bool:
+    """Detecta si el texto OCR guardado es solo referencias de tabla sin contenido real.
+    Por ejemplo: '[tbl-0.md](tbl-0.md)' o muy corto / vacío.
+    """
+    if not texto or not texto.strip():
+        return True
+    t = texto.strip()
+    # Menos de 80 chars probablemente es un placeholder
+    if len(t) < 80:
+        return True
+    # Solo contiene referencias Markdown de tabla, sin texto real
+    import re
+    sin_referencias = re.sub(r'\[tbl-\d+(?:\.md)?\]\(tbl-\d+(?:\.md)?\)', '', t).strip()
+    if not sin_referencias or len(sin_referencias) < 20:
+        return True
+    return False
+
+
+@app.get("/test-plano/reocr-from-drive")
+async def reocr_desde_drive(db: Session = Depends(get_db)):
+    """Re-descarga los PDFs desde Google Drive y re-corre Mistral OCR + Gemini Plano
+    en todos los casos con OCR malo (placeholder [tbl-0.md](tbl-0.md)).
+    Requiere que drive_link esté guardado en el caso."""
+    import io
+    import base64
+    import re as _re
+
+    if _mistral_ocr_instance is None:
+        return {"ok": False, "error": "MISTRAL_API_KEY no configurada"}
+    if _gemini_plano_instance is None:
+        return {"ok": False, "error": "GEMINI_API_KEY no configurada"}
+
+    try:
+        from app.drive_uploader import get_authenticated_service
+        from googleapiclient.http import MediaIoBaseDownload
+    except Exception as e:
+        return {"ok": False, "error": f"No se pudo importar Drive: {e}"}
+
+    casos = db.query(Case).all()
+    resultados = {"ok": 0, "error": 0, "sin_drive": 0, "ocr_ok": 0, "detalles": []}
+
+    for caso in casos:
+        meta = caso.metadata_form or {}
+        texto_ocr = meta.get("texto_ocr_mistral", "")
+
+        if not _es_ocr_malo(texto_ocr):
+            continue  # OCR ya es bueno — no tocar
+
+        if not caso.drive_link:
+            resultados["sin_drive"] += 1
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "ok": False,
+                "razon": "sin_drive_link",
+            })
+            continue
+
+        # Extraer file_id del link de Drive
+        file_id = None
+        if "/file/d/" in caso.drive_link:
+            file_id = caso.drive_link.split("/file/d/")[1].split("/")[0]
+        elif "id=" in caso.drive_link:
+            file_id = caso.drive_link.split("id=")[1].split("&")[0]
+
+        if not file_id:
+            resultados["error"] += 1
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "ok": False,
+                "razon": f"no_se_pudo_extraer_file_id de {caso.drive_link}",
+            })
+            continue
+
+        # Descargar PDF desde Drive
+        try:
+            service = get_authenticated_service()
+            request = service.files().get_media(fileId=file_id)
+            buf = io.BytesIO()
+            downloader = MediaIoBaseDownload(buf, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            buf.seek(0)
+            pdf_bytes = buf.read()
+        except Exception as e:
+            resultados["error"] += 1
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "ok": False,
+                "razon": f"error_descarga_drive: {e}",
+            })
+            continue
+
+        # Re-correr Mistral OCR con el PDF descargado (código ya corregido)
+        try:
+            pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+            res_ocr = _mistral_ocr_instance.procesar_pdf_base64(pdf_b64)
+        except Exception as e:
+            resultados["error"] += 1
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "ok": False,
+                "razon": f"error_mistral_ocr: {e}",
+            })
+            continue
+
+        if not res_ocr.get("exito") or not res_ocr.get("texto"):
+            resultados["error"] += 1
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "ok": False,
+                "razon": f"ocr_sin_texto: {res_ocr.get('error')}",
+            })
+            continue
+
+        texto_nuevo = res_ocr["texto"]
+        resultados["ocr_ok"] += 1
+
+        # Actualizar OCR en metadata y correr Gemini Plano
+        meta["texto_ocr_mistral"] = texto_nuevo
+        meta["ocr_mistral"] = {
+            "exito": True,
+            "paginas": res_ocr.get("paginas", 0),
+            "modelo": res_ocr.get("modelo", ""),
+            "reprocessed_at": datetime.utcnow().isoformat(),
+        }
+
+        res_gemini = _gemini_plano_instance.estructurar_plano(texto_nuevo)
+        meta["plano_incapacidad"] = res_gemini
+
+        caso.metadata_form = meta
+        flag_modified(caso, "metadata_form")
+
+        try:
+            db.commit()
+            resultados["ok"] += 1
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "ok": True,
+                "ocr_chars": len(texto_nuevo),
+                "gemini_exito": res_gemini.get("exito"),
+                "campos": res_gemini.get("plano", {}),
+            })
+        except Exception as e:
+            db.rollback()
+            resultados["error"] += 1
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "ok": False,
+                "razon": f"error_db_commit: {e}",
+            })
+
+    return {
+        "ok": True,
+        "total_con_ocr_malo": resultados["ok"] + resultados["error"] + resultados["sin_drive"],
+        "re_procesados_ok": resultados["ok"],
+        "errores": resultados["error"],
+        "sin_drive_link": resultados["sin_drive"],
+        "ocr_nuevo_exitoso": resultados["ocr_ok"],
+        "detalles": resultados["detalles"],
+    }
+

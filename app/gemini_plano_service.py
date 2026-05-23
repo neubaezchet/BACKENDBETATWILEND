@@ -22,14 +22,14 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # Configura GEMINI_PLANO_MODEL en las variables de entorno de Railway para
 # cambiar el modelo sin necesidad de hacer deploy.
 # Ejemplo: GEMINI_PLANO_MODEL=gemini-3.5-flash
-GEMINI_PLANO_MODEL = os.getenv("GEMINI_PLANO_MODEL", "gemini-3.5-flash")
+GEMINI_PLANO_MODEL = os.getenv("GEMINI_PLANO_MODEL", "gemini-2.5-flash")
 
 # ── Lista de fallback (se intenta en orden si el principal da 404) ─────────────
 _FALLBACK_EXTRA = [
-    "gemini-3.5-flash",
-    "gemini-3-flash-preview",
     "gemini-2.5-flash",
+    "gemini-2.0-flash",
     "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
 ]
 # El modelo principal siempre va primero; el resto son respaldo sin duplicados
 GEMINI_MODELS_FALLBACK = [GEMINI_PLANO_MODEL] + [
