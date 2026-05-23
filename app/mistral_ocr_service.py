@@ -124,19 +124,39 @@ class MistralDocumentAIOCR:
                                 md = md.replace(f"![{ref_id}]({ref_id})", tabla_contenido)
                                 md = md.replace(f"[{ref_id}]({ref_id})", tabla_contenido)
 
-                # ── Fallback garantizado: si aún quedan referencias sin resolver ──
-                # (ocurre cuando el ID en el markdown no coincide exactamente con tabla.id)
-                # Agregar el contenido de todas las tablas al final del texto
+                # ── Fallback 1: referencias pendientes + tablas disponibles ──
+                # Ocurre cuando el ID en markdown no coincide con tabla.id
                 import re as _re
-                referencias_pendientes = _re.findall(r'\[tbl-\d+(?:\.md)?\]\([^)]+\)', md)
+                _REF_PATTERN = r'\[tbl-\d+(?:\.md)?\]\([^)]+\)'
+                referencias_pendientes = _re.findall(_REF_PATTERN, md)
                 if referencias_pendientes and tablas_contenido:
                     contenidos_extra = "\n\n".join(c for _, c in tablas_contenido)
                     md = md + "\n\n" + contenidos_extra
 
-                # ── Fallback extra: si el markdown está vacío/mínimo pero hay tablas ──
-                # (casos donde page.markdown = "" y todo el contenido está en tables)
+                # ── Fallback 2: markdown vacío/mínimo pero hay tablas ──
+                # Casos donde page.markdown = "" y el contenido está solo en page.tables
                 if len(md.strip()) < 30 and tablas_contenido:
                     md = "\n\n".join(c for _, c in tablas_contenido)
+
+                # ── Fallback 3 (foto con tabla): referencias sin resolver y SIN page.tables ──
+                # Pasa cuando el soporte es una foto/imagen escaneada que tiene una tabla
+                # dibujada: Mistral pone [tbl-N.md] en markdown pero page.tables queda vacío
+                # porque no es una tabla digital. En ese caso limpiamos los placeholders
+                # para no enviar basura a Gemini — el texto restante del OCR es suficiente.
+                referencias_sin_resolver = _re.findall(_REF_PATTERN, md)
+                if referencias_sin_resolver and not tablas_contenido:
+                    # Eliminar los placeholders — el resto del texto OCR contiene la info
+                    md = _re.sub(_REF_PATTERN, "", md).strip()
+                    if md:
+                        # Si queda texto útil, está bien
+                        pass
+                    else:
+                        # Texto completamente vacío tras limpiar — loguear para diagnóstico
+                        print(
+                            f"[OCR] ⚠️ Página {getattr(page, 'index', '?')}: "
+                            "solo había referencias de tabla sin contenido resuelto "
+                            "(posible foto con tabla sin OCR estructurado)"
+                        )
 
                 textos_paginas.append(md)
 
