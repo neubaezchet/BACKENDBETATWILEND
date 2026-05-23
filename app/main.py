@@ -2332,3 +2332,94 @@ async def test_plano_endpoint(
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+# ══════════════════════════════════════════════════════════════
+# RE-EXTRACCIÓN: corre Gemini sobre OCR ya almacenado en BD
+# Sirve para actualizar casos enviados SIN re-subir archivos
+# ══════════════════════════════════════════════════════════════
+@app.get("/test-plano/reextract/{serial}")
+async def reextract_plano_serial(serial: str, db: Session = Depends(get_db)):
+    """Re-extrae el plano Gemini de un caso ya existente usando el OCR guardado en metadata_form."""
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        return JSONResponse(status_code=404, content={"ok": False, "error": f"Serial {serial} no encontrado"})
+
+    meta = caso.metadata_form or {}
+    texto_ocr = meta.get("texto_ocr_mistral", "")
+
+    if not texto_ocr:
+        return {"ok": False, "serial": serial, "error": "Este caso no tiene texto OCR almacenado (subido antes de la integración Mistral)"}
+
+    if _gemini_plano_instance is None:
+        return {"ok": False, "error": "GEMINI_API_KEY no configurada"}
+
+    resultado = _gemini_plano_instance.estructurar_plano(texto_ocr)
+    if resultado["exito"]:
+        meta["plano_incapacidad"] = resultado
+        caso.metadata_form = meta
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(caso, "metadata_form")
+        db.commit()
+
+    return {
+        "ok": resultado["exito"],
+        "serial": serial,
+        "cedula": caso.cedula,
+        "modelo_gemini": resultado.get("modelo", ""),
+        "error": resultado.get("error", ""),
+        "campos_extraidos": resultado.get("plano", {}),
+        "texto_ocr_preview": texto_ocr[:500],
+    }
+
+
+@app.get("/test-plano/reextract-all")
+async def reextract_plano_todos(db: Session = Depends(get_db)):
+    """Re-extrae el plano Gemini en TODOS los casos que tienen OCR almacenado. Actualiza metadata_form."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    if _gemini_plano_instance is None:
+        return {"ok": False, "error": "GEMINI_API_KEY no configurada"}
+
+    casos = db.query(Case).all()
+    resultados = {"ok": 0, "error": 0, "sin_ocr": 0, "detalles": []}
+
+    for caso in casos:
+        meta = caso.metadata_form or {}
+        texto_ocr = meta.get("texto_ocr_mistral", "")
+        if not texto_ocr:
+            resultados["sin_ocr"] += 1
+            continue
+
+        try:
+            res = _gemini_plano_instance.estructurar_plano(texto_ocr)
+            meta["plano_incapacidad"] = res
+            caso.metadata_form = meta
+            flag_modified(caso, "metadata_form")
+            db.commit()
+
+            resultados["detalles"].append({
+                "serial": caso.serial,
+                "cedula": caso.cedula,
+                "exito": res["exito"],
+                "error": res.get("error", ""),
+                "campos": res.get("plano", {}),
+            })
+            if res["exito"]:
+                resultados["ok"] += 1
+            else:
+                resultados["error"] += 1
+        except Exception as e:
+            db.rollback()
+            resultados["error"] += 1
+            resultados["detalles"].append({"serial": caso.serial, "exito": False, "error": str(e)})
+
+    return {
+        "ok": True,
+        "total_procesados": resultados["ok"] + resultados["error"],
+        "exitosos": resultados["ok"],
+        "errores": resultados["error"],
+        "sin_ocr": resultados["sin_ocr"],
+        "detalles": resultados["detalles"],
+    }
+
