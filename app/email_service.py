@@ -21,10 +21,6 @@ from email import encoders
 from datetime import datetime, timedelta
 import base64
 import requests
-try:
-    from app.waha_rate_limiter import waha_limiter
-except:
-    waha_limiter = None  # ✅ Opcional - no se usa con Business API
 
 # Google Auth
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
