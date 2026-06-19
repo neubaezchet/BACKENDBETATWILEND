@@ -599,6 +599,53 @@ class EmpresaBotConfig(Base):
     )
 
 
+# ==================== RADICACIÓN — SKILLS Y SESIONES ====================
+
+class RadicacionSkill(Base):
+    """
+    Registro de skills de browser-use por EPS/ARL.
+    Cuando browser-use genera un Playwright script cacheado para una EPS,
+    lo registra aquí. El admin panel muestra 'Activa' vs 'Pendiente'.
+    """
+    __tablename__ = 'radicacion_skills'
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    eps_key        = Column(String(100), nullable=False, unique=True, index=True)
+    estado         = Column(String(50), default='pendiente')   # pendiente | activa | fallo
+    cache_key      = Column(String(64))                        # MD5 del template
+    script_path    = Column(String(500))                       # Ruta en Railway
+    primer_run_tokens = Column(Integer, default=0)
+    usos_totales   = Column(Integer, default=0)
+    ultimo_uso_at  = Column(DateTime, nullable=True)
+    primer_run_at  = Column(DateTime, nullable=True)
+    creado_en      = Column(DateTime, default=get_utc_now)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+
+class RadicacionSesion(Base):
+    """
+    Sesiones de radicación iniciadas por browser-use.
+    Permite que el admin panel monitoree en vivo el estado de cada radicación.
+    """
+    __tablename__ = 'radicacion_sesiones'
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    sesion_id    = Column(String(100), nullable=False, unique=True, index=True)
+    empresa      = Column(String(200), nullable=False, index=True)
+    eps          = Column(String(100), nullable=False)
+    medio        = Column(String(50), default='portal')   # portal | email
+    documento    = Column(String(50))                      # CC/NIT del trabajador
+    estado       = Column(String(50), default='en_curso')  # en_curso | exitosa | fallida | enviado | error | esperando
+    radicado     = Column(String(200))                     # N° radicado si exitosa
+    error_msg    = Column(Text)
+    cached       = Column(Boolean, default=False)
+    progreso     = Column(Integer, default=0)              # 0-100
+    logs         = Column(JSON, default=list)              # Lista de pasos del agente
+    iniciado_en  = Column(DateTime, default=get_utc_now, index=True)
+    finalizado_en = Column(DateTime, nullable=True)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
 
 def get_database_url():

@@ -39,6 +39,7 @@ from app.routes.alertas import router as alertas_router
 from app.routes.admin import router as admin_router
 from app.routes.ocr import router as ocr_router
 from app.routes.tenants import router as tenants_router
+from app.routes.radicacion import router as radicacion_router
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ✅ Cola resiliente persistente (Drive)
@@ -208,6 +209,9 @@ app.include_router(alertas_router)
 # ⭐ Panel Admin - Auth, Correos, Usuarios, Consola
 app.include_router(admin_router)
 app.include_router(tenants_router)
+
+# ⭐ Radicación — Skills, Sesiones, Manifests, Monitoreo
+app.include_router(radicacion_router)
 
 # ⭐ OCR con Mistral - Extracción de texto de documentos
 app.include_router(ocr_router)
