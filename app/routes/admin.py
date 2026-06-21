@@ -33,9 +33,11 @@ router = APIRouter(prefix="/admin", tags=["Admin Portal"])
 # AUTH CONFIG
 # ═══════════════════════════════════════════════════════════
 
-SECRET_KEY = os.environ.get("ADMIN_JWT_SECRET", "neurobaeza-admin-secret-2026-change-in-prod")
-ALGORITHM = "HS256"
+SECRET_KEY  = os.environ.get("ADMIN_JWT_SECRET", "neurobaeza-admin-secret-2026-change-in-prod")
+ALGORITHM   = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
+# Token permanente para servicios internos (browser-use, bots). Sin expiración.
+SERVICE_TOKEN = os.environ.get("NEUROBAEZA_SERVICE_TOKEN", "")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
@@ -55,6 +57,15 @@ def get_current_user(
     """Valida JWT y retorna el usuario admin"""
     if not credentials:
         raise HTTPException(status_code=401, detail="Token requerido")
+
+    # ── Token de servicio permanente (browser-use / bots internos) ──────────
+    if SERVICE_TOKEN and credentials.credentials == SERVICE_TOKEN:
+        user = db.query(AdminUser).filter(
+            AdminUser.rol == "superadmin", AdminUser.activo == True
+        ).first()
+        if user:
+            return user
+
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")

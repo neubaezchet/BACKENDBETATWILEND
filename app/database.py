@@ -618,6 +618,9 @@ class RadicacionSkill(Base):
     usos_totales   = Column(Integer, default=0)
     ultimo_uso_at  = Column(DateTime, nullable=True)
     primer_run_at  = Column(DateTime, nullable=True)
+    # Schema dinámico del formulario de login que descubrió el bot.
+    # Formato: [{"key":"nit","label":"NIT empresa","tipo":"text"},{"key":"tipo_doc","tipo":"select","opciones":["NIT","CC"]}]
+    campos_credenciales = Column(JSON, nullable=True)
     creado_en      = Column(DateTime, default=get_utc_now)
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
 

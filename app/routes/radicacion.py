@@ -27,9 +27,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/radicacion", tags=["Radicación"])
 
-SECRET_KEY = os.environ.get("ADMIN_JWT_SECRET", "neurobaeza-admin-secret-2026-change-in-prod")
-ALGORITHM  = "HS256"
-security   = HTTPBearer(auto_error=False)
+SECRET_KEY    = os.environ.get("ADMIN_JWT_SECRET", "neurobaeza-admin-secret-2026-change-in-prod")
+ALGORITHM     = "HS256"
+SERVICE_TOKEN = os.environ.get("NEUROBAEZA_SERVICE_TOKEN", "")
+security      = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
@@ -38,6 +39,15 @@ def get_current_user(
 ) -> AdminUser:
     if not credentials:
         raise HTTPException(status_code=401, detail="Token requerido")
+
+    # Token de servicio permanente (browser-use / bots internos)
+    if SERVICE_TOKEN and credentials.credentials == SERVICE_TOKEN:
+        user = db.query(AdminUser).filter(
+            AdminUser.rol == "superadmin", AdminUser.activo == True
+        ).first()
+        if user:
+            return user
+
     try:
         payload  = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
@@ -58,6 +68,7 @@ class SkillUpdate(BaseModel):
     cache_key: Optional[str] = None
     script_path: Optional[str] = None
     tokens: Optional[int] = 0
+    campos_credenciales: Optional[List[dict]] = None  # Schema dinámico del formulario de login
 
 class SesionCreate(BaseModel):
     sesion_id: str
@@ -212,6 +223,7 @@ async def listar_skills(
             "costo":  costo if s else "—",
             "usos":   s.usos_totales if s else 0,
             "ultimo_uso": s.ultimo_uso_at.isoformat() if s and s.ultimo_uso_at else None,
+            "campos_credenciales": s.campos_credenciales if s else None,
         })
 
     return {"ok": True, "skills": resultado}
@@ -235,19 +247,21 @@ async def registrar_skill(
         if data.cache_key:    skill.cache_key      = data.cache_key
         if data.script_path:  skill.script_path    = data.script_path
         if data.tokens:       skill.primer_run_tokens = data.tokens
+        if data.campos_credenciales: skill.campos_credenciales = data.campos_credenciales
         skill.ultimo_uso_at  = datetime.utcnow()
         skill.usos_totales   = (skill.usos_totales or 0) + 1
         skill.actualizado_en = datetime.utcnow()
     else:
         skill = RadicacionSkill(
-            eps_key           = eps_key,
-            estado            = data.estado,
-            cache_key         = data.cache_key,
-            script_path       = data.script_path,
-            primer_run_tokens = data.tokens or 0,
-            primer_run_at     = datetime.utcnow(),
-            ultimo_uso_at     = datetime.utcnow(),
-            usos_totales      = 1,
+            eps_key             = eps_key,
+            estado              = data.estado,
+            cache_key           = data.cache_key,
+            script_path         = data.script_path,
+            primer_run_tokens   = data.tokens or 0,
+            campos_credenciales = data.campos_credenciales,
+            primer_run_at       = datetime.utcnow(),
+            ultimo_uso_at       = datetime.utcnow(),
+            usos_totales        = 1,
         )
         db.add(skill)
 
