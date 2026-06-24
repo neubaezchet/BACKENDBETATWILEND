@@ -154,6 +154,7 @@ class BotConfigCreate(BaseModel):
 class BotConfigUpdate(BaseModel):
     estado: Optional[str] = None
     credenciales: Optional[dict] = None
+    bot_tipo_medio: Optional[str] = None
     observaciones: Optional[str] = None
 
 
@@ -802,6 +803,7 @@ async def listar_bots_empresa(
                 "bot_nombre": b.bot_nombre,
                 "bot_tipo_medio": b.bot_tipo_medio,
                 "estado": b.estado,
+                "credenciales": b.credenciales or {},
                 "credenciales_guardadas": bool(b.credenciales),
                 "observaciones": b.observaciones,
                 "actualizado_en": b.actualizado_en.isoformat() if b.actualizado_en else None,
@@ -929,6 +931,8 @@ async def actualizar_bot_empresa(
             config.estado = data.estado
         if data.credenciales is not None:
             config.credenciales = data.credenciales
+        if data.bot_tipo_medio is not None:
+            config.bot_tipo_medio = data.bot_tipo_medio
         if data.observaciones is not None:
             config.observaciones = data.observaciones
         

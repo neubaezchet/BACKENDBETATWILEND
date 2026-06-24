@@ -725,6 +725,9 @@ def init_db():
         # ✅ Migrar columnas tenant en admin_users (seguro de re-ejecutar)
         migrar_columnas_tenant()
 
+        # ✅ Migrar columnas de radicación (seguro de re-ejecutar)
+        migrar_columnas_radicacion()
+
         # Verificar conexión
         db = SessionLocal()
         try:
@@ -902,6 +905,40 @@ def migrar_columnas_tenant():
         return True
     except Exception as e:
         print(f"❌ Error en migración tenant: {e}")
+        return False
+
+
+def migrar_columnas_radicacion():
+    """
+    Agrega columnas nuevas a radicacion_skills y radicacion_sesiones si no existen.
+    Seguro de re-ejecutar (IF NOT EXISTS en PostgreSQL).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando columnas de radicación...")
+
+        migraciones = [
+            ("radicacion_skills",   "campos_credenciales", "JSONB"),
+        ]
+        for tabla, col, tipo in migraciones:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT"))
+                else:
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en {tabla} agregada")
+            except Exception as e:
+                if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                    print(f"   ℹ️  Columna '{col}' ya existe en {tabla}")
+                else:
+                    print(f"   ⚠️  {tabla}.{col}: {e}")
+
+        db.commit()
+        print("✅ Migración radicación completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración radicación: {e}")
         return False
 
 
