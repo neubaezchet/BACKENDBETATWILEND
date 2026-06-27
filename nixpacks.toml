@@ -1,5 +1,7 @@
 [phases.setup]
-nixPkgs = ['python311', 'pip']
+# poppler_utils -> requerido por pdf2image (pdftoppm/pdfinfo)
+# tesseract -> auto-orientación del soporte (Tesseract OSD)
+nixPkgs = ['python311', 'pip', 'poppler_utils', 'tesseract']
 
 [phases.install]
 cmds = ['pip install --upgrade pip', 'pip install -r requirements.txt']

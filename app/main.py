@@ -1479,6 +1479,17 @@ async def subir_incapacidad(
 
         pdf_final_path, original_filenames = await merge_pdfs_from_uploads(archivos, cedula, tipo)
 
+        # ✅ AUTO-MEJORA HD (solo si está borroso/baja-res). Nunca debe bloquear la subida.
+        try:
+            from app.pdf_enhancer import get_enhancer
+            pdf_original = pdf_final_path.read_bytes()
+            pdf_mejorado = get_enhancer("fast").enhance_bytes(pdf_original, only_if_needed=True)
+            if pdf_mejorado is not pdf_original and pdf_mejorado != pdf_original:
+                pdf_final_path.write_bytes(pdf_mejorado)
+                print(f"✅ Auto-mejora HD aplicada a {consecutivo}")
+        except Exception as enh_err:
+            print(f"⚠️ Auto-mejora HD omitida ({enh_err}) — se continúa con el PDF original")
+
         resultado_ocr = _aplicar_mistral_ocr_a_metadata(metadata_form, pdf_final_path)
 
         # Estructurar plano con Gemini 3 Flash si Mistral devolvió texto

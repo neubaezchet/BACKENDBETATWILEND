@@ -4564,6 +4564,56 @@ async def guardar_pdf_editado(
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
+# ════════════════════════════════════════════════════════════════════
+# MEJORA HD DE PDFs (pdf_enhancer)
+# El frontend ya tiene el PDF (lo cargó vía /pdf/fast) y lo MANDA aquí.
+# Este endpoint solo mejora y devuelve el PDF nítido (NO lo guarda).
+# El guardado final lo hace el frontend con /guardar-pdf-editado.
+# ════════════════════════════════════════════════════════════════════
+from fastapi.responses import Response
+
+@router.post("/casos/{serial}/mejorar-hd")
+async def mejorar_calidad_hd(
+    serial: str,
+    archivo: UploadFile = File(...),
+    mode: str = Query("fast", regex="^(fast|hd)$"),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Mejora la calidad de un PDF y lo devuelve (NO lo guarda todavía).
+    - mode="fast": OpenCV, rápido (~1-3 s/página). Recomendado.
+    - mode="hd":   Real-ESRGAN si está disponible (lento sin GPU; docs cortos).
+    El frontend muestra el antes/después y luego guarda con /guardar-pdf-editado.
+    """
+    from app.pdf_enhancer import get_enhancer
+
+    pdf_bytes = await archivo.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="PDF vacío")
+
+    # Límite de seguridad para modo HD sin GPU (evita timeouts de Railway)
+    if mode == "hd":
+        try:
+            from pdf2image import pdfinfo_from_bytes
+            n = pdfinfo_from_bytes(pdf_bytes).get("Pages", 1)
+            if n > 5:
+                mode = "fast"   # demasiadas páginas para HD en CPU -> degradar a fast
+        except Exception:
+            pass
+
+    try:
+        enhancer = get_enhancer(mode)
+        mejorado = enhancer.enhance_bytes(pdf_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error mejorando: {e}")
+
+    return Response(
+        content=mejorado,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{serial}_HD.pdf"'},
+    )
+
+
 
     """
     Endpoint para validar casos: COMPLETA, INCOMPLETA, ILEGIBLE, etc.

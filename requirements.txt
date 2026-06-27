@@ -44,6 +44,13 @@ opencv-python-headless==4.9.0.80
 scikit-image==0.22.0
 reportlab==4.0.9
 
+# Mejora HD de PDFs (pdf_enhancer)
+pdf2image==1.17.0
+img2pdf==0.5.1
+pytesseract==0.3.10
+# Modo "hd" (Real-ESRGAN) es OPCIONAL; sin estos paquetes cae a upscale cúbico OpenCV.
+# realesrgan / basicsr / torch / torchvision  -> instalar solo si hay GPU
+
 # IA
 anthropic==0.40.0
 google-generativeai==0.3.1
