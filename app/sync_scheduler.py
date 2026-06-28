@@ -8,7 +8,7 @@ Sincronización automática Excel → PostgreSQL + Token de Drive ULTRA-RESISTEN
 """
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from app.sync_excel import sincronizar_excel_completo
+from app.sync_excel import sincronizar_todas_las_empresas
 import os
 import datetime
 import time
@@ -267,7 +267,7 @@ def sync_excel_con_verificacion():
                     print(f"[{timestamp}] ⚠️ Token no saludable, recuperando antes de sync...")
                     _verificar_drive_token_internal(timestamp)
             
-            sincronizar_excel_completo()
+            sincronizar_todas_las_empresas()
             
         except Exception as e:
             error_str = str(e).lower()
