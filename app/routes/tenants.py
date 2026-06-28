@@ -255,12 +255,19 @@ async def completar_registro(
     db.refresh(tenant_admin)
     db.refresh(config)
 
-    # 6. Provisionar Google Sheet en background (no bloquea la respuesta)
+    # 6. Tareas background: Sheet + estructura de carpetas en Drive del cliente
     background_tasks.add_task(
         _provisionar_sheet_background,
         company_id=company_id,
         company_nombre=company.nombre,
         contacto_email=body.contacto_email,
+        tipo_estructura=body.tipo_estructura,
+        sub_empresas=body.sub_empresas,
+    )
+    background_tasks.add_task(
+        _crear_estructura_drive_background,
+        company_id=company_id,
+        company_nombre=company.nombre,
         tipo_estructura=body.tipo_estructura,
         sub_empresas=body.sub_empresas,
     )
@@ -318,6 +325,72 @@ async def _provisionar_sheet_background(
         logger.error(f"❌ Error en provisionamiento background para company_id={company_id}: {e}")
 
 
+async def _crear_estructura_drive_background(
+    company_id: int,
+    company_nombre: str,
+    tipo_estructura: str = "unica",
+    sub_empresas: list = None,
+):
+    """
+    Crea la estructura inicial de carpetas en el Drive del cliente.
+    Se ejecuta en background tras completar_registro.
+
+    Estructura creada:
+      [client_drive_id]
+        └── EmpresaX/           ← o una carpeta por sub-empresa en holdings
+              └── 2026/
+                    └── <quincena actual>/
+    """
+    from app.database import SessionLocal, TenantConfig
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+        if not config or not config.google_workspace_drive_id:
+            logger.warning(
+                f"⚠️ Sin carpeta Drive configurada para company_id={company_id} — estructura omitida"
+            )
+            return
+
+        client_drive_id = config.google_workspace_drive_id
+
+        from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists, get_quinzena_folder_name
+
+        service = get_authenticated_service()
+        año_actual = str(datetime.now().year)
+        quinzena_nombre = get_quinzena_folder_name()
+
+        # Para holdings crear una subcarpeta por sub-empresa; para individuales usar el nombre de la empresa
+        empresas = sub_empresas if (tipo_estructura == "holding" and sub_empresas) else [company_nombre]
+
+        for emp in empresas:
+            emp_nombre = emp.strip()
+            emp_folder_id = create_folder_if_not_exists(
+                service,
+                emp_nombre.encode(),
+                client_drive_id,
+            )
+            year_folder_id = create_folder_if_not_exists(
+                service,
+                año_actual.encode(),
+                emp_folder_id,
+            )
+            create_folder_if_not_exists(
+                service,
+                quinzena_nombre.encode(),
+                year_folder_id,
+            )
+            logger.info(f"✅ Carpeta Drive creada: {emp_nombre}/{año_actual}/{quinzena_nombre}")
+
+        logger.info(f"✅ Estructura Drive lista para '{company_nombre}' (company_id={company_id})")
+
+    except Exception as e:
+        logger.error(f"❌ Error creando estructura Drive para company_id={company_id}: {e}")
+    finally:
+        db.close()
+
+
 # ═══════════════════════════════════════════════════════════
 # SCHEMAS
 # ═══════════════════════════════════════════════════════════
@@ -368,15 +441,21 @@ def _verificar_acceso_drive(drive_folder_id: str) -> dict:
     Retorna {acceso: bool, carpeta_nombre, estructura: [{name, nuevo}], error}.
     """
     try:
-        from app.drive_uploader import get_drive_service
-        service = get_drive_service()
-        meta = service.files().get(fileId=drive_folder_id, fields="name,id").execute()
+        from app.drive_uploader import get_authenticated_service
+        service = get_authenticated_service()
+        meta = service.files().get(
+            fileId=drive_folder_id,
+            fields="name,id",
+            supportsAllDrives=True,
+        ).execute()
         carpeta_nombre = meta.get("name", drive_folder_id)
 
         result = service.files().list(
             q=f"'{drive_folder_id}' in parents and trashed=false",
             fields="files(id,name,mimeType)",
             pageSize=20,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         ).execute()
 
         archivos = result.get("files", [])
@@ -388,9 +467,6 @@ def _verificar_acceso_drive(drive_folder_id: str) -> dict:
             "estructura": estructura,
             "error": None,
         }
-    except ImportError:
-        return {"acceso": False, "carpeta_nombre": None, "estructura": [],
-                "error": "Módulo drive_uploader no disponible"}
     except Exception as e:
         err = str(e)
         if "notFound" in err or "404" in err:

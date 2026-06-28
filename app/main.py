@@ -1499,6 +1499,21 @@ async def subir_incapacidad(
         if resultado_ocr.get("exito") and resultado_ocr.get("texto"):
             _estructurar_plano_con_gemini(metadata_form, resultado_ocr["texto"])
 
+        # Obtener carpeta Drive del cliente si tiene onboarding completo
+        client_drive_id = None
+        if empleado_bd and empleado_bd.company_id:
+            try:
+                from app.database import TenantConfig
+                tenant_cfg = db.query(TenantConfig).filter(
+                    TenantConfig.company_id == empleado_bd.company_id,
+                    TenantConfig.onboarding_completado == True,
+                ).first()
+                if tenant_cfg and tenant_cfg.google_workspace_drive_id:
+                    client_drive_id = tenant_cfg.google_workspace_drive_id
+                    print(f"📁 Drive del cliente: {client_drive_id}")
+            except Exception as _te:
+                print(f"⚠️ No se pudo obtener Drive del cliente: {_te}")
+
         link_pdf = None
         drive_en_cola = False
         try:
@@ -1512,7 +1527,8 @@ async def subir_incapacidad(
                 fecha_fin=fecha_fin,
                 tiene_soat=tiene_soat,
                 tiene_licencia=tiene_licencia,
-                subtipo=subType
+                subtipo=subType,
+                client_drive_id=client_drive_id,
             )
             pdf_final_path.unlink(missing_ok=True)
         except Exception as drive_err:
@@ -1537,7 +1553,8 @@ async def subir_incapacidad(
                 "fecha_fin": fecha_fin.isoformat() if fecha_fin else None,
                 "tiene_soat": tiene_soat,
                 "tiene_licencia": tiene_licencia,
-                "subtipo": subType
+                "subtipo": subType,
+                "client_drive_id": client_drive_id,
             }, error=str(drive_err))
             drive_en_cola = True
             link_pdf = None  # Se actualizará cuando la cola lo procese

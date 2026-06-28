@@ -521,16 +521,17 @@ def normalize_tipo_incapacidad(tipo: str, subtipo: str = None) -> str:
 
 @retry_on_error(max_retries=3, delay=2)
 def upload_to_drive(
-    file_path: Path, 
-    empresa: str, 
-    cedula: str, 
-    tipo: str, 
+    file_path: Path,
+    empresa: str,
+    cedula: str,
+    tipo: str,
     consecutivo: str = None,
     tiene_soat: bool = None,
     tiene_licencia: bool = None,
     subtipo: str = None,
     fecha_inicio = None,
-    fecha_fin = None
+    fecha_fin = None,
+    client_drive_id: str = None,
 ) -> str:
     """
     Sube archivo a Google Drive con estructura de carpetas
@@ -547,10 +548,19 @@ def upload_to_drive(
         
         # Crear estructura de carpetas
         print(f"📁 Creando estructura de carpetas en Drive...")
-        # ✅ Usar Shared Drive si está configurada, sino 'root'
-        base_folder_id = GOOGLE_SHARED_DRIVE_ID if GOOGLE_SHARED_DRIVE_ID != "root" else 'root'
-        main_folder_id = create_folder_if_not_exists(service, b"Incapacidades", base_folder_id)
-        empresa_folder_id = create_folder_if_not_exists(service, empresa.encode() if isinstance(empresa, str) else empresa, main_folder_id)
+        if client_drive_id:
+            # Carpeta del cliente como raíz: empresa / año / quinzena / tipo
+            print(f"📁 Usando carpeta Drive del cliente ({client_drive_id})")
+            empresa_folder_id = create_folder_if_not_exists(
+                service, empresa.encode() if isinstance(empresa, str) else empresa, client_drive_id
+            )
+        else:
+            # Carpeta global del sistema: Incapacidades / empresa / año / quinzena / tipo
+            base_folder_id = GOOGLE_SHARED_DRIVE_ID if GOOGLE_SHARED_DRIVE_ID != "root" else 'root'
+            main_folder_id = create_folder_if_not_exists(service, b"Incapacidades", base_folder_id)
+            empresa_folder_id = create_folder_if_not_exists(
+                service, empresa.encode() if isinstance(empresa, str) else empresa, main_folder_id
+            )
         year_folder_id = create_folder_if_not_exists(service, año_actual.encode(), empresa_folder_id)
         
         quinzena_nombre = get_quinzena_folder_name()
@@ -688,9 +698,10 @@ def upload_certificado_o_prelicencia(
     file_path: Path,
     empresa: str,
     cedula: str,
-    tipo: str,  # 'certificado_hospitalizacion' o 'prelicencia'
+    tipo: str,
     serial: str,
-    fecha_inicio: date_type
+    fecha_inicio: date_type,
+    client_drive_id: str = None,
 ) -> str:
     """
     Sube certificado o prelicencia a Drive
@@ -726,36 +737,34 @@ def upload_certificado_o_prelicencia(
             raise ValueError(f"Tipo no soportado: {tipo}")
         
         # === CREAR ESTRUCTURA ===
-        
-        # 1. Carpeta raíz
-        carpeta_raiz_id = create_folder_if_not_exists(
-            service,
-            carpeta_raiz_nombre.encode(),
-            'root'
-        )
-        
-        # 2. Año
         año_str = str(fecha_inicio.year)
-        año_folder_id = create_folder_if_not_exists(
-            service,
-            año_str.encode(),
-            carpeta_raiz_id
-        )
-        
-        # 3. Empresa
-        empresa_folder_id = create_folder_if_not_exists(
-            service,
-            empresa.encode() if isinstance(empresa, str) else empresa,
-            año_folder_id
-        )
-        
-        # 4. Quincena
         quinzena_nombre = get_quinzena_from_date(fecha_inicio)
-        quinzena_folder_id = create_folder_if_not_exists(
-            service,
-            quinzena_nombre.encode(),
-            empresa_folder_id
-        )
+
+        if client_drive_id:
+            # Carpeta del cliente: empresa / año / quinzena / tipo
+            print(f"📁 Usando carpeta Drive del cliente ({client_drive_id})")
+            empresa_folder_id = create_folder_if_not_exists(
+                service, empresa.encode() if isinstance(empresa, str) else empresa, client_drive_id
+            )
+            año_folder_id = create_folder_if_not_exists(service, año_str.encode(), empresa_folder_id)
+            quinzena_folder_id = create_folder_if_not_exists(
+                service, quinzena_nombre.encode(), año_folder_id
+            )
+            quinzena_folder_id = create_folder_if_not_exists(
+                service, carpeta_raiz_nombre.encode(), quinzena_folder_id
+            )
+        else:
+            # Carpeta global: tipo_raiz / año / empresa / quinzena
+            carpeta_raiz_id = create_folder_if_not_exists(
+                service, carpeta_raiz_nombre.encode(), 'root'
+            )
+            año_folder_id = create_folder_if_not_exists(service, año_str.encode(), carpeta_raiz_id)
+            empresa_folder_id = create_folder_if_not_exists(
+                service, empresa.encode() if isinstance(empresa, str) else empresa, año_folder_id
+            )
+            quinzena_folder_id = create_folder_if_not_exists(
+                service, quinzena_nombre.encode(), empresa_folder_id
+            )
         
         # === SUBIR ARCHIVO ===
         
@@ -829,7 +838,8 @@ def upload_inteligente(
     serial: str,
     fecha_inicio: date_type = None,
     fecha_fin: date_type = None,
-    **kwargs  # Para mantener compatibilidad
+    client_drive_id: str = None,
+    **kwargs
 ) -> str:
     """
     Upload inteligente que decide automáticamente:
@@ -860,13 +870,14 @@ def upload_inteligente(
             print(f"⚠️ No se proporcionó fecha, usando hoy: {fecha_inicio}")
         
         return upload_certificado_o_prelicencia(
-            file_path, empresa, cedula, tipo, serial, fecha_inicio
+            file_path, empresa, cedula, tipo, serial, fecha_inicio,
+            client_drive_id=client_drive_id,
         )
-    
+
     # INCAPACIDADES TRADICIONALES → Mantener sistema actual
     else:
         print(f"📋 Usando sistema tradicional para: {tipo}")
-        
+
         return upload_to_drive(
             file_path,
             empresa,
@@ -876,8 +887,9 @@ def upload_inteligente(
             tiene_soat=kwargs.get('tiene_soat'),
             tiene_licencia=kwargs.get('tiene_licencia'),
             subtipo=kwargs.get('subtipo'),
-            fecha_inicio=fecha_inicio,   # ✅ FIX: Usar parámetro directo, no kwargs
-            fecha_fin=fecha_fin          # ✅ FIX: Usar parámetro directo, no kwargs
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            client_drive_id=client_drive_id,
         )
 
 

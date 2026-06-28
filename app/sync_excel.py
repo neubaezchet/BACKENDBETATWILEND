@@ -522,29 +522,34 @@ def sincronizar_empleado_desde_excel(cedula: str):
         db.close()
 
 
-def sincronizar_excel_completo(sheet_id: str = None, company_id: int = None):
+def sincronizar_excel_completo(
+    sheet_id: str = None,
+    company_id: int = None,
+    empleados_sheet=0,
+    kactus_sheet=1,
+):
     """
     ✅ SYNC POR CÉDULA (empleados) + ELIMINAR AL PROCESAR (casos)
 
     Args:
-        sheet_id:   ID del Google Sheet a sincronizar.
-                    Si None → usa GOOGLE_DRIVE_FILE_ID del entorno (Sheet maestro).
-        company_id: ID de la empresa en BD (para logs). Opcional.
+        sheet_id:        ID del Google Sheet. None → Sheet maestro.
+        company_id:      ID de la empresa en BD (para logs).
+        empleados_sheet: Nombre o índice de la pestaña de empleados (default 0).
+        kactus_sheet:    Nombre o índice de la pestaña de casos    (default 1).
 
-    EMPLEADOS (Hoja 1):
-    - Busca cada empleado por CÉDULA (no por posición)
-    - Si editas nombre/correo/etc en Excel → se actualiza en BD
-    - Si eliminas una fila del Excel → el empleado se desactiva en BD
-    - Si agregas una fila nueva → se crea el empleado
-    - Si un empleado desactivado reaparece → se reactiva
+    Para holdings se llama una vez por sub-empresa pasando los nombres de pestaña:
+        empleados_sheet="Empleados_SubA", kactus_sheet="Kactus_SubA"
 
-    CASOS (Hoja 2 - Cases_Kactus):
-    - Procesa fila por fila
-    - Si se procesó OK → elimina esa fila del Excel inmediatamente
-    - Si falló → deja la fila con indicador "ERROR: [motivo]" en col Procesado
+    EMPLEADOS (pestaña empleados_sheet):
+    - Sync por CÉDULA: crear / actualizar / retirar
+    - Solo afecta empleados de las empresas presentes en este sheet
+
+    CASOS (pestaña kactus_sheet):
+    - Procesa fila por fila; elimina la fila si OK
     """
     global _ACTIVE_SHEET_ID
     _ACTIVE_SHEET_ID = sheet_id if sheet_id else GOOGLE_DRIVE_FILE_ID
+    db = SessionLocal()
     try:
         print(f"\n{'='*60}")
         print(f"🔄 SYNC EXACTO Excel → PostgreSQL - {datetime.now().strftime('%H:%M:%S')}")
@@ -611,18 +616,37 @@ def sincronizar_excel_completo(sheet_id: str = None, company_id: int = None):
         # - No depende de la posición, es robusto ante inserciones/eliminaciones
         print(f"📊 PASO 2: Sincronizando empleados (POR CÉDULA)...")
         
-        df = pd.read_excel(excel_path, sheet_name=0)
-        print(f"   📋 Excel tiene {len(df)} filas")
-        
-        # Obtener TODOS los empleados activos de BD indexados por cédula
-        empleados_bd = db.query(Employee).filter(Employee.activo == True).all()
+        skip_retire = False
+        try:
+            df = pd.read_excel(excel_path, sheet_name=empleados_sheet)
+            print(f"   📋 Excel tiene {len(df)} filas en pestaña '{empleados_sheet}'")
+        except ValueError:
+            print(f"   ⚠️ Pestaña '{empleados_sheet}' no encontrada — sync de empleados omitido")
+            df = pd.DataFrame()
+            skip_retire = True
+
+        # Obtener empleados activos: si es sheet propio, solo los de las empresas en esta pestaña
+        if sheet_id and df is not None and "empresa" in df.columns:
+            empresas_en_tab = set(df["empresa"].dropna().str.strip().unique())
+            if empresas_en_tab:
+                company_ids_tab = [
+                    c.id for c in db.query(Company).filter(Company.nombre.in_(empresas_en_tab)).all()
+                ]
+                empleados_bd = db.query(Employee).filter(
+                    Employee.activo == True,
+                    Employee.company_id.in_(company_ids_tab),
+                ).all()
+            else:
+                empleados_bd = db.query(Employee).filter(Employee.activo == True).all()
+        else:
+            empleados_bd = db.query(Employee).filter(Employee.activo == True).all()
         empleados_por_cedula = {e.cedula: e for e in empleados_bd}
         print(f"   📋 BD tiene {len(empleados_por_cedula)} empleados activos")
         
         nuevos = actualizados = reactivados = 0
-        cedulas_en_excel = set()  # Para detectar empleados retirados
-        
-        # ✅ SINCRONIZACIÓN POR CÉDULA
+        cedulas_en_excel = set()
+
+        # ✅ SINCRONIZACIÓN POR CÉDULA (sin-op si df vacío por pestaña inexistente)
         for idx, row in df.iterrows():
             try:
                 if pd.isna(row.get("cedula")) or pd.isna(row.get("nombre")):
@@ -727,14 +751,16 @@ def sincronizar_excel_completo(sheet_id: str = None, company_id: int = None):
         # ✅ MARCAR COMO RETIRADOS los empleados que ya no están en el Excel
         # Si la persona es recontratada y su cédula vuelve a aparecer en el Excel,
         # el sistema la detecta arriba y la reactiva automáticamente.
+        # skip_retire=True cuando la pestaña no existía (no retirar por eso)
         retirados = 0
-        for cedula_bd, empleado_bd in empleados_por_cedula.items():
-            if cedula_bd not in cedulas_en_excel:
-                empleado_bd.activo = False
-                empleado_bd.updated_at = datetime.now()
-                db.commit()
-                retirados += 1
-                print(f"   🚪 Retirado: {empleado_bd.cedula} ({empleado_bd.nombre}) — ya no está en Excel")
+        if not skip_retire:
+            for cedula_bd, empleado_bd in empleados_por_cedula.items():
+                if cedula_bd not in cedulas_en_excel:
+                    empleado_bd.activo = False
+                    empleado_bd.updated_at = datetime.now()
+                    db.commit()
+                    retirados += 1
+                    print(f"   🚪 Retirado: {empleado_bd.cedula} ({empleado_bd.nombre}) — ya no está en Excel")
         
         # RESUMEN
         total_activos = db.query(Employee).filter(Employee.activo == True).count()
@@ -769,7 +795,7 @@ def sincronizar_excel_completo(sheet_id: str = None, company_id: int = None):
         #   - Procesado          : Fecha de procesamiento (se llena automáticamente)
         # ═══════════════════════════════════════════════════════════════════════════════════════════════
         try:
-            df_cases = pd.read_excel(excel_path, sheet_name=1)  # ✅ Hoja 2 = Cases_Kactus (índice 1)
+            df_cases = pd.read_excel(excel_path, sheet_name=kactus_sheet)
             if len(df_cases) > 0:
                 print(f"📊 PASO 3: Procesando Cases_Kactus ({len(df_cases)} filas)...")
                 cases_creados = 0
@@ -1291,29 +1317,64 @@ def sincronizar_todas_las_empresas():
         print(f"🏭 SYNC MULTI-EMPRESA: {len(tenants_con_sheet)} empresa(s) con Sheet propio")
         print(f"{'='*60}")
 
+        def _tab_corto(nombre: str) -> str:
+            return nombre.strip()[:25].replace("/", "-").replace("\\", "-")
+
         for config, company in tenants_con_sheet:
-            print(f"\n➡️  Empresa: {company.nombre} (id={company.id})")
+            sub_empresas = config.sub_empresas or []
+            tipo = config.tipo_estructura or "unica"
+            print(f"\n➡️  {'Holding' if tipo == 'holding' else 'Empresa'}: {company.nombre} (id={company.id})")
             print(f"   Sheet: {config.google_sheets_id}")
-            try:
-                sincronizar_excel_completo(
-                    sheet_id=config.google_sheets_id,
-                    company_id=company.id,
-                )
-                resultados.append({
-                    "company_id": company.id,
-                    "nombre": company.nombre,
-                    "sheet_id": config.google_sheets_id,
-                    "ok": True,
-                })
-            except Exception as e:
-                print(f"   ❌ Error sincronizando {company.nombre}: {e}")
-                resultados.append({
-                    "company_id": company.id,
-                    "nombre": company.nombre,
-                    "sheet_id": config.google_sheets_id,
-                    "ok": False,
-                    "error": str(e)[:200],
-                })
+
+            if tipo == "holding" and sub_empresas:
+                for sub in sub_empresas:
+                    corto = _tab_corto(sub)
+                    tab_emp = f"Empleados_{corto}"
+                    tab_kac = f"Kactus_{corto}"
+                    print(f"   🏢 Sub-empresa: {sub} → [{tab_emp}] / [{tab_kac}]")
+                    try:
+                        sincronizar_excel_completo(
+                            sheet_id=config.google_sheets_id,
+                            company_id=company.id,
+                            empleados_sheet=tab_emp,
+                            kactus_sheet=tab_kac,
+                        )
+                        resultados.append({
+                            "company_id": company.id,
+                            "nombre": f"{company.nombre} / {sub}",
+                            "sheet_id": config.google_sheets_id,
+                            "ok": True,
+                        })
+                    except Exception as e:
+                        print(f"   ❌ Error sincronizando sub-empresa {sub}: {e}")
+                        resultados.append({
+                            "company_id": company.id,
+                            "nombre": f"{company.nombre} / {sub}",
+                            "sheet_id": config.google_sheets_id,
+                            "ok": False,
+                            "error": str(e)[:200],
+                        })
+            else:
+                try:
+                    sincronizar_excel_completo(
+                        sheet_id=config.google_sheets_id,
+                        company_id=company.id,
+                    )
+                    resultados.append({
+                        "company_id": company.id,
+                        "nombre": company.nombre,
+                        "sheet_id": config.google_sheets_id,
+                        "ok": True,
+                    })
+                except Exception as e:
+                    print(f"   ❌ Error sincronizando {company.nombre}: {e}")
+                    resultados.append({
+                        "company_id": company.id,
+                        "nombre": company.nombre,
+                        "sheet_id": config.google_sheets_id,
+                        "ok": False,
+                        "error": str(e)[:200],
+                    })
 
         # Empresas SIN Sheet propio (o sin onboarding completo) → usan el Sheet maestro
         ids_con_sheet = {c.id for _, c in tenants_con_sheet}

@@ -274,7 +274,8 @@ class ResilientQueueProcessor:
                 fecha_fin=fecha_fin,
                 tiene_soat=payload.get('tiene_soat'),
                 tiene_licencia=payload.get('tiene_licencia'),
-                subtipo=payload.get('subtipo')
+                subtipo=payload.get('subtipo'),
+                client_drive_id=payload.get('client_drive_id'),
             )
             
             if link:
