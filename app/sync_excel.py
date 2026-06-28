@@ -15,6 +15,10 @@ GOOGLE_DRIVE_FILE_ID = os.environ.get("GOOGLE_DRIVE_FILE_ID", "1POt2ytSN61XbSpXU
 EXCEL_DOWNLOAD_URL = f"https://docs.google.com/spreadsheets/d/{GOOGLE_DRIVE_FILE_ID}/export?format=xlsx"
 LOCAL_CACHE_PATH = "/tmp/base_empleados_cache.xlsx"
 
+# ✅ ID activo durante la ejecución de una sync.
+# Se sobreescribe en sincronizar_excel_completo(sheet_id=...) para multi-empresa.
+_ACTIVE_SHEET_ID = GOOGLE_DRIVE_FILE_ID
+
 # Configuración de limpieza automática
 DIAS_ANTIGUEDAD_LIMPIEZA = 15  # Eliminar filas procesadas hace más de 15 días
 COLUMNA_PROCESADO = "Procesado"  # Nombre de la columna de fecha de procesamiento
@@ -84,7 +88,7 @@ def _marcar_filas_procesadas_kactus(filas: list, columna_procesado_idx: int = No
             return
         
         # Obtener info del spreadsheet
-        spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
+        spreadsheet = service.spreadsheets().get(spreadsheetId=_ACTIVE_SHEET_ID).execute()
         sheets = spreadsheet.get('sheets', [])
         
         if len(sheets) < 2:
@@ -95,7 +99,7 @@ def _marcar_filas_procesadas_kactus(filas: list, columna_procesado_idx: int = No
         
         # Leer la primera fila (headers) para encontrar o crear columna "Procesado"
         headers_result = service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            spreadsheetId=_ACTIVE_SHEET_ID,
             range=f"'{sheet_name}'!1:1"
         ).execute()
         
@@ -111,7 +115,7 @@ def _marcar_filas_procesadas_kactus(filas: list, columna_procesado_idx: int = No
             
             # Escribir header "Procesado"
             service.spreadsheets().values().update(
-                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                spreadsheetId=_ACTIVE_SHEET_ID,
                 range=f"'{sheet_name}'!{col_letter}1",
                 valueInputOption='RAW',
                 body={'values': [[COLUMNA_PROCESADO]]}
@@ -131,7 +135,7 @@ def _marcar_filas_procesadas_kactus(filas: list, columna_procesado_idx: int = No
         
         if data:
             service.spreadsheets().values().batchUpdate(
-                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                spreadsheetId=_ACTIVE_SHEET_ID,
                 body={
                     'valueInputOption': 'RAW',
                     'data': data
@@ -163,7 +167,7 @@ def _eliminar_filas_procesadas_kactus(filas: list):
             print("   ⚠️ Sin servicio Google, no se pudieron eliminar filas del Excel")
             return 0
         
-        spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
+        spreadsheet = service.spreadsheets().get(spreadsheetId=_ACTIVE_SHEET_ID).execute()
         sheets = spreadsheet.get('sheets', [])
         
         if len(sheets) < 2:
@@ -188,7 +192,7 @@ def _eliminar_filas_procesadas_kactus(filas: list):
             })
         
         service.spreadsheets().batchUpdate(
-            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            spreadsheetId=_ACTIVE_SHEET_ID,
             body={'requests': requests_delete}
         ).execute()
         
@@ -216,7 +220,7 @@ def _marcar_filas_error_kactus(filas_error: list):
         if not service:
             return
         
-        spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
+        spreadsheet = service.spreadsheets().get(spreadsheetId=_ACTIVE_SHEET_ID).execute()
         sheets = spreadsheet.get('sheets', [])
         
         if len(sheets) < 2:
@@ -226,7 +230,7 @@ def _marcar_filas_error_kactus(filas_error: list):
         
         # Buscar o crear columna Procesado
         headers_result = service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            spreadsheetId=_ACTIVE_SHEET_ID,
             range=f"'{sheet_name}'!1:1"
         ).execute()
         headers = headers_result.get('values', [[]])[0]
@@ -237,7 +241,7 @@ def _marcar_filas_error_kactus(filas_error: list):
             col_idx = len(headers)
             col_letter = _idx_to_col_letter(col_idx)
             service.spreadsheets().values().update(
-                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                spreadsheetId=_ACTIVE_SHEET_ID,
                 range=f"'{sheet_name}'!{col_letter}1",
                 valueInputOption='RAW',
                 body={'values': [[COLUMNA_PROCESADO]]}
@@ -256,7 +260,7 @@ def _marcar_filas_error_kactus(filas_error: list):
         
         if data:
             service.spreadsheets().values().batchUpdate(
-                spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+                spreadsheetId=_ACTIVE_SHEET_ID,
                 body={
                     'valueInputOption': 'RAW',
                     'data': data
@@ -287,7 +291,7 @@ def _limpiar_filas_antiguas_kactus(dias_antiguedad: int = None):
             return 0
         
         # Obtener info del spreadsheet
-        spreadsheet = service.spreadsheets().get(spreadsheetId=GOOGLE_DRIVE_FILE_ID).execute()
+        spreadsheet = service.spreadsheets().get(spreadsheetId=_ACTIVE_SHEET_ID).execute()
         sheets = spreadsheet.get('sheets', [])
         
         if len(sheets) < 2:
@@ -299,7 +303,7 @@ def _limpiar_filas_antiguas_kactus(dias_antiguedad: int = None):
         
         # Leer todos los datos de la hoja
         result = service.spreadsheets().values().get(
-            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            spreadsheetId=_ACTIVE_SHEET_ID,
             range=f"'{sheet_name}'"
         ).execute()
         
@@ -359,7 +363,7 @@ def _limpiar_filas_antiguas_kactus(dias_antiguedad: int = None):
             })
         
         service.spreadsheets().batchUpdate(
-            spreadsheetId=GOOGLE_DRIVE_FILE_ID,
+            spreadsheetId=_ACTIVE_SHEET_ID,
             body={'requests': requests_delete}
         ).execute()
         
@@ -398,7 +402,7 @@ def descargar_excel_desde_drive():
             
             # Usar Drive API para exportar el archivo como XLSX (autenticado)
             export_request = drive_service.files().export(
-                fileId=GOOGLE_DRIVE_FILE_ID,
+                fileId=_ACTIVE_SHEET_ID,
                 mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
             
@@ -428,7 +432,7 @@ def descargar_excel_desde_drive():
             # FALLBACK 1: Intentar URL pública
             print(f"   ⚠️ Intentando URL pública...")
             response = requests.get(
-                f"https://docs.google.com/spreadsheets/d/{GOOGLE_DRIVE_FILE_ID}/export?format=xlsx",
+                f"https://docs.google.com/spreadsheets/d/{_ACTIVE_SHEET_ID}/export?format=xlsx",
                 timeout=30
             )
             
@@ -518,23 +522,29 @@ def sincronizar_empleado_desde_excel(cedula: str):
         db.close()
 
 
-def sincronizar_excel_completo():
+def sincronizar_excel_completo(sheet_id: str = None, company_id: int = None):
     """
     ✅ SYNC POR CÉDULA (empleados) + ELIMINAR AL PROCESAR (casos)
-    
+
+    Args:
+        sheet_id:   ID del Google Sheet a sincronizar.
+                    Si None → usa GOOGLE_DRIVE_FILE_ID del entorno (Sheet maestro).
+        company_id: ID de la empresa en BD (para logs). Opcional.
+
     EMPLEADOS (Hoja 1):
     - Busca cada empleado por CÉDULA (no por posición)
     - Si editas nombre/correo/etc en Excel → se actualiza en BD
     - Si eliminas una fila del Excel → el empleado se desactiva en BD
     - Si agregas una fila nueva → se crea el empleado
     - Si un empleado desactivado reaparece → se reactiva
-    
+
     CASOS (Hoja 2 - Cases_Kactus):
     - Procesa fila por fila
     - Si se procesó OK → elimina esa fila del Excel inmediatamente
     - Si falló → deja la fila con indicador "ERROR: [motivo]" en col Procesado
     """
-    db = SessionLocal()
+    global _ACTIVE_SHEET_ID
+    _ACTIVE_SHEET_ID = sheet_id if sheet_id else GOOGLE_DRIVE_FILE_ID
     try:
         print(f"\n{'='*60}")
         print(f"🔄 SYNC EXACTO Excel → PostgreSQL - {datetime.now().strftime('%H:%M:%S')}")
@@ -1240,3 +1250,96 @@ def obtener_estado_sync():
         return {"ok": False, "error": str(e)}
     finally:
         db.close()
+
+
+# ════════════════════════════════════════════════════════════
+# SYNC MULTI-EMPRESA: itera por cada tenant con su propio Sheet
+# ════════════════════════════════════════════════════════════
+
+def sincronizar_todas_las_empresas():
+    """
+    ✅ Sincroniza CADA empresa con su propio Google Sheet.
+
+    Flujo:
+      1. Consulta todos los TenantConfig que tengan google_sheets_id configurado.
+      2. Por cada uno llama sincronizar_excel_completo(sheet_id=..., company_id=...).
+      3. Al terminar el loop, también sincroniza el Sheet maestro (comportamiento anterior)
+         para empresas que no tengan Sheet propio aún.
+
+    Retorna un dict con el resumen de resultados por empresa.
+    """
+    from app.database import TenantConfig, Company
+
+    db = SessionLocal()
+    resultados = []
+
+    try:
+        # Obtener todos los tenants con Sheet propio
+        tenants_con_sheet = (
+            db.query(TenantConfig, Company)
+            .join(Company, TenantConfig.company_id == Company.id)
+            .filter(
+                TenantConfig.google_sheets_id.isnot(None),
+                TenantConfig.google_sheets_id != "",
+                TenantConfig.onboarding_completado == True,
+                Company.activa == True,
+            )
+            .all()
+        )
+
+        print(f"\n{'='*60}")
+        print(f"🏭 SYNC MULTI-EMPRESA: {len(tenants_con_sheet)} empresa(s) con Sheet propio")
+        print(f"{'='*60}")
+
+        for config, company in tenants_con_sheet:
+            print(f"\n➡️  Empresa: {company.nombre} (id={company.id})")
+            print(f"   Sheet: {config.google_sheets_id}")
+            try:
+                sincronizar_excel_completo(
+                    sheet_id=config.google_sheets_id,
+                    company_id=company.id,
+                )
+                resultados.append({
+                    "company_id": company.id,
+                    "nombre": company.nombre,
+                    "sheet_id": config.google_sheets_id,
+                    "ok": True,
+                })
+            except Exception as e:
+                print(f"   ❌ Error sincronizando {company.nombre}: {e}")
+                resultados.append({
+                    "company_id": company.id,
+                    "nombre": company.nombre,
+                    "sheet_id": config.google_sheets_id,
+                    "ok": False,
+                    "error": str(e)[:200],
+                })
+
+        # Empresas SIN Sheet propio (o sin onboarding completo) → usan el Sheet maestro
+        ids_con_sheet = {c.id for _, c in tenants_con_sheet}
+        empresas_sin_sheet = (
+            db.query(Company)
+            .filter(Company.activa == True, ~Company.id.in_(ids_con_sheet))
+            .all()
+        ) if ids_con_sheet else db.query(Company).filter(Company.activa == True).all()
+
+        if empresas_sin_sheet:
+            print(f"\n➡️  {len(empresas_sin_sheet)} empresa(s) sin Sheet propio → sincronizando desde Sheet maestro")
+            sincronizar_excel_completo()  # sheet maestro
+            resultados.append({
+                "company_id": "maestro",
+                "nombre": "Sheet maestro (empresas sin Sheet propio)",
+                "sheet_id": GOOGLE_DRIVE_FILE_ID,
+                "ok": True,
+            })
+
+        exitos = sum(1 for r in resultados if r["ok"])
+        fallos = sum(1 for r in resultados if not r["ok"])
+        print(f"\n✅ Sync multi-empresa completada: {exitos} OK, {fallos} con error")
+        return resultados
+
+    except Exception as e:
+        print(f"❌ Error en sync multi-empresa: {e}")
+        return [{"ok": False, "error": str(e)}]
+    finally:
+        db.close()

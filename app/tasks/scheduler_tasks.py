@@ -82,14 +82,35 @@ def tarea_limpiar_respaldos_expirados():
         logger.error(f"❌ Error limpiando respaldos: {str(e)}")
 
 
+def tarea_sincronizar_sheets():
+    """
+    Tarea que se ejecuta cada 30 minutos:
+    - Sincroniza CADA empresa con su propio Google Sheet.
+    - Las empresas sin Sheet propio usan el Sheet maestro (compatibilidad).
+    """
+    try:
+        logger.info("🔄 Iniciando sync multi-empresa (Google Sheets → PostgreSQL)...")
+        from app.sync_excel import sincronizar_todas_las_empresas
+        resultados = sincronizar_todas_las_empresas()
+        exitos = sum(1 for r in resultados if r.get("ok"))
+        fallos = sum(1 for r in resultados if not r.get("ok"))
+        if fallos:
+            logger.warning(f"⚠️ Sync multi-empresa: {exitos} OK, {fallos} con error")
+        else:
+            logger.info(f"✅ Sync multi-empresa: {exitos} empresa(s) sincronizadas")
+    except Exception as e:
+        logger.error(f"❌ Error en sync multi-empresa: {str(e)}")
+
+
 def iniciar_scheduler():
     """
     Inicia el scheduler con todas las tareas programadas
-    
+
     Tareas:
     1. Regeneración de tabla viva: día 1 de cada mes a las 00:01
-    2. Detección de cambios en Completes: cada 3 horas
+    2. Detección de cambios en Completes: cada 30 minutos
     3. Limpieza de respaldos expirados: cada 6 horas
+    4. Sincronización Google Sheets → BD (multi-empresa): cada 30 minutos
     """
     global scheduler
     
@@ -127,6 +148,16 @@ def iniciar_scheduler():
             )
             logger.info("✅ Tarea registrada: Limpieza de respaldos (cada 6 horas)")
             
+            # Tarea 4: Sync multi-empresa Sheets → BD cada 30 minutos
+            scheduler.add_job(
+                tarea_sincronizar_sheets,
+                IntervalTrigger(minutes=30),
+                id='sincronizar_sheets_multi_empresa',
+                name='Sync Google Sheets → PostgreSQL (multi-empresa)',
+                replace_existing=True
+            )
+            logger.info("✅ Tarea registrada: Sync Sheets multi-empresa (cada 30 minutos)")
+
             scheduler.start()
             logger.info("=" * 60)
             logger.info("✅ SCHEDULER INICIADO CORRECTAMENTE")
