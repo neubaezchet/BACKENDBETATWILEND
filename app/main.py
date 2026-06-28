@@ -40,6 +40,7 @@ from app.routes.admin import router as admin_router
 from app.routes.ocr import router as ocr_router
 from app.routes.tenants import router as tenants_router
 from app.routes.radicacion import router as radicacion_router
+from app.routes.demo import demo_router, leads_router  # ✅ Demo/Leads
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ✅ Cola resiliente persistente (Drive)
@@ -209,6 +210,8 @@ app.include_router(alertas_router)
 # ⭐ Panel Admin - Auth, Correos, Usuarios, Consola
 app.include_router(admin_router)
 app.include_router(tenants_router)
+app.include_router(demo_router)   # ✅ Solicitudes de demo (público)
+app.include_router(leads_router)  # ✅ Gestión de leads (admin)
 
 # ⭐ Radicación — Skills, Sesiones, Manifests, Monitoreo
 app.include_router(radicacion_router)

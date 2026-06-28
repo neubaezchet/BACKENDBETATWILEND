@@ -3,11 +3,15 @@ RUTAS TENANT — Sistema Multi-Tenant Neurobaeza
 ===============================================
 Prefijo: /tenants
 
-Endpoints:
+Endpoints públicos (sin JWT):
+  GET  /tenants/registro/validar-token          → Valida token de invitación
+  POST /tenants/registro/completar              → Registro self-service de la empresa
+
+Endpoints protegidos (JWT requerido):
   GET  /tenants/{company_id}                    → Datos del tenant (Company + TenantConfig)
   GET  /tenants/{company_id}/onboarding         → Progreso del wizard
   POST /tenants/{company_id}/onboarding/step    → Guardar paso del wizard
-  POST /tenants/{company_id}/onboarding/complete → Completar onboarding
+  POST /tenants/{company_id}/onboarding/complete → Completar onboarding (flujo viejo)
   POST /tenants/{company_id}/invite             → Generar link de invitación
   POST /tenants/{company_id}/drive/verify       → Verificar acceso a Google Drive
   GET  /tenants/{company_id}/users              → Usuarios del tenant
@@ -20,7 +24,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -35,6 +39,241 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tenants", tags=["Multi-Tenant"])
 
 ADMIN_ORIGIN = os.environ.get("ADMIN_ORIGIN", "https://admin-neurobaeza.vercel.app")
+
+
+# ═════════════════════════════════════════════════════════
+# ENDPOINT PÚBLICO: GET /tenants/registro/validar-token
+# ═════════════════════════════════════════════════════════
+
+@router.get("/registro/validar-token")
+async def validar_token_registro(
+    token: str = Query(..., description="Token de invitación recibido por email"),
+    db: Session = Depends(get_db),
+):
+    """
+    ENDPOINT PÚBLICO (sin JWT).
+    Valida que el token de invitación sea válido, no expirado y no usado.
+    Retorna datos pre-llenados de la empresa para el wizard.
+    """
+    invitacion = db.query(TenantInvitation).filter(
+        TenantInvitation.token == token
+    ).first()
+
+    if not invitacion:
+        raise HTTPException(status_code=404, detail="Token de invitación no válido.")
+    if invitacion.usado:
+        raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado. Solicita uno nuevo.")
+    if invitacion.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Este enlace ha expirado. Solicita uno nuevo.")
+
+    company = db.query(Company).filter(Company.id == invitacion.company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada.")
+
+    config = db.query(TenantConfig).filter(TenantConfig.company_id == company.id).first()
+
+    return {
+        "ok": True,
+        "token_valido": True,
+        "expires_at": invitacion.expires_at.isoformat(),
+        "company": {
+            "id": company.id,
+            "nombre": company.nombre,
+            "nit": company.nit,
+            "contacto_email": company.contacto_email,
+        },
+        "onboarding_completado": config.onboarding_completado if config else False,
+    }
+
+
+# ═════════════════════════════════════════════════════════
+# ENDPOINT PÚBLICO: POST /tenants/registro/completar
+# ═════════════════════════════════════════════════════════
+
+class RegistroCompletoBody(BaseModel):
+    token: str
+    # Datos de la empresa
+    nit: Optional[str] = None
+    nombre: Optional[str] = None
+    tipo_estructura: str = "unica"  # unica | holding
+    sub_empresas: list = []
+    ciclo_reporte: str = "mensual"  # quincenal | mensual
+    zona_horaria: str = "America/Bogota"
+    # Contacto
+    contacto_email: str
+    correo_drive: Optional[str] = None
+    # Credenciales del admin (elegidas por la empresa)
+    admin_password: str = Field(..., min_length=8)
+    # Personalización visual
+    paleta_id: str = "ocean"
+    paleta_colores: dict = {}
+    estilo_ui: str = "default"
+    logo_url: Optional[str] = None
+
+
+@router.post("/registro/completar")
+async def completar_registro(
+    body: RegistroCompletoBody,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    ENDPOINT PÚBLICO (sin JWT). Usa el token de invitación como autenticación.
+
+    Completa el registro self-service de la empresa:
+    1. Valida el token
+    2. Actualiza Company con los datos finales
+    3. Crea/actualiza TenantConfig
+    4. Provisiona el Google Sheet (en background)
+    5. Crea AdminUser con las credenciales elegidas por la empresa
+    6. Invalida el token
+    """
+    # 1. Validar token
+    invitacion = db.query(TenantInvitation).filter(
+        TenantInvitation.token == body.token
+    ).first()
+
+    if not invitacion:
+        raise HTTPException(status_code=404, detail="Token de invitación no válido.")
+    if invitacion.usado:
+        raise HTTPException(status_code=400, detail="Este enlace ya fue utilizado.")
+    if invitacion.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Este enlace ha expirado.")
+
+    company_id = invitacion.company_id
+    company = db.query(Company).filter(Company.id == company_id, Company.activa == True).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada.")
+
+    # Verificar que no haya sido completado antes
+    config_existente = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+    if config_existente and config_existente.onboarding_completado:
+        raise HTTPException(
+            status_code=400,
+            detail="Esta empresa ya completó su registro. Usa tus credenciales para ingresar."
+        )
+
+    # 2. Actualizar Company
+    if body.nit:
+        company.nit = body.nit
+    if body.nombre:
+        company.nombre = body.nombre
+    company.contacto_email = body.contacto_email
+
+    # 3. Crear o actualizar TenantConfig
+    config = config_existente or TenantConfig(company_id=company_id)
+    if not config_existente:
+        db.add(config)
+
+    config.nit = body.nit or company.nit
+    config.contacto_email = body.contacto_email
+    config.correo_drive = body.correo_drive or body.contacto_email
+    config.zona_horaria = body.zona_horaria
+    config.tipo_estructura = body.tipo_estructura
+    config.sub_empresas = body.sub_empresas
+    config.ciclo_reporte = body.ciclo_reporte
+    config.paleta_id = body.paleta_id
+    config.paleta_colores = body.paleta_colores
+    config.estilo_ui = body.estilo_ui
+    if body.logo_url:
+        config.logo_url = body.logo_url
+    config.onboarding_completado = True
+    config.onboarding_step = 6
+
+    db.flush()
+
+    # 4. Crear AdminUser con las credenciales elegidas por la empresa
+    # Generar username desde el email
+    email_parte = body.contacto_email.split("@")[0].replace(".", "_").replace("+", "_")[:30]
+    base_username = f"{email_parte}_{company_id}"
+    username = base_username
+    counter = 0
+    while db.query(AdminUser).filter(AdminUser.username == username).first():
+        counter += 1
+        username = f"{base_username}_{counter}"
+
+    tenant_admin = AdminUser(
+        username=username,
+        password_hash=pwd_context.hash(body.admin_password),
+        nombre=f"Administrador — {company.nombre}",
+        email=body.contacto_email,
+        rol="admin",
+        company_id=company_id,
+        es_tenant_admin=True,
+        activo=True,
+        tenant_permisos={
+            "tabla_viva": True,
+            "reportes": True,
+            "powerbi": False,
+            "exportaciones": False,
+        },
+        permisos={
+            "bots": True,       # Puede gestionar bots de SU empresa
+            "correos": True,    # Directorio de correos de su empresa
+            "usuarios": True,   # Gestionar sus sub-admins
+            "validador": False,
+            "reportes": False,
+            "powerbi": False,
+            "exportaciones": False,
+            "consola": False,
+        },
+    )
+    db.add(tenant_admin)
+
+    # 5. Invalidar token
+    invitacion.usado = True
+
+    db.commit()
+    db.refresh(tenant_admin)
+    db.refresh(config)
+
+    # 6. Provisionar Google Sheet en background (no bloquea la respuesta)
+    background_tasks.add_task(
+        _provisionar_sheet_background,
+        company_id=company_id,
+        company_nombre=company.nombre,
+        contacto_email=body.contacto_email,
+    )
+
+    logger.info(
+        f"✅ Registro completado: empresa='{company.nombre}' "
+        f"company_id={company_id} admin_username={username}"
+    )
+
+    return {
+        "ok": True,
+        "mensaje": f"¡Empresa '{company.nombre}' registrada exitosamente!",
+        "company": {
+            "id": company.id,
+            "nombre": company.nombre,
+            "nit": config.nit,
+        },
+        "admin_username": username,
+        "ciclo_reporte": config.ciclo_reporte,
+    }
+
+
+async def _provisionar_sheet_background(company_id: int, company_nombre: str, contacto_email: str):
+    """Tarea en background: crea el Sheet y guarda el ID en TenantConfig."""
+    try:
+        from app.services.tenant_provisioning import provisionar_tenant_completo
+        from app.database import SessionLocal
+
+        resultado = provisionar_tenant_completo(company_nombre, company_id, contacto_email)
+
+        if resultado["google_sheets_id"]:
+            db = SessionLocal()
+            try:
+                config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+                if config:
+                    config.google_sheets_id = resultado["google_sheets_id"]
+                    config.google_sheets_url = resultado["google_sheets_url"]
+                    db.commit()
+                    logger.info(f"✅ Sheet guardado en TenantConfig para company_id={company_id}")
+            finally:
+                db.close()
+    except Exception as e:
+        logger.error(f"❌ Error en provisionamiento background para company_id={company_id}: {e}")
 
 
 # ═══════════════════════════════════════════════════════════

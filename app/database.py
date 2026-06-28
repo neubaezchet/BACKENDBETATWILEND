@@ -381,6 +381,10 @@ class TenantConfig(Base):
     google_workspace_drive_id = Column(String(200))
     drive_verificado = Column(Boolean, default=False)
 
+    # ✅ Google Sheets por empresa (cada tenant tiene su propio Sheet)
+    google_sheets_id = Column(String(200), nullable=True)   # ID del spreadsheet de esta empresa
+    google_sheets_url = Column(String(500), nullable=True)  # URL del spreadsheet
+
     # Estado del onboarding
     onboarding_completado = Column(Boolean, default=False)
     onboarding_step = Column(Integer, default=1)
@@ -406,6 +410,42 @@ class TenantInvitation(Base):
     usado = Column(Boolean, default=False)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=get_utc_now)
+    # ✅ Liga la invitación con su solicitud de demo (si viene de ese flujo)
+    demo_request_id = Column(Integer, ForeignKey('demo_requests.id', ondelete='SET NULL'), nullable=True)
+
+
+class DemoRequest(Base):
+    """
+    ✅ NUEVO: Solicitudes de demo/acceso al sistema.
+    Flujo: empresa llena formulario público → admin revisa → aprueba → envía link.
+    """
+    __tablename__ = 'demo_requests'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Datos de la empresa solicitante
+    empresa_nombre = Column(String(200), nullable=False)
+    nit = Column(String(50), nullable=True)
+    contacto_nombre = Column(String(200), nullable=False)
+    contacto_email = Column(String(300), nullable=False, index=True)
+    contacto_telefono = Column(String(50), nullable=True)
+    como_conocio = Column(String(200), nullable=True)  # "referido", "google", "linkedin", etc
+    mensaje = Column(Text, nullable=True)               # Mensaje libre del solicitante
+
+    # Estado del lead
+    estado = Column(String(20), default='pendiente', index=True)  # pendiente | aprobado | rechazado
+    notas_internas = Column(Text, nullable=True)        # Notas del admin al revisar
+    aprobado_por = Column(String(200), nullable=True)   # username del admin que aprobó/rechazó
+
+    # Vínculo con la empresa creada al aprobar
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='SET NULL'), nullable=True)
+
+    created_at = Column(DateTime, default=get_utc_now, index=True)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+    __table_args__ = (
+        Index('idx_demo_estado_fecha', 'estado', 'created_at'),
+    )
 
 
 class Alerta180Log(Base):
@@ -728,6 +768,9 @@ def init_db():
         # ✅ Migrar columnas de radicación (seguro de re-ejecutar)
         migrar_columnas_radicacion()
 
+        # ✅ Migrar columnas de demo/tenant sheets (seguro de re-ejecutar)
+        migrar_columnas_demo_tenant()
+
         # Verificar conexión
         db = SessionLocal()
         try:
@@ -939,6 +982,48 @@ def migrar_columnas_radicacion():
         return True
     except Exception as e:
         print(f"❌ Error en migración radicación: {e}")
+        return False
+
+
+def migrar_columnas_demo_tenant():
+    """
+    Agrega columnas nuevas a tenant_configs y tenant_invitations.
+    También agrega campo demo_request_id a tenant_invitations.
+    Seguro de re-ejecutar (IF NOT EXISTS en PostgreSQL).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando columnas demo/tenant sheets...")
+
+        # Columnas nuevas en tenant_configs
+        cols_tenant_config = [
+            ("tenant_configs", "google_sheets_id",  "VARCHAR(200)"),
+            ("tenant_configs", "google_sheets_url", "VARCHAR(500)"),
+        ]
+        # Columna nueva en tenant_invitations
+        cols_invitations = [
+            ("tenant_invitations", "demo_request_id", "INTEGER"),
+        ]
+
+        for tabla, col, tipo in cols_tenant_config + cols_invitations:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {col} {tipo}"))
+                else:
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en {tabla} agregada")
+            except Exception as e:
+                if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                    print(f"   ℹ️  Columna '{col}' en {tabla} ya existe")
+                else:
+                    print(f"   ⚠️  {tabla}.{col}: {e}")
+
+        db.commit()
+        print("✅ Migración demo/tenant sheets completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración demo/tenant: {e}")
         return False
 
 
