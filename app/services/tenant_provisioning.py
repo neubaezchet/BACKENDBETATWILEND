@@ -2,8 +2,9 @@
 Tenant Provisioning Service
 ============================
 Provisionamiento automático de recursos al registrar una nueva empresa:
-  1. Duplicar el Google Sheet maestro → Sheet propio del tenant
-  (Drive doble se agrega en una fase futura)
+  - Empresa única    → 1 Sheet propio (Empleados + Kactus)
+  - Holding / Multi  → 1 Sheet con pestañas separadas por sub-empresa
+                        Empleados_SubA | Kactus_SubA | Empleados_SubB | Kactus_SubB ...
 
 Requiere:
   - GOOGLE_DRIVE_FILE_ID: ID del spreadsheet maestro (plantilla)
@@ -56,101 +57,157 @@ def _get_sheets_service():
     return build('sheets', 'v4', credentials=creds)
 
 
-# ─── Función principal: duplicar Sheet maestro ───────────────────────────────
+# ─── Duplicar Sheet maestro ───────────────────────────────────────────────────
 
 def duplicar_sheet_maestro(company_nombre: str, company_id: int) -> dict:
     """
     Duplica el Google Sheet maestro y lo renombra para la empresa.
 
-    Args:
-        company_nombre: Nombre de la empresa (ej: "Empresa ABC S.A.S.")
-        company_id: ID interno de la empresa
-
-    Returns:
-        dict con:
-          - ok: bool
-          - spreadsheet_id: ID del nuevo Sheet
-          - spreadsheet_url: URL para compartir
-          - error: mensaje si falló
+    Returns dict con:
+      - ok: bool
+      - spreadsheet_id: ID del nuevo Sheet
+      - spreadsheet_url: URL del nuevo Sheet
+      - error: mensaje si falló
     """
     master_id = os.environ.get("GOOGLE_DRIVE_FILE_ID")
     if not master_id:
         logger.warning("GOOGLE_DRIVE_FILE_ID no configurado — omitiendo creación de Sheet")
-        return {"ok": False, "error": "GOOGLE_DRIVE_FILE_ID no configurado", "spreadsheet_id": None, "spreadsheet_url": None}
+        return {"ok": False, "error": "GOOGLE_DRIVE_FILE_ID no configurado",
+                "spreadsheet_id": None, "spreadsheet_url": None}
 
     try:
         drive = _get_drive_service()
-
-        # Nombre del nuevo Sheet
         nombre_sheet = f"{company_nombre} — Base de Datos"
 
-        # Copiar el archivo maestro
-        copy_metadata = {
-            "name": nombre_sheet,
-        }
         resultado = drive.files().copy(
             fileId=master_id,
-            body=copy_metadata,
+            body={"name": nombre_sheet},
             fields="id,name,webViewLink"
         ).execute()
 
         nuevo_id = resultado.get("id")
-        nuevo_url = resultado.get("webViewLink", f"https://docs.google.com/spreadsheets/d/{nuevo_id}")
+        nuevo_url = resultado.get("webViewLink",
+                                  f"https://docs.google.com/spreadsheets/d/{nuevo_id}")
 
-        logger.info(f"✅ Sheet creado para empresa '{company_nombre}' (ID {company_id}): {nuevo_id}")
-
-        return {
-            "ok": True,
-            "spreadsheet_id": nuevo_id,
-            "spreadsheet_url": nuevo_url,
-            "error": None,
-        }
+        logger.info(f"✅ Sheet creado para '{company_nombre}' (company_id={company_id}): {nuevo_id}")
+        return {"ok": True, "spreadsheet_id": nuevo_id,
+                "spreadsheet_url": nuevo_url, "error": None}
 
     except Exception as e:
-        logger.error(f"❌ Error duplicando Sheet para empresa '{company_nombre}': {e}")
-        return {
-            "ok": False,
-            "spreadsheet_id": None,
-            "spreadsheet_url": None,
-            "error": str(e)[:300],
-        }
+        logger.error(f"❌ Error duplicando Sheet para '{company_nombre}': {e}")
+        return {"ok": False, "spreadsheet_id": None,
+                "spreadsheet_url": None, "error": str(e)[:300]}
 
 
-def renombrar_pestanas_sheet(spreadsheet_id: str, company_nombre: str) -> bool:
+# ─── Pestañas adicionales para Holdings ──────────────────────────────────────
+
+def _nombre_corto(nombre: str, max_len: int = 25) -> str:
+    """Limpia y acorta el nombre de una sub-empresa para usarlo en título de pestaña."""
+    return nombre.strip()[:max_len].replace("/", "-").replace("\\", "-")
+
+
+def configurar_pestanas_holding(spreadsheet_id: str, sub_empresas: list) -> bool:
     """
-    Renombra las pestañas del nuevo Sheet para incluir el nombre de la empresa.
-    Por ejemplo: "Base_Empleados" → "Base_Empleados — Empresa ABC"
-    Esto es opcional y no bloquea el flujo si falla.
+    Para un Holding: renombra las 2 pestañas originales para la 1ra sub-empresa
+    y agrega un par (Empleados + Kactus) por cada sub-empresa adicional.
+
+    Estructura final del Sheet:
+      Empleados_<SubA>  |  Kactus_<SubA>
+      Empleados_<SubB>  |  Kactus_<SubB>
+      ...
+
+    Args:
+        spreadsheet_id: ID del Sheet ya creado (copia del maestro)
+        sub_empresas:   Lista de nombres de sub-empresas ej. ["SubA", "SubB", "SubC"]
+
+    Returns:
+        bool — True si exitoso
     """
+    if not sub_empresas:
+        return True  # Nada que hacer
+
     try:
-        sheets = _get_sheets_service()
+        svc = _get_sheets_service()
 
-        # Obtener pestañas actuales
-        meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-        hojas = meta.get("sheets", [])
+        # Obtener pestañas actuales (el Sheet maestro tiene 2: Empleados + Kactus)
+        meta = svc.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        hojas_actuales = meta.get("sheets", [])
 
-        requests = []
-        for hoja in hojas:
-            props = hoja.get("properties", {})
-            sheet_id = props.get("sheetId")
-            titulo_actual = props.get("title", "")
+        if len(hojas_actuales) < 2:
+            logger.warning(
+                f"⚠️ Sheet {spreadsheet_id} tiene menos de 2 pestañas, "
+                f"se esperaban Empleados + Kactus"
+            )
+            return False
 
-            # Solo renombrar si no tiene ya el nombre de la empresa
-            if company_nombre[:20] not in titulo_actual:
-                nuevo_titulo = f"{titulo_actual}"  # Dejamos igual por ahora, solo registramos
-                # Si quieres agregar el nombre: nuevo_titulo = f"{titulo_actual} [{company_nombre[:15]}]"
+        # IDs de las 2 pestañas originales
+        sheet_empleados_id = hojas_actuales[0]["properties"]["sheetId"]
+        sheet_kactus_id    = hojas_actuales[1]["properties"]["sheetId"]
 
-        if requests:
-            sheets.spreadsheets().batchUpdate(
-                spreadsheetId=spreadsheet_id,
-                body={"requests": requests}
-            ).execute()
+        primera = _nombre_corto(sub_empresas[0])
+        requests_batch = []
 
+        # 1. Renombrar las 2 pestañas originales con el nombre de la 1ra sub-empresa
+        requests_batch += [
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_empleados_id,
+                        "title": f"Empleados_{primera}",
+                    },
+                    "fields": "title",
+                }
+            },
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_kactus_id,
+                        "title": f"Kactus_{primera}",
+                    },
+                    "fields": "title",
+                }
+            },
+        ]
+
+        # 2. Por cada sub-empresa adicional, duplicar la pestaña Empleados y la Kactus
+        for i, sub in enumerate(sub_empresas[1:], start=1):
+            corto = _nombre_corto(sub)
+
+            # Duplicar pestaña Empleados
+            requests_batch.append({
+                "duplicateSheet": {
+                    "sourceSheetId": sheet_empleados_id,
+                    "insertSheetIndex": i * 2,
+                    "newSheetName": f"Empleados_{corto}",
+                }
+            })
+            # Duplicar pestaña Kactus
+            requests_batch.append({
+                "duplicateSheet": {
+                    "sourceSheetId": sheet_kactus_id,
+                    "insertSheetIndex": i * 2 + 1,
+                    "newSheetName": f"Kactus_{corto}",
+                }
+            })
+
+        # Ejecutar todo en un solo batch
+        svc.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": requests_batch}
+        ).execute()
+
+        logger.info(
+            f"✅ Holding configurado: {len(sub_empresas)} sub-empresas → "
+            f"{len(sub_empresas) * 2} pestañas en Sheet {spreadsheet_id}"
+        )
         return True
+
     except Exception as e:
-        logger.warning(f"⚠️ No se pudieron renombrar pestañas del Sheet {spreadsheet_id}: {e}")
+        logger.error(f"❌ Error configurando pestañas holding en {spreadsheet_id}: {e}")
         return False
 
+
+# ─── Compartir Sheet con el admin ─────────────────────────────────────────────
 
 def compartir_sheet_con_email(spreadsheet_id: str, email: str, rol: str = "reader") -> bool:
     """
@@ -168,7 +225,10 @@ def compartir_sheet_con_email(spreadsheet_id: str, email: str, rol: str = "reade
             fileId=spreadsheet_id,
             body=permission,
             sendNotificationEmail=True,
-            emailMessage=f"Tu base de datos de incapacidades ha sido creada y configurada. Puedes consultarla en este enlace.",
+            emailMessage=(
+                "Tu base de datos de incapacidades ha sido creada y configurada. "
+                "Puedes consultarla en este enlace."
+            ),
             fields="id"
         ).execute()
         logger.info(f"✅ Sheet {spreadsheet_id} compartido con {email} (rol: {rol})")
@@ -178,40 +238,74 @@ def compartir_sheet_con_email(spreadsheet_id: str, email: str, rol: str = "reade
         return False
 
 
-def provisionar_tenant_completo(company_nombre: str, company_id: int, contacto_email: str) -> dict:
+# ─── Función principal ────────────────────────────────────────────────────────
+
+def provisionar_tenant_completo(
+    company_nombre: str,
+    company_id: int,
+    contacto_email: str,
+    tipo_estructura: str = "unica",
+    sub_empresas: list = None,
+) -> dict:
     """
-    Función principal: provisiona todos los recursos para un nuevo tenant.
-    Actualmente: crea y comparte el Google Sheet.
+    Provisiona todos los recursos para un nuevo tenant.
+
+    - Empresa única   → 1 Sheet (2 pestañas: Empleados + Kactus)
+    - Holding/Multi   → 1 Sheet (2 pestañas por cada sub-empresa:
+                        Empleados_<Sub> + Kactus_<Sub>)
 
     Args:
-        company_nombre: Nombre oficial de la empresa
-        company_id: ID en la BD
-        contacto_email: Correo del administrador de la empresa
+        company_nombre:   Nombre oficial de la empresa / holding
+        company_id:       ID en la BD
+        contacto_email:   Correo del administrador
+        tipo_estructura:  'unica' | 'holding'
+        sub_empresas:     Lista de nombres de sub-empresas (solo para holding)
 
     Returns:
-        dict con todos los IDs y URLs generados
+        dict con google_sheets_id, google_sheets_url, errores, sub_empresas_configuradas
     """
+    sub_empresas = sub_empresas or []
+
     resultado = {
         "google_sheets_id": None,
         "google_sheets_url": None,
         "errores": [],
+        "tipo_estructura": tipo_estructura,
+        "sub_empresas_configuradas": 0,
     }
 
-    # 1. Duplicar Sheet maestro
+    # PASO 1: Duplicar Sheet maestro (igual para unica y holding)
     sheet_result = duplicar_sheet_maestro(company_nombre, company_id)
-    if sheet_result["ok"]:
-        resultado["google_sheets_id"] = sheet_result["spreadsheet_id"]
-        resultado["google_sheets_url"] = sheet_result["spreadsheet_url"]
 
-        # 2. Compartir con el admin de la empresa (solo lectura)
-        if contacto_email:
-            compartir_sheet_con_email(
-                sheet_result["spreadsheet_id"],
-                contacto_email,
-                rol="reader"
+    if not sheet_result["ok"]:
+        resultado["errores"].append(f"Sheet: {sheet_result['error']}")
+        logger.warning(f"⚠️ No se pudo crear Sheet para empresa {company_id}")
+        return resultado
+
+    nuevo_id  = sheet_result["spreadsheet_id"]
+    nuevo_url = sheet_result["spreadsheet_url"]
+    resultado["google_sheets_id"]  = nuevo_id
+    resultado["google_sheets_url"] = nuevo_url
+
+    # PASO 2: Si es Holding → configurar pestañas por sub-empresa
+    if tipo_estructura == "holding" and sub_empresas:
+        logger.info(
+            f"🏗️  Configurando Holding '{company_nombre}' con "
+            f"{len(sub_empresas)} sub-empresas: {sub_empresas}"
+        )
+        ok_tabs = configurar_pestanas_holding(nuevo_id, sub_empresas)
+        if ok_tabs:
+            resultado["sub_empresas_configuradas"] = len(sub_empresas)
+        else:
+            resultado["errores"].append(
+                "No se pudieron crear las pestañas por sub-empresa "
+                "(el Sheet existe pero con estructura estándar)"
             )
     else:
-        resultado["errores"].append(f"Sheet: {sheet_result['error']}")
-        logger.warning(f"⚠️ No se pudo crear Sheet para empresa {company_id} — continuando sin él")
+        logger.info(f"🏢 Empresa única '{company_nombre}' — estructura estándar (2 pestañas)")
+
+    # PASO 3: Compartir con el admin de la empresa (solo lectura)
+    if contacto_email:
+        compartir_sheet_con_email(nuevo_id, contacto_email, rol="reader")
 
     return resultado

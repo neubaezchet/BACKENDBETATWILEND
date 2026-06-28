@@ -233,6 +233,8 @@ async def completar_registro(
         company_id=company_id,
         company_nombre=company.nombre,
         contacto_email=body.contacto_email,
+        tipo_estructura=body.tipo_estructura,
+        sub_empresas=body.sub_empresas,
     )
 
     logger.info(
@@ -253,13 +255,25 @@ async def completar_registro(
     }
 
 
-async def _provisionar_sheet_background(company_id: int, company_nombre: str, contacto_email: str):
-    """Tarea en background: crea el Sheet y guarda el ID en TenantConfig."""
+async def _provisionar_sheet_background(
+    company_id: int,
+    company_nombre: str,
+    contacto_email: str,
+    tipo_estructura: str = "unica",
+    sub_empresas: list = None,
+):
+    """Tarea en background: crea el Sheet (con pestañas para holdings) y guarda el ID en TenantConfig."""
     try:
         from app.services.tenant_provisioning import provisionar_tenant_completo
         from app.database import SessionLocal
 
-        resultado = provisionar_tenant_completo(company_nombre, company_id, contacto_email)
+        resultado = provisionar_tenant_completo(
+            company_nombre,
+            company_id,
+            contacto_email,
+            tipo_estructura=tipo_estructura,
+            sub_empresas=sub_empresas or [],
+        )
 
         if resultado["google_sheets_id"]:
             db = SessionLocal()
