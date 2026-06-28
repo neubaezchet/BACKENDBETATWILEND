@@ -376,3 +376,75 @@ async def rechazar_lead(
         "ok": True,
         "mensaje": f"Solicitud de '{lead.empresa_nombre}' rechazada.",
     }
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT ADMIN: POST /admin/leads/crear-empresa
+# Crea empresa + invitación directamente sin pasar por lead
+# ═══════════════════════════════════════════════════════════
+
+class CrearEmpresaDirectaBody(BaseModel):
+    empresa_nombre: str = Field(..., min_length=2, max_length=200)
+    nit: Optional[str] = Field(None, max_length=50)
+    contacto_email: str = Field(..., max_length=300)
+    contacto_telefono: Optional[str] = Field(None, max_length=50)
+
+
+@leads_router.post("/crear-empresa")
+async def crear_empresa_directa(
+    body: CrearEmpresaDirectaBody,
+    user=Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Crea una empresa + token de invitación directamente (sin lead previo).
+    Útil para agregar clientes manualmente desde el admin.
+    """
+    # Evitar duplicados por nombre
+    existente = db.query(Company).filter(Company.nombre == body.empresa_nombre).first()
+    if existente:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ya existe una empresa con el nombre '{body.empresa_nombre}' (id={existente.id})"
+        )
+
+    # Crear la empresa
+    company = Company(
+        nombre=body.empresa_nombre,
+        nit=body.nit,
+        contacto_email=body.contacto_email,
+        contacto_telefono=body.contacto_telefono,
+        activa=True,
+    )
+    db.add(company)
+    db.flush()
+
+    # Crear token de invitación (7 días)
+    token = secrets.token_urlsafe(64)
+    expires_at = datetime.utcnow() + timedelta(days=7)
+
+    invitacion = TenantInvitation(
+        token=token,
+        company_id=company.id,
+        creado_por=user.username,
+        expires_at=expires_at,
+    )
+    db.add(invitacion)
+    db.commit()
+
+    link_registro = f"{ADMIN_ORIGIN}/registro?token={token}"
+
+    logger.info(
+        f"✅ Empresa creada directamente: '{body.empresa_nombre}' "
+        f"(id={company.id}) por {user.username}"
+    )
+
+    return {
+        "ok": True,
+        "company_id": company.id,
+        "empresa_nombre": company.nombre,
+        "link_registro": link_registro,
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "expires_label": expires_at.strftime("%d %b %Y a las %H:%M UTC"),
+    }
