@@ -729,3 +729,33 @@ async def listar_usuarios_tenant(
             for u in usuarios
         ],
     }
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT PÚBLICO: GET /tenants/service-account-email
+# Devuelve el email de la cuenta de servicio de Google para
+# que la empresa sepa con quién compartir su carpeta de Drive
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/service-account-email")
+async def get_service_account_email():
+    """
+    Retorna el email de la Service Account de Google.
+    La empresa lo necesita para compartir su carpeta de Drive con el sistema.
+    Es información pública (no sensible).
+    """
+    try:
+        import json
+        creds_json = (
+            os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY")
+            or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+            or os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        )
+        if creds_json:
+            creds = json.loads(creds_json)
+            email = creds.get("client_email", "")
+            if email:
+                return {"ok": True, "email": email}
+    except Exception:
+        pass
+    return {"ok": False, "email": None, "mensaje": "Credenciales no configuradas"}
