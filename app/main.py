@@ -598,6 +598,77 @@ def shutdown_event():
         scheduler_token.shutdown()
         print("🛑 Renovación de token detenida")
 
+# ==================== FACTORY RESET ====================
+
+@app.post("/admin/factory-reset")
+async def factory_reset(
+    body: dict,
+    authorization: str = Header(...),
+):
+    """
+    Borra TODA la data operativa del sistema (empresas, empleados, casos, tenants).
+    Preserva: superadmins, configs LLM, OAuth, skills de radicación.
+    Requiere confirmacion: "RESET" en el body.
+    """
+    from app.validador import verificar_token_admin
+    verificar_token_admin(authorization)
+
+    if body.get("confirmacion") != "RESET":
+        raise HTTPException(status_code=400, detail="Debes enviar confirmacion: 'RESET'")
+
+    db = SessionLocal()
+    resumen = {}
+    try:
+        from sqlalchemy import text
+
+        tablas_en_orden = [
+            # Sub-tablas de casos primero
+            "case_events",
+            "case_notes",
+            "case_documents",
+            "resultados_validacion",
+            "plano_incapacidades",
+            "extractos_incapacidades",
+            "search_history",
+            "radicacion_sesiones",
+            # Alertas y colas
+            "alertas_180_log",
+            "alerta_emails",
+            "pendientes_envio",
+            # Datos principales
+            "cases",
+            "correos_notificacion",
+            "empresa_bot_config",
+            "employees",
+            # Tenant
+            "tenant_invitations",
+            "tenant_configs",
+            # Empresas
+            "companies",
+        ]
+
+        for tabla in tablas_en_orden:
+            try:
+                result = db.execute(text(f"DELETE FROM {tabla}"))
+                resumen[tabla] = result.rowcount
+            except Exception as e:
+                resumen[tabla] = f"error: {str(e)[:80]}"
+
+        # Admin users: solo los de tenants (no superadmins del sistema)
+        result = db.execute(text("DELETE FROM admin_users WHERE es_tenant_admin = TRUE"))
+        resumen["admin_users_tenant"] = result.rowcount
+
+        db.commit()
+        print(f"🔴 FACTORY RESET ejecutado. Resumen: {resumen}")
+        return {"ok": True, "resumen": resumen}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error en factory reset: {str(e)}")
+    finally:
+        db.close()
+
+
 # ==================== TEST RECORDATORIOS ====================
 
 @app.post("/admin/test-recordatorios")
