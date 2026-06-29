@@ -661,6 +661,49 @@ async def get_dashboard_completo(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── Helpers para radicación ──────────────────────────────────────────────────
+
+_EPS_NOMBRE_A_KEY = {
+    "COMPENSAR":     "compensar",
+    "NUEVA EPS":     "nueva_eps",
+    "SALUD TOTAL":   "salud_total",
+    "FAMISANAR":     "famisanar",
+    "EPS SURA":      "sura_eps",
+    "SURA EPS":      "sura_eps",
+    "SURA":          "sura_eps",
+    "SANITAS":       "sanitas",
+    "COLSANITAS":    "colsanitas",
+    "MEDIMAS":       "medimas",
+    "COOSALUD":      "coosalud",
+    "ALIANSALUD":    "aliansalud",
+    "CRUZ BLANCA":   "cruz_blanca",
+    "EMSSANAR":      "cruz_blanca",
+    "MUTUAL SER":    "mutual_ser",
+    "CAFE SALUD":    "cafe_salud",
+    "CAFÉ SALUD":    "cafe_salud",
+    "COOMEVA":       "coomeva",
+    "ARL SURA":      "arl_sura",
+    "POSITIVA":      "positiva",
+    "COLMENA":       "colmena",
+    "LIBERTY":       "liberty",
+    "BOLIVAR":       "bolivar",
+    "BOLÍVAR":       "bolivar",
+    "MAPFRE":        "mapfre",
+    "EQUIDAD":       "equidad",
+    "AXA COLPATRIA": "axa_colpatria",
+    "AXA":           "axa_colpatria",
+}
+
+def _nombre_a_eps_key(nombre: str) -> str:
+    """Mapea nombre de EPS extraído por OCR → eps_key del manifest."""
+    n = (nombre or "").upper().strip()
+    # Primero intenta coincidencia exacta de fragmento (más largo primero)
+    for fragment in sorted(_EPS_NOMBRE_A_KEY, key=len, reverse=True):
+        if fragment in n:
+            return _EPS_NOMBRE_A_KEY[fragment]
+    return ""
+
+
 @router.get("/plano-ocr")
 async def get_plano_ocr(
     empresa: str = Query("all"),
@@ -672,14 +715,14 @@ async def get_plano_ocr(
     """
     📋 PLANO INCAPACIDADES — 100% OCR
     Todos los campos vienen del texto extraído por Mistral + Gemini.
-    El único campo que trae la BD es 'empresa' (Company).
+    Campos de BD: empresa, nombre_trabajador. eps_key derivado del nombre de EPS.
     """
     try:
         fecha_inicio, fecha_fin = _calcular_fechas_periodo(periodo, fecha_desde, fecha_hasta)
 
         query = (
             db.query(Case)
-            .options(joinedload(Case.empresa))
+            .options(joinedload(Case.empresa), joinedload(Case.empleado))
             .filter(
                 Case.es_historico == False,
                 Case.created_at >= fecha_inicio,
@@ -714,14 +757,17 @@ async def get_plano_ocr(
                 except Exception:
                     return f
 
+            eps_raw = (plano.get("eps") or "").upper()
             filas.append({
                 "serial":            c.serial or "",
                 # ── sólo BD ──
                 "empresa":           empresa_nombre.upper(),
+                "nombre_trabajador": (c.empleado.nombre if c.empleado else "").upper(),
                 # ── todo OCR ──
                 "tipo_documento":    (plano.get("tipo_documento") or "CC").upper(),
                 "cedula":            str(plano.get("numero_documento") or ""),
-                "eps":               (plano.get("eps") or "").upper(),
+                "eps":               eps_raw,
+                "eps_key":           _nombre_a_eps_key(eps_raw),
                 "dias_incapacidad":  plano.get("dias_incapacidad") or 0,
                 "fecha_inicio":      fmt_fecha(plano.get("fecha_inicio")),
                 "fecha_fin":         fmt_fecha(plano.get("fecha_fin")),
