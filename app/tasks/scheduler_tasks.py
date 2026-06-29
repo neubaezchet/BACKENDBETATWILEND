@@ -102,6 +102,87 @@ def tarea_sincronizar_sheets():
         logger.error(f"❌ Error en sync multi-empresa: {str(e)}")
 
 
+def tarea_procesar_cola_radicacion():
+    """
+    Tarea que se ejecuta cada 2 minutos.
+    - Detecta ítems de la cola con proximo_intento vencido y estado fallo_temporal.
+    - Los devuelve a 'pendiente' para que browser-use los recoja en el próximo ciclo.
+    - Registra un resumen en el log para monitoreo.
+    - Si un ítem lleva más de 48 h en la cola sin éxito, lo marca fallo_definitivo.
+    """
+    try:
+        from app.database import SessionLocal, RadicacionCola
+        from datetime import datetime, timedelta
+
+        db = SessionLocal()
+        ahora = datetime.utcnow()
+        limite_48h = ahora - timedelta(hours=48)
+
+        # 1. Devolver a 'pendiente' ítems cuyo backoff ya venció
+        listos = db.query(RadicacionCola).filter(
+            RadicacionCola.estado == "fallo_temporal",
+            RadicacionCola.proximo_intento <= ahora,
+        ).all()
+
+        reactivados = 0
+        for item in listos:
+            # Verificar que no haya superado las 48 h desde su creación
+            if item.creado_en and item.creado_en <= limite_48h:
+                item.estado       = "fallo_definitivo"
+                item.fallo_motivo = (
+                    f"Tiempo máximo de 48 h superado. "
+                    f"Intentos: {item.intentos}. Último error: {item.ultimo_error}"
+                )
+                item.procesado_en = ahora
+                logger.warning(
+                    f"[Cola] Item #{item.id} ({item.eps_key}) → fallo_definitivo por timeout 48 h"
+                )
+            else:
+                item.estado         = "pendiente"
+                item.actualizado_en = ahora
+                reactivados += 1
+
+        if reactivados:
+            logger.info(f"[Cola] {reactivados} ítem(s) reactivado(s) para reintento")
+
+        # 2. Liberar ítems atascados en 'procesando' por más de 30 min
+        #    (browser-use pudo haber crasheado sin reportar)
+        limite_procesando = ahora - timedelta(minutes=30)
+        atascados = db.query(RadicacionCola).filter(
+            RadicacionCola.estado == "procesando",
+            RadicacionCola.actualizado_en <= limite_procesando,
+        ).all()
+
+        for item in atascados:
+            item.intentos = (item.intentos or 0) + 1
+            if item.intentos >= 12:
+                item.estado       = "fallo_definitivo"
+                item.fallo_motivo = "Proceso browser-use no reportó resultado en 30 min (posible crash)"
+                item.procesado_en = ahora
+            else:
+                item.estado          = "fallo_temporal"
+                item.ultimo_error    = "Timeout: browser-use no reportó en 30 min"
+                # Backoff corto para no perder tiempo
+                item.proximo_intento = ahora + timedelta(minutes=5)
+            item.actualizado_en = ahora
+            logger.warning(f"[Cola] Item #{item.id} liberado de estado 'procesando' atascado")
+
+        db.commit()
+
+        # 3. Log de resumen
+        pendientes = db.query(RadicacionCola).filter(
+            RadicacionCola.estado == "pendiente",
+            RadicacionCola.proximo_intento <= ahora,
+        ).count()
+        if pendientes:
+            logger.info(f"[Cola] {pendientes} ítem(s) pendiente(s) listos para browser-use")
+
+        db.close()
+
+    except Exception as e:
+        logger.error(f"❌ Error en tarea_procesar_cola_radicacion: {e}")
+
+
 def iniciar_scheduler():
     """
     Inicia el scheduler con todas las tareas programadas
@@ -157,6 +238,16 @@ def iniciar_scheduler():
                 replace_existing=True
             )
             logger.info("✅ Tarea registrada: Sync Sheets multi-empresa (cada 30 minutos)")
+
+            # Tarea 5: Cola de radicación — reintentos con backoff (cada 2 min)
+            scheduler.add_job(
+                tarea_procesar_cola_radicacion,
+                IntervalTrigger(minutes=2),
+                id='procesar_cola_radicacion',
+                name='Cola de radicación — gestión de reintentos',
+                replace_existing=True,
+            )
+            logger.info("✅ Tarea registrada: Cola radicación — reintentos (cada 2 min)")
 
             scheduler.start()
             logger.info("=" * 60)

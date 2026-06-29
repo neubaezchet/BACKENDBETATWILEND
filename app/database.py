@@ -688,6 +688,9 @@ class RadicacionSkill(Base):
     # Schema dinámico del formulario de login que descubrió el bot.
     # Formato: [{"key":"nit","label":"NIT empresa","tipo":"text"},{"key":"tipo_doc","tipo":"select","opciones":["NIT","CC"]}]
     campos_credenciales = Column(JSON, nullable=True)
+    # Límite de peso del PDF aceptado por el portal (MB). El bot comprimirá antes de subir.
+    # Sobreescribe el valor por defecto del MANIFEST si se detectó un límite distinto en vivo.
+    max_pdf_mb     = Column(Float, nullable=True)
     creado_en      = Column(DateTime, default=get_utc_now)
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
 
@@ -714,6 +717,71 @@ class RadicacionSesion(Base):
     iniciado_en  = Column(DateTime, default=get_utc_now, index=True)
     finalizado_en = Column(DateTime, nullable=True)
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+
+class RadicacionCola(Base):
+    """
+    Cola persistente de radicaciones con reintentos automáticos y backoff escalado.
+
+    Estados:
+      pendiente       → esperando ser procesada (respeta proximo_intento)
+      procesando      → actualmente en proceso por browser-use
+      exitosa         → radicación completada exitosamente
+      fallo_temporal  → falló, se reintentará según backoff
+      fallo_definitivo→ se agotaron los reintentos (~48 h) o error irrecuperable
+
+    Backoff de reintentos (intentos acumulados):
+      1-2   → cada 5 min
+      3-4   → cada 20 min
+      5-6   → cada 1 hora
+      7-8   → cada 4 horas
+      9+    → próximo día a las 8 am (Colombia)
+      >12   → fallo_definitivo
+    """
+    __tablename__ = 'radicacion_cola'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Referencia al caso
+    serial_caso  = Column(String(50), nullable=True, index=True)
+    case_id      = Column(Integer, ForeignKey('cases.id', ondelete='SET NULL'), nullable=True)
+
+    # Destino
+    empresa          = Column(String(200), nullable=False, index=True)
+    eps_key          = Column(String(100), nullable=False, index=True)
+    tipo_incapacidad = Column(String(100), default='enfermedad_general')
+
+    # Archivos
+    pdf_path      = Column(String(500))   # Ruta local en /app/archivos/ (volumen Docker)
+    pdf_drive_url = Column(String(500))   # URL del PDF en Drive (respaldo)
+
+    # Datos para rellenar el formulario del portal
+    datos_ocr      = Column(JSONB, default=dict)   # Campos extraídos por OCR
+    datos_manuales = Column(JSONB, default=dict)   # Campos adicionales manuales
+
+    # Control de reintentos
+    estado          = Column(String(50), default='pendiente', index=True)
+    intentos        = Column(Integer, default=0)
+    proximo_intento = Column(DateTime, default=get_utc_now, index=True)
+
+    # Resultado
+    radicado          = Column(String(200), nullable=True)
+    ultimo_error      = Column(Text, nullable=True)
+    historial_errores = Column(JSONB, default=list)   # [{intento, error, ts}]
+    fallo_motivo      = Column(Text, nullable=True)   # Resumen del fallo definitivo
+
+    # Sesión browser-use que lo procesó (o está procesando)
+    sesion_id = Column(String(100), nullable=True)
+
+    # Timestamps
+    creado_en    = Column(DateTime, default=get_utc_now, index=True)
+    procesado_en = Column(DateTime, nullable=True)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+    __table_args__ = (
+        Index('idx_cola_eps_estado',  'eps_key', 'estado'),
+        Index('idx_cola_proximo_est', 'proximo_intento', 'estado'),
+    )
 
 
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
@@ -797,6 +865,9 @@ def init_db():
 
         # ✅ Migrar columnas de demo/tenant sheets (seguro de re-ejecutar)
         migrar_columnas_demo_tenant()
+
+        # ✅ Migrar tabla cola de radicación (seguro de re-ejecutar)
+        migrar_cola_radicacion()
 
         # Verificar conexión
         db = SessionLocal()
@@ -988,7 +1059,8 @@ def migrar_columnas_radicacion():
         print("🔄 Migrando columnas de radicación...")
 
         migraciones = [
-            ("radicacion_skills",   "campos_credenciales", "JSONB"),
+            ("radicacion_skills", "campos_credenciales", "JSONB"),
+            ("radicacion_skills", "max_pdf_mb",          "FLOAT"),
         ]
         for tabla, col, tipo in migraciones:
             try:
@@ -1051,6 +1123,45 @@ def migrar_columnas_demo_tenant():
         return True
     except Exception as e:
         print(f"❌ Error en migración demo/tenant: {e}")
+        return False
+
+
+def migrar_cola_radicacion():
+    """
+    Crea/asegura la tabla radicacion_cola y sus columnas.
+    Seguro de re-ejecutar (IF NOT EXISTS).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando tabla radicacion_cola...")
+
+        # La tabla se crea con create_all, pero por seguridad verificamos columnas clave
+        columnas_extra = [
+            ("radicacion_cola", "historial_errores", "JSONB DEFAULT '[]'"),
+            ("radicacion_cola", "fallo_motivo",      "TEXT"),
+            ("radicacion_cola", "pdf_drive_url",     "VARCHAR(500)"),
+            ("radicacion_cola", "datos_manuales",    "JSONB DEFAULT '{}'"),
+        ]
+        for tabla, col, tipo in columnas_extra:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT"))
+                else:
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en {tabla} asegurada")
+            except Exception as e:
+                msg = str(e).lower()
+                if "duplicate column" in msg or "already exists" in msg:
+                    print(f"   ℹ️  Columna '{col}' en {tabla} ya existe")
+                else:
+                    print(f"   ⚠️  {tabla}.{col}: {e}")
+
+        db.commit()
+        print("✅ Migración cola radicación completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración cola radicación: {e}")
         return False
 
 
