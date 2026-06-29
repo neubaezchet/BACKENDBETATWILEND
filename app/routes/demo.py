@@ -23,8 +23,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 
-from app.database import get_db, DemoRequest, Company, TenantInvitation, TenantConfig
-from app.routes.admin import get_current_user, require_role
+from app.database import get_db, DemoRequest, Company, TenantInvitation, TenantConfig, DemoSession
+from app.routes.admin import get_current_user, require_role, create_access_token, pwd_context
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ class SolicitarDemoBody(BaseModel):
     contacto_telefono: Optional[str] = Field(None, max_length=50)
     como_conocio: Optional[str] = Field(None, max_length=200)
     mensaje: Optional[str] = Field(None, max_length=1000)
+    cantidad_empleados: Optional[str] = Field(None, max_length=20)  # "1-10" | "11-50" | "51-200" | "200+"
 
 
 class RechazarLeadBody(BaseModel):
@@ -112,6 +113,59 @@ El equipo de NeuroBareza
         logger.warning(f"⚠️ No se pudo enviar email de aprobación a {contacto_email}: {e}")
 
 
+def _enviar_email_demo_aprobado(
+    contacto_email: str, contacto_nombre: str, empresa_nombre: str,
+    link_registro: str, horas: int,
+):
+    """Email especial para aprobación de demo: incluye link de registro + los 3 portales."""
+    try:
+        from app.email_service import enviar_email_simple
+        asunto = f"🎯 Tu demo de NeuroBareza está listo — {empresa_nombre}"
+        cuerpo = f"""
+Hola {contacto_nombre},
+
+¡Buenas noticias! Tu solicitud de demo para **{empresa_nombre}** ha sido aprobada.
+
+Tienes **{horas} horas** para explorar el sistema completo desde que completes el registro.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+PASO 1 — Completa tu registro:
+{link_registro}
+
+⚠️ Este enlace expira en 24 horas.
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+Una vez registrado, tendrás acceso a los 3 portales:
+
+🔵 Portal Administración (configuración, usuarios, reportes)
+   https://admin-neurobaeza.vercel.app
+
+🟢 Portal Validación (revisión de incapacidades)
+   https://portal-neurobaeza.vercel.app
+
+🟡 RopoGemini — Recepción de incapacidades
+   https://ropogemini.vercel.app
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+Puedes enviar una incapacidad de prueba, ver cómo se procesa y cómo aparece en el validador.
+Al finalizar el demo, todos los datos se eliminarán automáticamente.
+
+¿Quieres contratar después del demo? Escríbenos a gestiondeincapacidades@incapacidade.com
+
+Saludos,
+El equipo de NeuroBareza
+        """.strip()
+
+        enviar_email_simple(
+            destinatario=contacto_email,
+            asunto=asunto,
+            cuerpo_texto=cuerpo,
+        )
+        logger.info(f"✅ Email de demo enviado a {contacto_email}")
+    except Exception as e:
+        logger.warning(f"⚠️ No se pudo enviar email de demo a {contacto_email}: {e}")
+
+
 def _enviar_email_rechazo(contacto_email: str, contacto_nombre: str, empresa_nombre: str, notas: str):
     """Notifica al solicitante que su solicitud fue rechazada."""
     try:
@@ -174,7 +228,7 @@ async def solicitar_demo(
         contacto_email=body.contacto_email,
         contacto_telefono=body.contacto_telefono,
         como_conocio=body.como_conocio,
-        mensaje=body.mensaje,
+        mensaje=body.cantidad_empleados or body.mensaje,  # cantidad_empleados tiene prioridad
         estado="pendiente",
     )
     db.add(lead)
@@ -386,7 +440,7 @@ async def rechazar_lead(
 class CrearEmpresaDirectaBody(BaseModel):
     empresa_nombre: str = Field(..., min_length=2, max_length=200)
     nit: Optional[str] = Field(None, max_length=50)
-    contacto_email: str = Field(..., max_length=300)
+    contacto_email: Optional[str] = Field(None, max_length=300)
     contacto_telefono: Optional[str] = Field(None, max_length=50)
 
 
@@ -447,4 +501,267 @@ async def crear_empresa_directa(
         "token": token,
         "expires_at": expires_at.isoformat(),
         "expires_label": expires_at.strftime("%d %b %Y a las %H:%M UTC"),
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT ADMIN: POST /admin/leads/{id}/aprobar-demo
+# Aprueba como DEMO temporal (horas limitadas, auto-destruye datos)
+# ═══════════════════════════════════════════════════════════
+
+class AprobarDemoBody(BaseModel):
+    horas: int = Field(4, ge=1, le=24, description="Duración del demo en horas (1-24)")
+    notas_internas: Optional[str] = None
+
+
+@leads_router.post("/{lead_id}/aprobar-demo")
+async def aprobar_lead_como_demo(
+    lead_id: int,
+    body: AprobarDemoBody,
+    background_tasks: BackgroundTasks,
+    user=Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Aprueba un lead como demo temporal:
+    - Crea Company + TenantInvitation (24h para registrarse)
+    - Crea DemoSession con timer (horas indicadas desde que completen el registro)
+    - El link de registro es diferente: /registro?token=XXX&demo=1
+    - Al vencer, los datos se eliminan automáticamente
+    """
+    lead = db.query(DemoRequest).filter(DemoRequest.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if lead.estado != "pendiente":
+        raise HTTPException(status_code=400, detail=f"Esta solicitud ya fue procesada (estado: {lead.estado})")
+
+    # Crear la Company
+    company = db.query(Company).filter(Company.nombre == lead.empresa_nombre).first()
+    if not company:
+        company = Company(
+            nombre=lead.empresa_nombre,
+            nit=lead.nit,
+            contacto_email=lead.contacto_email,
+            contacto_telefono=lead.contacto_telefono,
+            activa=True,
+        )
+        db.add(company)
+        db.flush()
+
+    # TenantInvitation con 24h para registrarse (demo empieza al completar registro)
+    token = secrets.token_urlsafe(64)
+    inv_expires = datetime.utcnow() + timedelta(hours=24)
+
+    invitacion = TenantInvitation(
+        token=token,
+        company_id=company.id,
+        creado_por=user.username,
+        expires_at=inv_expires,
+        demo_request_id=lead.id,
+    )
+    db.add(invitacion)
+
+    # DemoSession — el timer empieza cuando completan el registro
+    demo_expires = datetime.utcnow() + timedelta(hours=body.horas + 1)  # +1 por tiempo de registro
+    demo_session = DemoSession(
+        company_id=company.id,
+        demo_request_id=lead.id,
+        horas=body.horas,
+        expires_at=demo_expires,
+        activa=True,
+        cantidad_empleados=lead.mensaje,  # reutilizamos mensaje para cantidad_empleados si viene
+    )
+    db.add(demo_session)
+
+    lead.estado = "aprobado"
+    lead.aprobado_por = user.username
+    lead.company_id = company.id
+    if body.notas_internas:
+        lead.notas_internas = body.notas_internas
+
+    db.commit()
+
+    link_registro = f"{ADMIN_ORIGIN}/registro?token={token}&demo=1&horas={body.horas}"
+
+    background_tasks.add_task(
+        _enviar_email_demo_aprobado,
+        lead.contacto_email,
+        lead.contacto_nombre,
+        lead.empresa_nombre,
+        link_registro,
+        body.horas,
+    )
+
+    logger.info(f"🎯 Lead aprobado como DEMO ({body.horas}h): {lead.empresa_nombre} → company_id={company.id}")
+
+    return {
+        "ok": True,
+        "es_demo": True,
+        "horas": body.horas,
+        "company_id": company.id,
+        "link_registro": link_registro,
+        "expires_label": demo_expires.strftime("%d %b %Y a las %H:%M UTC"),
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT PÚBLICO: GET /demo/status/{company_id}
+# Verifica si el demo está activo y cuánto tiempo queda
+# ═══════════════════════════════════════════════════════════
+
+@demo_router.get("/status/{company_id}")
+async def demo_status(company_id: int, db: Session = Depends(get_db)):
+    """
+    ENDPOINT PÚBLICO. Verifica si una empresa tiene demo activo.
+    Retorna tiempo restante en segundos.
+    """
+    session = db.query(DemoSession).filter(
+        DemoSession.company_id == company_id,
+        DemoSession.activa == True,
+    ).first()
+
+    if not session:
+        return {"es_demo": False, "activo": False}
+
+    ahora = datetime.utcnow()
+    if session.expires_at <= ahora:
+        session.activa = False
+        db.commit()
+        return {"es_demo": True, "activo": False, "expirado": True}
+
+    segundos_restantes = int((session.expires_at - ahora).total_seconds())
+    return {
+        "es_demo": True,
+        "activo": True,
+        "segundos_restantes": segundos_restantes,
+        "horas_totales": session.horas,
+        "expires_at": session.expires_at.isoformat(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT PÚBLICO: POST /demo/feedback
+# Envía feedback al finalizar el demo
+# ═══════════════════════════════════════════════════════════
+
+class DemoFeedbackBody(BaseModel):
+    company_id: int
+    calificacion: int = Field(..., ge=1, le=5)
+    mejoras: Optional[str] = Field(None, max_length=2000)
+    quiere_contratar: Optional[str] = Field(None, pattern="^(si|no|despues)$")
+
+
+@demo_router.post("/feedback")
+async def enviar_demo_feedback(body: DemoFeedbackBody, db: Session = Depends(get_db)):
+    """
+    ENDPOINT PÚBLICO. Guarda el feedback del demo.
+    """
+    session = db.query(DemoSession).filter(
+        DemoSession.company_id == body.company_id,
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Sesión de demo no encontrada")
+
+    session.feedback_calificacion = body.calificacion
+    session.feedback_mejoras = body.mejoras
+    session.feedback_quiere_contratar = body.quiere_contratar
+    session.feedback_enviado_at = datetime.utcnow()
+    db.commit()
+
+    logger.info(f"📝 Feedback demo recibido: company_id={body.company_id} ⭐{body.calificacion}")
+    return {"ok": True, "mensaje": "¡Gracias por tu retroalimentación!"}
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT ADMIN: DELETE /admin/demos/limpiar
+# Elimina datos de demos expirados (llamar manualmente o via cron)
+# ═══════════════════════════════════════════════════════════
+
+@leads_router.delete("/demos/limpiar")
+async def limpiar_demos_expirados(
+    user=Depends(require_role("superadmin")),
+    db: Session = Depends(get_db),
+):
+    """Elimina todos los datos de demos expirados (companies, empleados, casos, etc.)."""
+    ahora = datetime.utcnow()
+    sessions_expiradas = db.query(DemoSession).filter(
+        DemoSession.expires_at <= ahora,
+    ).all()
+
+    eliminados = 0
+    for s in sessions_expiradas:
+        company = db.query(Company).filter(Company.id == s.company_id).first()
+        if company:
+            db.delete(company)  # CASCADE borra empleados, casos, etc.
+            eliminados += 1
+        db.delete(s)
+
+    db.commit()
+    logger.info(f"🗑️ Demos limpiados: {eliminados} empresas eliminadas")
+    return {"ok": True, "demos_eliminados": eliminados}
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT ADMIN: POST /admin/leads/{id}/activar-empresa
+# Convierte empresa demo en empresa real SIN doble registro
+# ═══════════════════════════════════════════════════════════
+
+@leads_router.post("/{lead_id}/activar-empresa")
+async def activar_empresa_desde_demo(
+    lead_id: int,
+    user=Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Convierte una empresa demo en empresa real permanente.
+    - Elimina la DemoSession (quita el timer)
+    - Conserva TODA la configuración, empleados, y portal ya creados
+    - La empresa queda como cliente activo sin necesidad de re-registro
+    """
+    lead = db.query(DemoRequest).filter(DemoRequest.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if not lead.company_id:
+        raise HTTPException(status_code=400, detail="Este lead no tiene empresa asociada")
+
+    company = db.query(Company).filter(Company.id == lead.company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+
+    demo_session = db.query(DemoSession).filter(
+        DemoSession.company_id == lead.company_id,
+    ).first()
+
+    if not demo_session:
+        # La empresa ya es real (no tiene DemoSession), no hay problema
+        return {
+            "ok": True,
+            "ya_activa": True,
+            "company_id": company.id,
+            "empresa_nombre": company.nombre,
+            "mensaje": f"La empresa '{company.nombre}' ya es una empresa activa.",
+        }
+
+    # Eliminar la sesión de demo → empresa queda permanente
+    feedback = {
+        "calificacion": demo_session.feedback_calificacion,
+        "mejoras": demo_session.feedback_mejoras,
+        "quiere_contratar": demo_session.feedback_quiere_contratar,
+    }
+    db.delete(demo_session)
+    db.commit()
+
+    logger.info(
+        f"✅ Empresa demo activada como real: '{company.nombre}' (id={company.id}) "
+        f"por {user.username} | Feedback: {feedback}"
+    )
+
+    return {
+        "ok": True,
+        "ya_activa": False,
+        "company_id": company.id,
+        "empresa_nombre": company.nombre,
+        "mensaje": f"¡Empresa '{company.nombre}' activada exitosamente! Ya es una empresa real.",
+        "feedback": feedback,
     }

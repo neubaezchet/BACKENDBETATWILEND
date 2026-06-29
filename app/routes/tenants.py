@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.database import (
-    get_db, AdminUser, Company, TenantConfig, TenantInvitation,
+    get_db, AdminUser, Company, TenantConfig, TenantInvitation, DemoSession,
 )
 from app.routes.admin import get_current_user, require_role, pwd_context, create_access_token
 
@@ -128,7 +128,7 @@ class RegistroCompletoBody(BaseModel):
     ciclo_reporte: str = "mensual"  # quincenal | mensual
     zona_horaria: str = "America/Bogota"
     # Contacto
-    contacto_email: str
+    contacto_email: Optional[str] = None
     correo_drive: Optional[str] = None
     # Credenciales del admin (elegidas por la empresa)
     admin_password: str = Field(..., min_length=8)
@@ -186,7 +186,8 @@ async def completar_registro(
         company.nit = body.nit
     if body.nombre:
         company.nombre = body.nombre
-    company.contacto_email = body.contacto_email
+    if body.contacto_email:
+        company.contacto_email = body.contacto_email
 
     # 3. Crear o actualizar TenantConfig
     config = config_existente or TenantConfig(company_id=company_id)
@@ -194,8 +195,9 @@ async def completar_registro(
         db.add(config)
 
     config.nit = body.nit or company.nit
-    config.contacto_email = body.contacto_email
-    config.correo_drive = body.correo_drive or body.contacto_email
+    if body.contacto_email:
+        config.contacto_email = body.contacto_email
+    config.correo_drive = body.correo_drive or body.contacto_email or ""
     config.zona_horaria = body.zona_horaria
     config.tipo_estructura = body.tipo_estructura
     config.sub_empresas = body.sub_empresas
@@ -255,12 +257,22 @@ async def completar_registro(
     db.refresh(tenant_admin)
     db.refresh(config)
 
+    # 5b. Si es demo, iniciar el timer ahora (desde que completan el registro)
+    demo_session = db.query(DemoSession).filter(
+        DemoSession.company_id == company_id,
+        DemoSession.activa == True,
+    ).first()
+    if demo_session:
+        demo_session.expires_at = datetime.utcnow() + timedelta(hours=demo_session.horas)
+        db.commit()
+
     # 6. Tareas background: Sheet + estructura de carpetas en Drive del cliente
+    email_para_bg = body.contacto_email or company.contacto_email or ""
     background_tasks.add_task(
         _provisionar_sheet_background,
         company_id=company_id,
         company_nombre=company.nombre,
-        contacto_email=body.contacto_email,
+        contacto_email=email_para_bg,
         tipo_estructura=body.tipo_estructura,
         sub_empresas=body.sub_empresas,
     )
@@ -271,6 +283,15 @@ async def completar_registro(
         tipo_estructura=body.tipo_estructura,
         sub_empresas=body.sub_empresas,
     )
+
+    # 7. Generar JWT para auto-login inmediato
+    es_tenant_admin = True
+    access_token = create_access_token(data={
+        "sub": tenant_admin.username,
+        "rol": tenant_admin.rol,
+        "es_tenant_admin": es_tenant_admin,
+        "company_id": company_id,
+    })
 
     logger.info(
         f"✅ Registro completado: empresa='{company.nombre}' "
@@ -287,6 +308,20 @@ async def completar_registro(
         },
         "admin_username": username,
         "ciclo_reporte": config.ciclo_reporte,
+        # Para auto-login en el frontend
+        "token": access_token,
+        "user": {
+            "id": tenant_admin.id,
+            "username": tenant_admin.username,
+            "nombre": tenant_admin.nombre,
+            "email": tenant_admin.email,
+            "rol": tenant_admin.rol,
+            "company_id": company_id,
+            "empresa": company.nombre,
+            "permisos": tenant_admin.permisos or {},
+            "es_tenant_admin": es_tenant_admin,
+            "tenant_permisos": tenant_admin.tenant_permisos or {},
+        },
     }
 
 

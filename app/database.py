@@ -448,6 +448,33 @@ class DemoRequest(Base):
     )
 
 
+class DemoSession(Base):
+    """
+    Sesión de demo temporal para empresas que quieren probar el sistema.
+    Se crea al aprobar un lead como 'demo'. Se elimina automáticamente al vencer.
+    """
+    __tablename__ = 'demo_sessions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=False, unique=True)
+    demo_request_id = Column(Integer, ForeignKey('demo_requests.id', ondelete='SET NULL'), nullable=True)
+
+    horas = Column(Integer, default=4)
+    expires_at = Column(DateTime, nullable=False)
+    activa = Column(Boolean, default=True)
+
+    # Dato adicional del formulario público
+    cantidad_empleados = Column(String(20), nullable=True)  # "1-10", "11-50", "51-200", "200+"
+
+    # Feedback al finalizar
+    feedback_calificacion = Column(Integer, nullable=True)   # 1-5 estrellas
+    feedback_mejoras = Column(Text, nullable=True)
+    feedback_quiere_contratar = Column(String(20), nullable=True)  # "si" | "no" | "despues"
+    feedback_enviado_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=get_utc_now)
+
+
 class Alerta180Log(Base):
     """
     Log de alertas 180 días enviadas.
