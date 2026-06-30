@@ -137,6 +137,8 @@ class RegistroCompletoBody(BaseModel):
     paleta_colores: dict = {}
     estilo_ui: str = "default"
     logo_url: Optional[str] = None
+    # Drive (opcional — se puede configurar después)
+    google_workspace_drive_id: Optional[str] = None
 
 
 @router.post("/registro/completar")
@@ -207,6 +209,8 @@ async def completar_registro(
     config.estilo_ui = body.estilo_ui
     if body.logo_url:
         config.logo_url = body.logo_url
+    if body.google_workspace_drive_id:
+        config.google_workspace_drive_id = body.google_workspace_drive_id
     config.onboarding_completado = True
     config.onboarding_step = 6
 

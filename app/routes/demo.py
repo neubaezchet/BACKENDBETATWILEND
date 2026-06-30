@@ -279,7 +279,7 @@ async def solicitar_demo_auto(
 
     db.commit()
 
-    link_registro = f"{ADMIN_ORIGIN}/registro?token={token}&demo=1&horas={HORAS_DEMO}"
+    link_registro = f"{ADMIN_ORIGIN}/onboarding?token={token}&demo=1&horas={HORAS_DEMO}"
     logger.info(f"🎯 Demo auto-servicio: {body.empresa_nombre} ({body.contacto_email}) → company_id={company.id}")
 
     return {
@@ -450,7 +450,7 @@ async def aprobar_lead(
     db.commit()
 
     # Link de registro self-service
-    link_registro = f"{ADMIN_ORIGIN}/registro?token={token}"
+    link_registro = f"{ADMIN_ORIGIN}/onboarding?token={token}"
 
     # 4. Enviar email en background
     background_tasks.add_task(
@@ -578,7 +578,7 @@ async def crear_empresa_directa(
     db.add(invitacion)
     db.commit()
 
-    link_registro = f"{ADMIN_ORIGIN}/registro?token={token}"
+    link_registro = f"{ADMIN_ORIGIN}/onboarding?token={token}"
 
     logger.info(
         f"✅ Empresa creada directamente: '{body.empresa_nombre}' "
@@ -673,7 +673,7 @@ async def aprobar_lead_como_demo(
 
     db.commit()
 
-    link_registro = f"{ADMIN_ORIGIN}/registro?token={token}&demo=1&horas={body.horas}"
+    link_registro = f"{ADMIN_ORIGIN}/onboarding?token={token}&demo=1&horas={body.horas}"
 
     background_tasks.add_task(
         _enviar_email_demo_aprobado,
