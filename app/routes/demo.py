@@ -198,6 +198,98 @@ El equipo de NeuroBareza
 # ENDPOINT PÚBLICO: POST /demo/solicitar
 # ═══════════════════════════════════════════════════════════
 
+@demo_router.post("/solicitar-auto")
+async def solicitar_demo_auto(
+    body: SolicitarDemoBody,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Demo auto-servicio: sin aprobación manual del admin.
+    - Crea DemoRequest visible en el panel de Solicitudes
+    - Crea Company + TenantInvitation (24h) + DemoSession (3h)
+    - Retorna link_registro para redirigir al wizard "Hola"
+    - Solo permite un demo por email
+    """
+    # Bloquear si ya existe demo para ese email
+    existente = db.query(DemoRequest).filter(
+        DemoRequest.contacto_email == body.contacto_email,
+    ).first()
+    if existente:
+        return {
+            "ok": False,
+            "ya_existe": True,
+            "mensaje": "Ya existe una solicitud de demo para este correo.",
+        }
+
+    # 1. Crear DemoRequest (visible en Leads del admin como "aprobado")
+    lead = DemoRequest(
+        empresa_nombre=body.empresa_nombre,
+        nit=body.nit,
+        contacto_nombre=body.contacto_nombre,
+        contacto_email=body.contacto_email,
+        contacto_telefono=body.contacto_telefono,
+        como_conocio=body.como_conocio,
+        mensaje=body.cantidad_empleados or body.mensaje,
+        estado="aprobado",
+        aprobado_por="auto-servicio",
+    )
+    db.add(lead)
+    db.flush()
+
+    # 2. Crear Company
+    company = db.query(Company).filter(Company.nombre == body.empresa_nombre).first()
+    if not company:
+        company = Company(
+            nombre=body.empresa_nombre,
+            nit=body.nit,
+            contacto_email=body.contacto_email,
+            contacto_telefono=body.contacto_telefono,
+            activa=True,
+        )
+        db.add(company)
+        db.flush()
+
+    lead.company_id = company.id
+
+    # 3. TenantInvitation: 24h para completar el registro
+    HORAS_DEMO = 3
+    token = secrets.token_urlsafe(64)
+    inv_expires = datetime.utcnow() + timedelta(hours=24)
+
+    invitacion = TenantInvitation(
+        token=token,
+        company_id=company.id,
+        creado_por="auto-servicio",
+        expires_at=inv_expires,
+        demo_request_id=lead.id,
+    )
+    db.add(invitacion)
+
+    # 4. DemoSession: timer empieza cuando completan el wizard "Hola"
+    demo_session = DemoSession(
+        company_id=company.id,
+        demo_request_id=lead.id,
+        horas=HORAS_DEMO,
+        expires_at=datetime.utcnow() + timedelta(hours=HORAS_DEMO + 1),
+        activa=True,
+        cantidad_empleados=body.cantidad_empleados,
+    )
+    db.add(demo_session)
+
+    db.commit()
+
+    link_registro = f"{ADMIN_ORIGIN}/registro?token={token}&demo=1&horas={HORAS_DEMO}"
+    logger.info(f"🎯 Demo auto-servicio: {body.empresa_nombre} ({body.contacto_email}) → company_id={company.id}")
+
+    return {
+        "ok": True,
+        "link_registro": link_registro,
+        "horas": HORAS_DEMO,
+        "empresa_nombre": body.empresa_nombre,
+    }
+
+
 @demo_router.post("/solicitar")
 async def solicitar_demo(
     body: SolicitarDemoBody,
