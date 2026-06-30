@@ -360,7 +360,7 @@ class TenantConfig(Base):
 
     # Identidad
     nit = Column(String(50))
-    logo_url = Column(String(500))
+    logo_url = Column(Text)  # base64 data URL — sin límite de longitud
 
     # Personalización visual
     paleta_id = Column(String(50), default='ocean')

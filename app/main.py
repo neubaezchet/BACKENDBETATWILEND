@@ -367,6 +367,8 @@ def startup_event():
                 # ✅ COLUMNAS - Rastreo de intentos incompletos
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS intentos_incompletos INTEGER DEFAULT 0;",
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_ultimo_incompleto TIMESTAMP;",
+                # ✅ logo_url — ampliar de VARCHAR(500) a TEXT para soportar base64
+                "ALTER TABLE tenant_configs ALTER COLUMN logo_url TYPE TEXT;",
             ]
             for sql in migraciones:
                 conn.execute(text(sql))
