@@ -369,6 +369,10 @@ def startup_event():
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS fecha_ultimo_incompleto TIMESTAMP;",
                 # ✅ logo_url — ampliar de VARCHAR(500) a TEXT para soportar base64
                 "ALTER TABLE tenant_configs ALTER COLUMN logo_url TYPE TEXT;",
+                # ✅ Soporte EPS — certificado bancario adjunto por empresa+EPS
+                "ALTER TABLE empresa_bot_config ADD COLUMN IF NOT EXISTS soporte_drive_url VARCHAR(500);",
+                "ALTER TABLE empresa_bot_config ADD COLUMN IF NOT EXISTS soporte_nombre VARCHAR(200);",
+                "ALTER TABLE empresa_bot_config ADD COLUMN IF NOT EXISTS soporte_actualizado_en TIMESTAMP;",
             ]
             for sql in migraciones:
                 conn.execute(text(sql))

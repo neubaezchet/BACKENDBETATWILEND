@@ -537,10 +537,28 @@ async def siguiente_lote(
         item.actualizado_en = ahora
     db.commit()
 
+    # Enriquecer cada ítem con el soporte de la empresa+EPS (si existe)
+    from app.database import EmpresaBotConfig as _EmpresaBotConfig
+    items_fmt = []
+    for i in items:
+        item_dict = _fmt_cola_item(i)
+        bot_cfg = db.query(_EmpresaBotConfig).filter(
+            _EmpresaBotConfig.nombre_empresa == i.empresa,
+            _EmpresaBotConfig.bot_nombre == i.eps_key,
+            _EmpresaBotConfig.soporte_drive_url.isnot(None),
+        ).first()
+        if bot_cfg:
+            item_dict["soporte_drive_url"] = bot_cfg.soporte_drive_url
+            item_dict["soporte_nombre"] = bot_cfg.soporte_nombre
+        else:
+            item_dict["soporte_drive_url"] = None
+            item_dict["soporte_nombre"] = None
+        items_fmt.append(item_dict)
+
     return {
         "ok": True,
-        "total": len(items),
-        "items": [_fmt_cola_item(i) for i in items],
+        "total": len(items_fmt),
+        "items": items_fmt,
     }
 
 

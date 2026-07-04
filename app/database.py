@@ -651,11 +651,17 @@ class EmpresaBotConfig(Base):
     
     # Metadata adicional
     observaciones = Column(Text, nullable=True)
-    
+
+    # Soporte adjunto (certificado bancario u otro doc requerido por la EPS)
+    # Se adjunta automáticamente junto a la incapacidad en cada radicación
+    soporte_drive_url = Column(String(500), nullable=True)   # URL de Drive del soporte
+    soporte_nombre    = Column(String(200), nullable=True)   # Nombre original del archivo
+    soporte_actualizado_en = Column(DateTime, nullable=True) # Última subida/reemplazo
+
     # Auditoría
     creado_por = Column(String(200))  # Usuario admin que lo creó
     actualizado_por = Column(String(200))  # Usuario admin que lo actualizó
-    
+
     creado_en = Column(DateTime, default=get_utc_now, index=True)
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     

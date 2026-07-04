@@ -7,7 +7,7 @@ RUTAS ADMIN - Portal Administrativo NeuroBarranquilla
 - Health / Stats del sistema
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, text, or_
@@ -16,6 +16,8 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import logging
 import os
+import tempfile
+from pathlib import Path
 
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -806,6 +808,10 @@ async def listar_bots_empresa(
                 "credenciales": b.credenciales or {},
                 "credenciales_guardadas": bool(b.credenciales),
                 "observaciones": b.observaciones,
+                "soporte_drive_url": b.soporte_drive_url,
+                "soporte_nombre": b.soporte_nombre,
+                "soporte_actualizado_en": b.soporte_actualizado_en.isoformat() if b.soporte_actualizado_en else None,
+                "tiene_soporte": bool(b.soporte_drive_url),
                 "actualizado_en": b.actualizado_en.isoformat() if b.actualizado_en else None,
                 "actualizado_por": b.actualizado_por,
             } for b in bots]
@@ -1061,19 +1067,19 @@ async def sincronizar_bots_radicacion(
 ):
     """🔄 Sincroniza bots disponibles desde API de radicación"""
     import httpx
-    
+
     try:
         radicacion_api = os.environ.get("RADICACION_API_URL", "http://localhost:8000")
-        
+
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{radicacion_api}/")
             resp.raise_for_status()
-            
+
             data = resp.json()
             tipos_doc = data.get("tipos_documento", {})
-            
+
             logger.info(f"📡 Sincronización con radicación API exitosa. Tipos documento: {len(tipos_doc)}")
-            
+
             return {
                 "ok": True,
                 "mensaje": f"Sincronizado con radicación API",
@@ -1085,3 +1091,202 @@ async def sincronizar_bots_radicacion(
             "ok": False,
             "mensaje": f"No se pudo conectar con radicación API: {str(e)}",
         }
+
+
+# ═══════════════════════════════════════════════════════════
+# 7. SOPORTE EPS — Certificado bancario adjunto a radicaciones
+# ═══════════════════════════════════════════════════════════
+
+def _fmt_bot_config(b: EmpresaBotConfig) -> dict:
+    """Serializa un EmpresaBotConfig incluyendo info del soporte."""
+    return {
+        "id": b.id,
+        "nombre_empresa": b.nombre_empresa,
+        "bot_nombre": b.bot_nombre,
+        "bot_tipo_medio": b.bot_tipo_medio,
+        "estado": b.estado,
+        "credenciales_guardadas": bool(b.credenciales),
+        "observaciones": b.observaciones,
+        "soporte_drive_url": b.soporte_drive_url,
+        "soporte_nombre": b.soporte_nombre,
+        "soporte_actualizado_en": b.soporte_actualizado_en.isoformat() if b.soporte_actualizado_en else None,
+        "tiene_soporte": bool(b.soporte_drive_url),
+        "actualizado_en": b.actualizado_en.isoformat() if b.actualizado_en else None,
+        "actualizado_por": b.actualizado_por,
+    }
+
+
+@router.get("/bots/todos")
+async def listar_todos_bots(
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """📋 Lista todas las configuraciones empresa+EPS del sistema (para el panel de credenciales)."""
+    try:
+        configs = db.query(EmpresaBotConfig).order_by(
+            EmpresaBotConfig.nombre_empresa, EmpresaBotConfig.bot_nombre
+        ).all()
+        return {
+            "ok": True,
+            "total": len(configs),
+            "configs": [_fmt_bot_config(c) for c in configs],
+        }
+    except Exception as e:
+        logger.error(f"Error listar todos bots: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/empresas/{nombre_empresa}/bots/{bot_nombre}/soporte")
+async def subir_soporte_eps(
+    nombre_empresa: str,
+    bot_nombre: str,
+    archivo: UploadFile = File(...),
+    user: AdminUser = Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db),
+):
+    """📎 Sube o reemplaza el soporte (certificado bancario) para una EPS.
+
+    El archivo queda guardado en Drive y se adjuntará automáticamente a cada
+    radicación de esa empresa+EPS. Si ya existía un soporte se reemplaza.
+    """
+    from app.drive_uploader import upload_to_drive
+
+    config = db.query(EmpresaBotConfig).filter(
+        EmpresaBotConfig.nombre_empresa == nombre_empresa,
+        EmpresaBotConfig.bot_nombre == bot_nombre,
+    ).first()
+
+    if not config:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Bot '{bot_nombre}' no configurado para empresa '{nombre_empresa}'. Crea la configuración primero.",
+        )
+
+    content = await archivo.read()
+    suffix = Path(archivo.filename).suffix or ".pdf"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        serial_soporte = f"soporte_{nombre_empresa[:20].replace(' ', '_')}_{bot_nombre}"
+        drive_url = upload_to_drive(
+            tmp_path,
+            "SOPORTES_EPS",
+            nombre_empresa[:30].replace(" ", "_"),
+            "soporte",
+            serial_soporte,
+        )
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    config.soporte_drive_url = drive_url
+    config.soporte_nombre = archivo.filename
+    config.soporte_actualizado_en = datetime.now()
+    config.actualizado_por = user.username
+    db.commit()
+
+    logger.info(
+        f"📎 Soporte '{archivo.filename}' subido para {nombre_empresa}/{bot_nombre} por {user.username}"
+    )
+    return {
+        "ok": True,
+        "mensaje": f"Soporte adjunto a {bot_nombre} de {nombre_empresa}",
+        "soporte_nombre": archivo.filename,
+        "soporte_drive_url": drive_url,
+    }
+
+
+@router.delete("/empresas/{nombre_empresa}/bots/{bot_nombre}/soporte")
+async def quitar_soporte_eps(
+    nombre_empresa: str,
+    bot_nombre: str,
+    user: AdminUser = Depends(require_role("superadmin", "admin")),
+    db: Session = Depends(get_db),
+):
+    """🗑️ Elimina el soporte adjunto de una EPS (ya no se adjuntará en radicaciones)."""
+    config = db.query(EmpresaBotConfig).filter(
+        EmpresaBotConfig.nombre_empresa == nombre_empresa,
+        EmpresaBotConfig.bot_nombre == bot_nombre,
+    ).first()
+
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Bot '{bot_nombre}' no encontrado")
+
+    if not config.soporte_drive_url:
+        raise HTTPException(status_code=404, detail="Esta configuración no tiene soporte adjunto")
+
+    nombre_anterior = config.soporte_nombre
+    config.soporte_drive_url = None
+    config.soporte_nombre = None
+    config.soporte_actualizado_en = None
+    config.actualizado_por = user.username
+    db.commit()
+
+    logger.info(
+        f"🗑️ Soporte '{nombre_anterior}' eliminado de {nombre_empresa}/{bot_nombre} por {user.username}"
+    )
+    return {
+        "ok": True,
+        "mensaje": f"Soporte eliminado de {bot_nombre} en {nombre_empresa}",
+    }
+
+
+@router.get("/empresas/{nombre_empresa}/bots/{bot_nombre}/soporte/download")
+async def descargar_soporte_eps(
+    nombre_empresa: str,
+    bot_nombre: str,
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """⬇️ Descarga el archivo de soporte para que el bot lo adjunte como archivo real.
+
+    Requiere token válido (bot o admin). Retorna los bytes del archivo.
+    """
+    from fastapi.responses import StreamingResponse
+    from googleapiclient.http import MediaIoBaseDownload
+    from app.drive_uploader import get_authenticated_service
+    import io
+
+    config = db.query(EmpresaBotConfig).filter(
+        EmpresaBotConfig.nombre_empresa == nombre_empresa,
+        EmpresaBotConfig.bot_nombre == bot_nombre,
+    ).first()
+
+    if not config or not config.soporte_drive_url:
+        raise HTTPException(status_code=404, detail="No hay soporte configurado para esta EPS")
+
+    # Extraer file_id de la URL de Drive
+    url = config.soporte_drive_url
+    if "/file/d/" in url:
+        file_id = url.split("/file/d/")[1].split("/")[0]
+    elif "id=" in url:
+        file_id = url.split("id=")[1].split("&")[0]
+    else:
+        raise HTTPException(status_code=422, detail="URL de Drive no reconocida")
+
+    try:
+        service = get_authenticated_service()
+        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+    except Exception as e:
+        logger.error(f"Error descargando soporte {file_id} de Drive: {e}")
+        raise HTTPException(status_code=502, detail=f"No se pudo descargar el soporte desde Drive: {e}")
+
+    nombre_archivo = config.soporte_nombre or f"soporte_{bot_nombre}.pdf"
+    # Detectar mime básico por extensión
+    ext = Path(nombre_archivo).suffix.lower()
+    mime_map = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+    content_type = mime_map.get(ext, "application/octet-stream")
+
+    return StreamingResponse(
+        buffer,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
+    )
