@@ -456,41 +456,82 @@ def descargar_excel_desde_drive():
             return None
 
 
-def sincronizar_empleado_desde_excel(cedula: str):
-    """Sincroniza UN empleado especifico (sync instantanea)"""
+def sincronizar_empleado_desde_excel(cedula: str, company_id: int = None):
+    """
+    Sincroniza UN empleado especifico (sync instantanea).
+    Si viene company_id (repogemin con slug de empresa):
+      - Busca/crea el empleado SOLO en esa empresa (aislamiento multi-tenant)
+      - Lee el Sheet PROPIO de esa empresa si lo tiene (no el maestro)
+    """
+    global _ACTIVE_SHEET_ID
     db = SessionLocal()
+    sheet_id_previo = _ACTIVE_SHEET_ID
     try:
-        empleado_bd = db.query(Employee).filter(Employee.cedula == cedula).first()
+        q = db.query(Employee).filter(Employee.cedula == cedula)
+        if company_id:
+            q = q.filter(Employee.company_id == company_id)
+        else:
+            # Sin empresa indicada: preferir la fila ACTIVA (puede existir en 2 empresas)
+            q = q.order_by(Employee.activo.desc())
+        empleado_bd = q.first()
         if empleado_bd:
             print(f"✅ Empleado {cedula} ya esta en BD")
             return empleado_bd
-        
+
+        # ✅ TENANT-AWARE: si la empresa tiene Sheet propio, leer ESE sheet
+        company_slug_owner = None
+        if company_id:
+            from app.database import TenantConfig
+            config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+            if config and config.google_sheets_id:
+                _ACTIVE_SHEET_ID = config.google_sheets_id
+                print(f"📄 Sync instantánea desde el Sheet propio de company_id={company_id}")
+            company_slug_owner = db.query(Company).filter(Company.id == company_id).first()
+
         excel_path = descargar_excel_desde_drive()
         if not excel_path:
             print(f"❌ No se pudo descargar el Excel")
             return None
-        
+
         df = pd.read_excel(excel_path, sheet_name=0)
         try:
             cedula_int = int(cedula)
         except ValueError:
             print(f"❌ Cedula invalida: {cedula}")
             return None
-        
+
         empleado_excel = df[df["cedula"] == cedula_int]
         if empleado_excel.empty:
             print(f"❌ Empleado {cedula} no encontrado en Excel")
             return None
-        
+
         row = empleado_excel.iloc[0]
-        empresa_nombre = str(row["empresa"]).strip()
+        # Empresa: la columna del sheet, o la dueña del sheet si viene vacía
+        empresa_nombre = str(row["empresa"]).strip() if ("empresa" in df.columns and pd.notna(row.get("empresa"))) else None
+        if not empresa_nombre and company_slug_owner:
+            empresa_nombre = company_slug_owner.nombre
+        if not empresa_nombre:
+            print(f"❌ Fila de {cedula} sin empresa identificable")
+            return None
         company = db.query(Company).filter(Company.nombre == empresa_nombre).first()
         if not company:
             company = Company(nombre=empresa_nombre, activa=True)
             db.add(company)
+            db.flush()
+            from app.database import asignar_slug
+            asignar_slug(db, company)
             db.commit()
             db.refresh(company)
-        
+
+        # Con la cédula única POR EMPRESA, verificar solo dentro de esta empresa
+        ya_en_empresa = db.query(Employee).filter(
+            Employee.cedula == cedula, Employee.company_id == company.id
+        ).first()
+        if ya_en_empresa:
+            ya_en_empresa.activo = True
+            db.commit()
+            return ya_en_empresa
+
         nuevo_empleado = Employee(
             cedula=str(row["cedula"]),
             nombre=row["nombre"],
@@ -519,6 +560,7 @@ def sincronizar_empleado_desde_excel(cedula: str):
         db.rollback()
         return None
     finally:
+        _ACTIVE_SHEET_ID = sheet_id_previo  # restaurar (no dejar el sheet del tenant como activo global)
         db.close()
 
 
@@ -663,11 +705,13 @@ def sincronizar_excel_completo(
             if ids_sheet_propio:
                 q = q.filter(~Employee.company_id.in_(ids_sheet_propio))
             empleados_bd = q.all()
-        empleados_por_cedula = {e.cedula: e for e in empleados_bd}
-        print(f"   📋 BD tiene {len(empleados_por_cedula)} empleados activos")
-        
+        # ✅ MULTI-TENANT: la clave es (cédula, empresa) — la misma cédula puede
+        # existir en dos empresas cliente como filas independientes, sin mezclarse.
+        empleados_por_clave = {(e.cedula, e.company_id): e for e in empleados_bd}
+        print(f"   📋 BD tiene {len(empleados_por_clave)} empleados activos (en el alcance de este sheet)")
+
         nuevos = actualizados = reactivados = 0
-        cedulas_en_excel = set()
+        claves_en_excel = set()
 
         # ✅ SINCRONIZACIÓN POR CÉDULA (sin-op si df vacío por pestaña inexistente)
         for idx, row in df.iterrows():
@@ -677,8 +721,7 @@ def sincronizar_excel_completo(
                 
                 # Datos del Excel
                 cedula = str(int(row["cedula"]))
-                cedulas_en_excel.add(cedula)
-                
+
                 nombre = row["nombre"]
                 correo = row.get("correo", "")
                 telefono = str(row.get("telefono", "")) if pd.notna(row.get("telefono")) else None
@@ -708,21 +751,28 @@ def sincronizar_excel_completo(
                 if not company:
                     company = Company(nombre=empresa_nombre, activa=True)
                     db.add(company)
+                    db.flush()
+                    from app.database import asignar_slug
+                    asignar_slug(db, company)
                     db.commit()
                     db.refresh(company)
                 
-                # ✅ LÓGICA CLAVE: Buscar empleado POR CÉDULA (no por posición)
-                empleado = empleados_por_cedula.get(cedula)
-                
-                # También buscar inactivos por si fue retirado antes y volvió
+                claves_en_excel.add((cedula, company.id))
+
+                # ✅ LÓGICA CLAVE: Buscar empleado POR (CÉDULA, EMPRESA) — aislamiento total
+                empleado = empleados_por_clave.get((cedula, company.id))
+
+                # También buscar inactivos DE ESTA EMPRESA por si fue retirado antes y volvió
                 if not empleado:
                     empleado = db.query(Employee).filter(
-                        Employee.cedula == cedula, Employee.activo == False
+                        Employee.cedula == cedula,
+                        Employee.company_id == company.id,
+                        Employee.activo == False,
                     ).first()
                     if empleado:
                         reactivados += 1
-                        print(f"   🔄 Reactivando empleado {cedula} ({nombre})")
-                
+                        print(f"   🔄 Reactivando empleado {cedula} ({nombre}) en '{empresa_nombre}'")
+
                 if empleado:
                     # ✅ ACTUALIZAR datos del empleado (ediciones en Excel se reflejan en BD)
                     empleado.nombre = nombre
@@ -744,23 +794,9 @@ def sincronizar_excel_completo(
                     db.commit()
                     actualizados += 1
                 else:
-                    # ⚠️ CONFLICTO MULTI-TENANT: la cédula ya existe ACTIVA en otra empresa.
-                    # No robar el empleado ni crashear con unique violation: la transferencia
-                    # correcta es que la empresa anterior lo quite de su Sheet (se retira) y
-                    # entonces este sync lo reactiva y reasigna automáticamente.
-                    activo_otra_empresa = db.query(Employee).filter(
-                        Employee.cedula == cedula, Employee.activo == True
-                    ).first()
-                    if activo_otra_empresa:
-                        otra = activo_otra_empresa.empresa.nombre if activo_otra_empresa.empresa else "?"
-                        print(
-                            f"   ⚠️ CONFLICTO: cédula {cedula} ya está activa en '{otra}' — "
-                            f"omitida en '{empresa_nombre}'. Para transferirla, primero "
-                            f"retírala del Sheet de '{otra}'."
-                        )
-                        continue
-
-                    # ✅ CREAR nuevo empleado (cédula no existe en BD)
+                    # ✅ CREAR empleado en ESTA empresa. Con la cédula única POR EMPRESA,
+                    # el mismo empleado puede existir en otra empresa cliente como fila
+                    # independiente — cada uno con su historial, sin robos ni conflictos.
                     nuevo_empleado = Employee(
                         cedula=cedula,
                         nombre=nombre,
@@ -793,8 +829,8 @@ def sincronizar_excel_completo(
         # skip_retire=True cuando la pestaña no existía (no retirar por eso)
         retirados = 0
         if not skip_retire:
-            for cedula_bd, empleado_bd in empleados_por_cedula.items():
-                if cedula_bd not in cedulas_en_excel:
+            for clave_bd, empleado_bd in empleados_por_clave.items():
+                if clave_bd not in claves_en_excel:
                     empleado_bd.activo = False
                     empleado_bd.updated_at = datetime.now()
                     db.commit()
@@ -811,7 +847,7 @@ def sincronizar_excel_completo(
         print(f"   • Empleados reactivados: {reactivados}")
         print(f"   • Empleados retirados: {retirados}")
         print(f"   • Total activos en BD: {total_activos}")
-        print(f"   • Total cédulas en Excel: {len(cedulas_en_excel)}")
+        print(f"   • Total cédulas en Excel: {len(claves_en_excel)}")
         print(f"{'='*60}\n")
         
         # ========== PASO 3: SYNC CASES_KACTUS (Hoja 2) — IMPORTAR CASOS (INCLUYE HISTÓRICOS) ==========

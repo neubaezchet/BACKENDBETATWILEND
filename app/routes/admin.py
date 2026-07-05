@@ -616,6 +616,7 @@ async def listar_empresas(
             "id": e.id,
             "nombre": e.nombre,
             "nit": e.nit,
+            "slug": e.slug,
             "contacto_email": e.contacto_email,
             "email_copia": e.email_copia,
             "correos_configurados": e._correos_count,

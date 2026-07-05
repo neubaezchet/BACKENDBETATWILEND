@@ -120,17 +120,39 @@ async def get_service_account_email_public():
 # (el hook useTenantTheme del frontend consume estos endpoints)
 # ═════════════════════════════════════════════════════════
 
-def _theme_de_company(db: Session, company_id: int) -> dict:
+PORTALES_VALIDOS = ("admin", "portal", "repogemin")
+
+
+def _theme_de_company(db: Session, company_id: int, portal: str = None) -> dict:
+    """
+    Tema visual de una empresa. Si `portal` viene ('admin' | 'portal' | 'repogemin')
+    y la empresa definió una paleta específica para ese portal, esa paleta gana;
+    si no, se usa la paleta general elegida en el wizard.
+    """
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")
     config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+
+    paleta_id = config.paleta_id if config else None
+    paleta_colores = (config.paleta_colores if config else None) or {}
+    overrides = (config.paletas_portales if config else None) or {}
+    if portal in PORTALES_VALIDOS and isinstance(overrides.get(portal), dict):
+        ov = overrides[portal]
+        paleta_id = ov.get("paleta_id") or paleta_id
+        paleta_colores = ov.get("colores") or paleta_colores
+
+    from app.services.portal_links import links_de_company
     return {
         "ok": True,
         "company_id": company.id,
         "empresa": company.nombre,
-        "paleta_id": config.paleta_id if config else None,
-        "paleta_colores": (config.paleta_colores if config else None) or {},
+        "slug": company.slug,
+        "activa": company.activa,
+        "links": links_de_company(company.slug),
+        "paleta_id": paleta_id,
+        "paleta_colores": paleta_colores,
+        "paletas_portales": overrides,
         "estilo_ui": config.estilo_ui if config else "default",
         "logo_url": config.logo_url if config else None,
         "tipo_estructura": (config.tipo_estructura if config else None) or "unica",
@@ -141,23 +163,116 @@ def _theme_de_company(db: Session, company_id: int) -> dict:
 
 @router.get("/me/theme")
 async def get_mi_theme(
+    portal: str = Query(None, description="admin | portal | repogemin"),
     user: AdminUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Tema visual de la empresa del usuario autenticado."""
     if not user.company_id:
         return {"ok": False, "mensaje": "Usuario sin empresa asociada (admin global)"}
-    return _theme_de_company(db, user.company_id)
+    return _theme_de_company(db, user.company_id, portal)
+
+
+class ActualizarThemeBody(BaseModel):
+    paleta_id: Optional[str] = None
+    paleta_colores: Optional[dict] = None   # {primary, secondary, accent}
+    estilo_ui: Optional[str] = None
+    portal: Optional[str] = None            # admin | portal | repogemin | None/"todos" = general
+
+
+@router.put("/me/theme")
+async def actualizar_mi_theme(
+    body: ActualizarThemeBody,
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Actualiza la paleta de la empresa del usuario autenticado (tuerquita ⚙️).
+    - portal = None o "todos" → cambia la paleta GENERAL y borra las paletas por
+      portal (los 3 frontends quedan iguales).
+    - portal = "admin" | "portal" | "repogemin" → guarda una paleta SOLO para ese
+      portal; los demás siguen con la general.
+    """
+    if not user.company_id:
+        raise HTTPException(status_code=403, detail="Usuario sin empresa asociada")
+
+    config = db.query(TenantConfig).filter(TenantConfig.company_id == user.company_id).first()
+    if not config:
+        config = TenantConfig(company_id=user.company_id)
+        db.add(config)
+
+    portal = (body.portal or "todos").lower()
+    if portal not in PORTALES_VALIDOS and portal != "todos":
+        raise HTTPException(status_code=400, detail=f"Portal inválido: {body.portal}")
+
+    if portal == "todos":
+        if body.paleta_id is not None:
+            config.paleta_id = body.paleta_id
+        if body.paleta_colores is not None:
+            config.paleta_colores = body.paleta_colores
+        if body.estilo_ui is not None:
+            config.estilo_ui = body.estilo_ui
+        config.paletas_portales = {}  # los 3 portales vuelven a la paleta general
+    else:
+        overrides = dict(config.paletas_portales or {})
+        overrides[portal] = {
+            "paleta_id": body.paleta_id,
+            "colores": body.paleta_colores or {},
+        }
+        config.paletas_portales = overrides
+
+    db.commit()
+    logger.info(f"🎨 Paleta actualizada por {user.username} (company_id={user.company_id}, portal={portal})")
+    return _theme_de_company(db, user.company_id, None if portal == "todos" else portal)
 
 
 @router.get("/{company_id}/theme")
 async def get_theme_de_empresa(
     company_id: int,
+    portal: str = Query(None, description="admin | portal | repogemin"),
     user: AdminUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Tema visual de una empresa específica (para previews desde el admin global)."""
-    return _theme_de_company(db, company_id)
+    return _theme_de_company(db, company_id, portal)
+
+
+# ═════════════════════════════════════════════════════════
+# ENDPOINT PÚBLICO: GET /public/portal/{slug}
+# Branding pre-login: los frontends lo usan para pintarse con
+# los colores/logo de la empresa ANTES de autenticar.
+# ═════════════════════════════════════════════════════════
+
+public_router = APIRouter(prefix="/public", tags=["Public Branding"])
+
+
+@public_router.get("/portal/{slug}")
+async def branding_publico(
+    slug: str,
+    portal: str = Query(None, description="admin | portal | repogemin"),
+    db: Session = Depends(get_db),
+):
+    """
+    ENDPOINT PÚBLICO (sin auth). Devuelve SOLO el branding de la empresa por su
+    slug: nombre, logo, paleta y estado. No expone datos operativos.
+    """
+    company = db.query(Company).filter(Company.slug == slug.strip().lower()).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+
+    tema = _theme_de_company(db, company.id, portal)
+    # Filtrar a lo estrictamente público
+    return {
+        "ok": True,
+        "company_id": tema["company_id"],
+        "empresa": tema["empresa"],
+        "slug": tema["slug"],
+        "activa": tema["activa"],
+        "paleta_id": tema["paleta_id"],
+        "paleta_colores": tema["paleta_colores"],
+        "estilo_ui": tema["estilo_ui"],
+        "logo_url": tema["logo_url"],
+    }
 
 
 # ═════════════════════════════════════════════════════════
@@ -599,6 +714,7 @@ async def get_tenant(
             "onboarding_step": config.onboarding_step,
         }
 
+    from app.services.portal_links import links_de_company
     return {
         "ok": True,
         "id": company.id,
@@ -606,6 +722,8 @@ async def get_tenant(
         "nit": company.nit or (config.nit if config else None),
         "contacto_email": company.contacto_email,
         "activa": company.activa,
+        "slug": company.slug,
+        "links": links_de_company(company.slug),
         "tenant_config": config_data,
     }
 

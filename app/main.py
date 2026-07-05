@@ -38,7 +38,7 @@ from app.routes.cie10 import router as cie10_router
 from app.routes.alertas import router as alertas_router
 from app.routes.admin import router as admin_router
 from app.routes.ocr import router as ocr_router
-from app.routes.tenants import router as tenants_router
+from app.routes.tenants import router as tenants_router, public_router as tenants_public_router
 from app.routes.radicacion import router as radicacion_router
 from app.routes.demo import demo_router, leads_router  # ✅ Demo/Leads
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
@@ -210,6 +210,7 @@ app.include_router(alertas_router)
 # ⭐ Panel Admin - Auth, Correos, Usuarios, Consola
 app.include_router(admin_router)
 app.include_router(tenants_router)
+app.include_router(tenants_public_router)  # ✅ Branding público por slug (/public/portal/{slug})
 app.include_router(demo_router)   # ✅ Solicitudes de demo (público)
 app.include_router(leads_router)  # ✅ Gestión de leads (admin)
 
@@ -373,12 +374,38 @@ def startup_event():
                 "ALTER TABLE empresa_bot_config ADD COLUMN IF NOT EXISTS soporte_drive_url VARCHAR(500);",
                 "ALTER TABLE empresa_bot_config ADD COLUMN IF NOT EXISTS soporte_nombre VARCHAR(200);",
                 "ALTER TABLE empresa_bot_config ADD COLUMN IF NOT EXISTS soporte_actualizado_en TIMESTAMP;",
+                # ✅ Multi-tenant: slug por empresa (URL propia) + paleta por portal
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS slug VARCHAR(120);",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_slug ON companies (slug);",
+                "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS paletas_portales JSON;",
+                # ✅ Multi-tenant: cédula única POR EMPRESA (no global)
+                "ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_cedula_key;",
+                "DROP INDEX IF EXISTS ix_employees_cedula;",
+                "CREATE INDEX IF NOT EXISTS ix_employees_cedula ON employees (cedula);",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_employee_company_cedula ON employees (company_id, cedula);",
             ]
             for sql in migraciones:
                 conn.execute(text(sql))
             conn.commit()
         print("✅ Auto-migración completada (columnas verificadas)")
-        
+
+        # ⭐ BACKFILL: asignar slug a las empresas existentes que no lo tengan
+        try:
+            from app.database import SessionLocal, Company, asignar_slug
+            _db = SessionLocal()
+            try:
+                sin_slug = _db.query(Company).filter(Company.slug == None).all()
+                for c in sin_slug:
+                    asignar_slug(_db, c)
+                if sin_slug:
+                    _db.commit()
+                    print(f"✅ Slugs asignados a {len(sin_slug)} empresas existentes")
+            finally:
+                _db.close()
+        except Exception as e:
+            print(f"⚠️ Backfill de slugs: {e}")
+
+
         # ⭐ AUTO-MIGRACIÓN: Agregar valores faltantes al enum tipoincapacidad
         # IMPORTANTE: ALTER TYPE ADD VALUE no puede correr dentro de una transacción
         # en PostgreSQL. Necesitamos AUTOCOMMIT para que funcione correctamente.
@@ -990,13 +1017,30 @@ async def force_wake_up(db: Session = Depends(get_db)):
         "message": "Todos los servicios renovados ⚡"
     }
 
+def _company_por_slug(db: Session, slug):
+    """Resuelve la empresa desde el slug de la URL (?empresa=mi-empresa). None si no viene o no existe."""
+    if not slug:
+        return None
+    return db.query(Company).filter(Company.slug == str(slug).strip().lower()).first()
+
+
 @app.get("/empleados/{cedula}")
-def obtener_empleado(cedula: str, db: Session = Depends(get_db)):
-    """Consulta empleado (con sync instantánea)"""
-    
-    # PASO 1: Buscar en BD
-    empleado = db.query(Employee).filter(Employee.cedula == cedula).first()
-    
+def obtener_empleado(cedula: str, empresa: str = None, db: Session = Depends(get_db)):
+    """
+    Consulta empleado (con sync instantánea).
+    Si viene ?empresa={slug} (link por empresa de repogemin), la búsqueda queda
+    AISLADA a esa empresa: solo se ven/crean empleados de ella.
+    """
+    company_scope = _company_por_slug(db, empresa)
+
+    # PASO 1: Buscar en BD (scoped si hay slug; si no, preferir la fila activa)
+    q = db.query(Employee).filter(Employee.cedula == cedula)
+    if company_scope:
+        q = q.filter(Employee.company_id == company_scope.id)
+    else:
+        q = q.order_by(Employee.activo.desc())
+    empleado = q.first()
+
     if empleado:
         return {
             "nombre": empleado.nombre,
@@ -1004,11 +1048,13 @@ def obtener_empleado(cedula: str, db: Session = Depends(get_db)):
             "correo": empleado.correo,
             "eps": empleado.eps
         }
-    
-    # PASO 2: Sincronizar desde Excel
+
+    # PASO 2: Sincronizar desde Excel (lee el Sheet propio de la empresa si hay slug)
     print(f"📄 Sync instantánea para {cedula}...")
-    empleado_sync = sincronizar_empleado_desde_excel(cedula)
-    
+    empleado_sync = sincronizar_empleado_desde_excel(
+        cedula, company_id=company_scope.id if company_scope else None
+    )
+
     if empleado_sync:
         return {
             "nombre": empleado_sync.nombre,
@@ -1016,16 +1062,22 @@ def obtener_empleado(cedula: str, db: Session = Depends(get_db)):
             "correo": empleado_sync.correo,
             "eps": empleado_sync.eps
         }
-    
+
     return JSONResponse(status_code=404, content={"error": "Empleado no encontrado"})
 @app.get("/verificar-bloqueo/{cedula}")
 def verificar_bloqueo_empleado(
     cedula: str,
+    empresa: str = None,
     db: Session = Depends(get_db)
 ):
-    """Verifica si el empleado tiene casos pendientes que bloquean nuevos envíos"""
-    
-    caso_bloqueante = db.query(Case).filter(
+    """
+    Verifica si el empleado tiene casos pendientes que bloquean nuevos envíos.
+    Con ?empresa={slug} solo cuentan los casos de ESA empresa (un caso pendiente
+    en otra empresa cliente no bloquea al mismo empleado aquí).
+    """
+    company_scope = _company_por_slug(db, empresa)
+
+    q = db.query(Case).filter(
         Case.cedula == cedula,
         Case.estado.in_([
             EstadoCaso.INCOMPLETA,
@@ -1033,7 +1085,10 @@ def verificar_bloqueo_empleado(
             EstadoCaso.INCOMPLETA_ILEGIBLE
         ]),
         Case.bloquea_nueva == True
-    ).first()
+    )
+    if company_scope:
+        q = q.filter(Case.company_id == company_scope.id)
+    caso_bloqueante = q.first()
     
     if caso_bloqueante:
         # Obtener checks seleccionados (si existen)
@@ -1446,17 +1501,28 @@ async def subir_incapacidad(
     subType: Optional[str] = Form(None),
     incapacityStartDate: Optional[str] = Form(None),
     incapacityEndDate: Optional[str] = Form(None),
+    empresa: Optional[str] = Form(None),  # slug de la empresa (link por empresa de repogemin)
     db: Session = Depends(get_db)
 ):
     """Endpoint de recepción de incapacidades"""
-    
-    # ✅ PASO 1: Verificar en BD (búsqueda instantánea)
-    empleado_bd = db.query(Employee).filter(Employee.cedula == cedula).first()
-    
-    # ✅ PASO 2: Si NO está en BD, sincronizar desde Excel
+
+    # ✅ MULTI-TENANT: si viene el slug, TODO queda aislado a esa empresa
+    company_scope = _company_por_slug(db, empresa)
+
+    # ✅ PASO 1: Verificar en BD (búsqueda instantánea, scoped si hay slug)
+    q_emp = db.query(Employee).filter(Employee.cedula == cedula)
+    if company_scope:
+        q_emp = q_emp.filter(Employee.company_id == company_scope.id)
+    else:
+        q_emp = q_emp.order_by(Employee.activo.desc())
+    empleado_bd = q_emp.first()
+
+    # ✅ PASO 2: Si NO está en BD, sincronizar desde Excel (Sheet propio si hay slug)
     if not empleado_bd:
         print(f"📄 Sincronización instantánea para {cedula}...")
-        empleado_bd = sincronizar_empleado_desde_excel(cedula)
+        empleado_bd = sincronizar_empleado_desde_excel(
+            cedula, company_id=company_scope.id if company_scope else None
+        )
     
     # ✅ PASO 3: Determinar si el empleado fue encontrado (en BD o Excel)
     if empleado_bd:
@@ -1517,7 +1583,7 @@ async def subir_incapacidad(
     es_reenvio = False
     
     if fecha_inicio and cedula:
-        caso_existente = db.query(Case).filter(
+        q_caso = db.query(Case).filter(
             Case.cedula == cedula,
             Case.fecha_inicio == fecha_inicio,
             Case.estado.in_([
@@ -1525,7 +1591,10 @@ async def subir_incapacidad(
                 EstadoCaso.ILEGIBLE,
                 EstadoCaso.INCOMPLETA_ILEGIBLE
             ])
-        ).first()
+        )
+        if company_scope:
+            q_caso = q_caso.filter(Case.company_id == company_scope.id)
+        caso_existente = q_caso.first()
     
     if caso_existente:
         # ✅ HAY CASO PREVIO INCOMPLETO → CONTAR REENVÍOS
@@ -1589,7 +1658,13 @@ async def subir_incapacidad(
     drive_error_detalle = None
     drive_error_usuario = None
     try:
-        empresa_destino = empleado_bd.empresa.nombre if empleado_bd else "OTRA_EMPRESA"
+        # Empresa destino: la del empleado; si no se encontró pero el link trae slug, la de la empresa del link
+        if empleado_bd and empleado_bd.empresa:
+            empresa_destino = empleado_bd.empresa.nombre
+        elif company_scope:
+            empresa_destino = company_scope.nombre
+        else:
+            empresa_destino = "OTRA_EMPRESA"
 
         pdf_final_path, original_filenames = await merge_pdfs_from_uploads(archivos, cedula, tipo)
 
@@ -1612,13 +1687,15 @@ async def subir_incapacidad(
             _estructurar_plano_con_gemini(metadata_form, resultado_ocr["texto"])
 
         # Obtener carpeta Drive del cliente si tiene onboarding completo
+        # (empresa del empleado; o la del slug del link si el empleado no se encontró)
         client_drive_id = None
         client_ciclo_reporte = None
-        if empleado_bd and empleado_bd.company_id:
+        company_id_drive = (empleado_bd.company_id if empleado_bd else None) or (company_scope.id if company_scope else None)
+        if company_id_drive:
             try:
                 from app.database import TenantConfig
                 tenant_cfg = db.query(TenantConfig).filter(
-                    TenantConfig.company_id == empleado_bd.company_id,
+                    TenantConfig.company_id == company_id_drive,
                     TenantConfig.onboarding_completado == True,
                 ).first()
                 if tenant_cfg and tenant_cfg.google_workspace_drive_id:
@@ -1686,7 +1763,7 @@ async def subir_incapacidad(
         serial=consecutivo,
         cedula=cedula,
         employee_id=empleado_bd.id if empleado_bd else None,
-        company_id=empleado_bd.company_id if empleado_bd else None,
+        company_id=(empleado_bd.company_id if empleado_bd else None) or (company_scope.id if company_scope else None),
         tipo=tipo_bd,
         subtipo=subType,
         dias_incapacidad=int(daysOfIncapacity) if daysOfIncapacity else None,
@@ -1976,6 +2053,9 @@ async def migrar_excel_a_bd(db: Session = Depends(get_db)):
                 if not company:
                     company = Company(nombre=empresa_nombre, activa=True)
                     db.add(company)
+                    db.flush()
+                    from app.database import asignar_slug
+                    asignar_slug(db, company)
                     db.commit()
                     db.refresh(company)
                 

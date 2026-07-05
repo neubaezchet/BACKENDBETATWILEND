@@ -23,8 +23,9 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 
-from app.database import get_db, DemoRequest, Company, TenantInvitation, TenantConfig, DemoSession
+from app.database import get_db, DemoRequest, Company, TenantInvitation, TenantConfig, DemoSession, asignar_slug
 from app.routes.admin import get_current_user, require_role, create_access_token, pwd_context
+from app.services.portal_links import links_de_company
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,28 @@ class AprobarLeadBody(BaseModel):
 # HELPERS
 # ═══════════════════════════════════════════════════════════
 
-def _serializar_lead(lead: DemoRequest) -> dict:
+def _serializar_lead(lead: DemoRequest, db: Session = None) -> dict:
+    # Slug + links de los 3 portales (si el lead tiene empresa asociada)
+    slug = None
+    demo_estado = None
+    if db is not None and lead.company_id:
+        company = db.query(Company).filter(Company.id == lead.company_id).first()
+        if company:
+            slug = company.slug
+            sesion = db.query(DemoSession).filter(DemoSession.company_id == company.id).first()
+            if sesion:
+                if sesion.activa and sesion.expires_at > datetime.utcnow():
+                    demo_estado = "demo_activo"
+                else:
+                    demo_estado = "demo_expirado"  # desactivado, aún recuperable con Activar
+            else:
+                demo_estado = "empresa_activa" if company.activa else "desactivada"
+        else:
+            demo_estado = "eliminada"  # el demo se purgó; Activar la recrea
     return {
+        "slug": slug,
+        "links": links_de_company(slug) if slug else None,
+        "demo_estado": demo_estado,
         "id": lead.id,
         "empresa_nombre": lead.empresa_nombre,
         "nit": lead.nit,
@@ -115,11 +136,12 @@ El equipo de NeuroBareza
 
 def _enviar_email_demo_aprobado(
     contacto_email: str, contacto_nombre: str, empresa_nombre: str,
-    link_registro: str, horas: int,
+    link_registro: str, horas: int, links: dict = None,
 ):
     """Email especial para aprobación de demo: incluye link de registro + los 3 portales."""
     try:
         from app.email_service import enviar_email_simple
+        links = links or links_de_company(None)
         asunto = f"🎯 Tu demo de NeuroBareza está listo — {empresa_nombre}"
         cuerpo = f"""
 Hola {contacto_nombre},
@@ -135,16 +157,17 @@ PASO 1 — Completa tu registro:
 ⚠️ Este enlace expira en 24 horas.
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-Una vez registrado, tendrás acceso a los 3 portales:
+Una vez registrado, tendrás acceso a los 3 portales EXCLUSIVOS de tu empresa
+(se abren con tus colores y tu logo):
 
 🔵 Portal Administración (configuración, usuarios, reportes)
-   https://admin-neurobaeza.vercel.app
+   {links['admin']}
 
 🟢 Portal Validación (revisión de incapacidades)
-   https://portal-neurobaeza.vercel.app
+   {links['portal']}
 
-🟡 RopoGemini — Recepción de incapacidades
-   https://repogemin.vercel.app
+🟡 Recepción de incapacidades (compártelo con tus empleados)
+   {links['repogemin']}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 Puedes enviar una incapacidad de prueba, ver cómo se procesa y cómo aparece en el validador.
@@ -164,6 +187,51 @@ El equipo de NeuroBareza
         logger.info(f"✅ Email de demo enviado a {contacto_email}")
     except Exception as e:
         logger.warning(f"⚠️ No se pudo enviar email de demo a {contacto_email}: {e}")
+
+
+def _enviar_email_empresa_activada(
+    contacto_email: str, contacto_nombre: str, empresa_nombre: str,
+    links: dict, paleta_id: str = None,
+):
+    """Email de bienvenida al activar la empresa como cliente: incluye los links de SUS 3 portales."""
+    try:
+        from app.email_service import enviar_email_simple
+        asunto = f"🎉 ¡Bienvenido a NeuroBareza, {empresa_nombre}!"
+        paleta_linea = f"\nTu portal conserva la personalización que elegiste (paleta: {paleta_id}).\n" if paleta_id else "\n"
+        cuerpo = f"""
+Hola {contacto_nombre},
+
+¡Excelentes noticias! **{empresa_nombre}** ya es cliente activo de NeuroBareza.
+
+Toda la configuración, usuarios y datos que creaste durante el demo se conservan.
+{paleta_linea}
+Estos son los accesos exclusivos de tu empresa (guárdalos en favoritos):
+
+🔵 Portal Administración (configuración, usuarios, reportes)
+   {links['admin']}
+
+🟢 Portal Validación (revisión de incapacidades)
+   {links['portal']}
+
+🟡 Recepción de incapacidades (compártelo con tus empleados)
+   {links['repogemin']}
+
+Al abrir estos links, verás tu logo y tus colores desde el inicio de sesión.
+
+Si tienes alguna pregunta, escríbenos a gestiondeincapacidades@incapacidade.com
+
+Saludos,
+El equipo de NeuroBareza
+        """.strip()
+
+        enviar_email_simple(
+            destinatario=contacto_email,
+            asunto=asunto,
+            cuerpo_texto=cuerpo,
+        )
+        logger.info(f"✅ Email de activación enviado a {contacto_email}")
+    except Exception as e:
+        logger.warning(f"⚠️ No se pudo enviar email de activación a {contacto_email}: {e}")
 
 
 def _enviar_email_rechazo(contacto_email: str, contacto_nombre: str, empresa_nombre: str, notas: str):
@@ -251,6 +319,9 @@ async def solicitar_demo_auto(
         )
         db.add(company)
         db.flush()
+    if not company.slug:
+        asignar_slug(db, company)
+    company.activa = True  # por si estaba desactivada de un demo expirado anterior
 
     lead.company_id = company.id
 
@@ -269,15 +340,24 @@ async def solicitar_demo_auto(
     db.add(invitacion)
 
     # 4. DemoSession: timer empieza cuando completan el wizard "Hola"
-    demo_session = DemoSession(
-        company_id=company.id,
-        demo_request_id=lead.id,
-        horas=HORAS_DEMO,
-        expires_at=datetime.utcnow() + timedelta(hours=HORAS_DEMO + 1),
-        activa=True,
-        cantidad_empleados=body.cantidad_empleados,
-    )
-    db.add(demo_session)
+    # (company_id es UNIQUE: si quedó una sesión expirada en periodo de gracia, se reutiliza)
+    demo_session = db.query(DemoSession).filter(DemoSession.company_id == company.id).first()
+    if demo_session:
+        demo_session.demo_request_id = lead.id
+        demo_session.horas = HORAS_DEMO
+        demo_session.expires_at = datetime.utcnow() + timedelta(hours=HORAS_DEMO + 1)
+        demo_session.activa = True
+        demo_session.cantidad_empleados = body.cantidad_empleados
+    else:
+        demo_session = DemoSession(
+            company_id=company.id,
+            demo_request_id=lead.id,
+            horas=HORAS_DEMO,
+            expires_at=datetime.utcnow() + timedelta(hours=HORAS_DEMO + 1),
+            activa=True,
+            cantidad_empleados=body.cantidad_empleados,
+        )
+        db.add(demo_session)
 
     db.commit()
 
@@ -368,7 +448,7 @@ async def listar_leads(
         "ok": True,
         "total": total,
         "stats": {"pendientes": pendientes, "aprobados": aprobados, "rechazados": rechazados},
-        "leads": [_serializar_lead(l) for l in leads],
+        "leads": [_serializar_lead(l, db) for l in leads],
     }
 
 
@@ -385,7 +465,7 @@ async def detalle_lead(
     lead = db.query(DemoRequest).filter(DemoRequest.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    return {"ok": True, "lead": _serializar_lead(lead)}
+    return {"ok": True, "lead": _serializar_lead(lead, db)}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -428,6 +508,8 @@ async def aprobar_lead(
         )
         db.add(company)
         db.flush()  # Para obtener el ID antes del commit
+    if not company.slug:
+        asignar_slug(db, company)
 
     # 2. Crear token de invitación (7 días)
     token = secrets.token_urlsafe(64)
@@ -566,6 +648,7 @@ async def crear_empresa_directa(
     )
     db.add(company)
     db.flush()
+    asignar_slug(db, company)
 
     # Crear token de invitación (7 días)
     token = secrets.token_urlsafe(64)
@@ -641,6 +724,9 @@ async def aprobar_lead_como_demo(
         )
         db.add(company)
         db.flush()
+    if not company.slug:
+        asignar_slug(db, company)
+    company.activa = True  # por si estaba desactivada de un demo expirado anterior
 
     # TenantInvitation con 24h para registrarse (demo empieza al completar registro)
     token = secrets.token_urlsafe(64)
@@ -656,16 +742,25 @@ async def aprobar_lead_como_demo(
     db.add(invitacion)
 
     # DemoSession — el timer empieza cuando completan el registro
+    # (company_id es UNIQUE: si quedó una sesión expirada en periodo de gracia, se reutiliza)
     demo_expires = datetime.utcnow() + timedelta(hours=body.horas + 1)  # +1 por tiempo de registro
-    demo_session = DemoSession(
-        company_id=company.id,
-        demo_request_id=lead.id,
-        horas=body.horas,
-        expires_at=demo_expires,
-        activa=True,
-        cantidad_empleados=lead.mensaje,  # reutilizamos mensaje para cantidad_empleados si viene
-    )
-    db.add(demo_session)
+    demo_session = db.query(DemoSession).filter(DemoSession.company_id == company.id).first()
+    if demo_session:
+        demo_session.demo_request_id = lead.id
+        demo_session.horas = body.horas
+        demo_session.expires_at = demo_expires
+        demo_session.activa = True
+        demo_session.cantidad_empleados = lead.mensaje
+    else:
+        demo_session = DemoSession(
+            company_id=company.id,
+            demo_request_id=lead.id,
+            horas=body.horas,
+            expires_at=demo_expires,
+            activa=True,
+            cantidad_empleados=lead.mensaje,  # reutilizamos mensaje para cantidad_empleados si viene
+        )
+        db.add(demo_session)
 
     lead.estado = "aprobado"
     lead.aprobado_por = user.username
@@ -684,6 +779,7 @@ async def aprobar_lead_como_demo(
         lead.empresa_nombre,
         link_registro,
         body.horas,
+        links_de_company(company.slug),
     )
 
     logger.info(f"🎯 Lead aprobado como DEMO ({body.horas}h): {lead.empresa_nombre} → company_id={company.id}")
@@ -709,18 +805,20 @@ async def demo_status(company_id: int, db: Session = Depends(get_db)):
     ENDPOINT PÚBLICO. Verifica si una empresa tiene demo activo.
     Retorna tiempo restante en segundos.
     """
+    # OJO: no filtrar por activa — un demo expirado en periodo de gracia sigue
+    # existiendo (desactivado) y el portal debe seguir mostrándolo como expirado.
     session = db.query(DemoSession).filter(
         DemoSession.company_id == company_id,
-        DemoSession.activa == True,
     ).first()
 
     if not session:
         return {"es_demo": False, "activo": False}
 
     ahora = datetime.utcnow()
-    if session.expires_at <= ahora:
-        session.activa = False
-        db.commit()
+    if session.expires_at <= ahora or not session.activa:
+        if session.activa:
+            session.activa = False
+            db.commit()
         return {"es_demo": True, "activo": False, "expirado": True}
 
     segundos_restantes = int((session.expires_at - ahora).total_seconds())
@@ -772,9 +870,24 @@ async def enviar_demo_feedback(body: DemoFeedbackBody, db: Session = Depends(get
 # Elimina datos de demos expirados (llamar manualmente o via cron)
 # ═══════════════════════════════════════════════════════════
 
+GRACIA_DIAS_DEMO = 7  # días que un demo expirado queda desactivado antes de la purga total
+
+
 def limpiar_demos_expirados_core() -> dict:
     """
-    Elimina los datos de demos expirados (companies, empleados, casos, Sheet en Drive).
+    Ciclo de vida del demo expirado, en DOS FASES:
+
+    FASE 1 (al expirar): DESACTIVA la empresa — portales bloqueados, el sync la
+      ignora, no gasta ciclos de servidor. Los datos y la configuración se
+      CONSERVAN para que el admin todavía pueda oprimir "Activar empresa" si el
+      cliente decidió contratar después del demo. El lead pasa a "expirado"
+      (conserva historial y libera el email).
+
+    FASE 2 (a los GRACIA_DIAS_DEMO días de expirado): purga total — empresa,
+      empleados, casos, TenantConfig y Sheet en Drive. Solo queda el lead como
+      historial; si el admin activa después, se recrea desde cero con una nueva
+      invitación.
+
     Reutilizable: la invocan el endpoint de admin y el job automático del scheduler.
     Abre y cierra su propia sesión de BD.
     """
@@ -783,27 +896,23 @@ def limpiar_demos_expirados_core() -> dict:
     db = SessionLocal()
     try:
         ahora = datetime.utcnow()
+        limite_purga = ahora - timedelta(days=GRACIA_DIAS_DEMO)
+
         sessions_expiradas = db.query(DemoSession).filter(
             DemoSession.expires_at <= ahora,
         ).all()
 
         if not sessions_expiradas:
-            return {"ok": True, "demos_eliminados": 0, "sheets_borrados": 0}
+            return {"ok": True, "demos_desactivados": 0, "demos_eliminados": 0, "sheets_borrados": 0}
 
+        desactivados = 0
         eliminados = 0
         sheets_a_borrar = []
         for s in sessions_expiradas:
             company = db.query(Company).filter(Company.id == s.company_id).first()
-            if company:
-                # Capturar el Sheet del tenant ANTES del cascade (TenantConfig se borra con la Company)
-                config = db.query(TenantConfig).filter(TenantConfig.company_id == company.id).first()
-                if config and config.google_sheets_id:
-                    sheets_a_borrar.append(config.google_sheets_id)
-                db.delete(company)  # CASCADE borra empleados, casos, etc.
-                eliminados += 1
 
-            # Marcar el lead como expirado: conserva el historial en el panel de
-            # Solicitudes pero libera el email para que puedan pedir otro demo.
+            # Lead asociado: conserva el historial en el panel de Solicitudes
+            # y libera el email para que puedan pedir otro demo.
             lead = None
             if s.demo_request_id:
                 lead = db.query(DemoRequest).filter(DemoRequest.id == s.demo_request_id).first()
@@ -811,6 +920,24 @@ def limpiar_demos_expirados_core() -> dict:
                 lead = db.query(DemoRequest).filter(DemoRequest.company_id == s.company_id).first()
             if lead and lead.estado == "aprobado":
                 lead.estado = "expirado"
+
+            if s.expires_at > limite_purga:
+                # ── FASE 1: expiró pero está en periodo de gracia → desactivar, NO borrar
+                s.activa = False
+                if company and company.activa:
+                    company.activa = False
+                    desactivados += 1
+                    logger.info(f"⏸️ Demo expirado — empresa desactivada (gracia {GRACIA_DIAS_DEMO} días): '{company.nombre}' (id={company.id})")
+                continue
+
+            # ── FASE 2: gracia vencida → purga total
+            if company:
+                # Capturar el Sheet del tenant ANTES del cascade (TenantConfig se borra con la Company)
+                config = db.query(TenantConfig).filter(TenantConfig.company_id == company.id).first()
+                if config and config.google_sheets_id:
+                    sheets_a_borrar.append(config.google_sheets_id)
+                db.delete(company)  # CASCADE borra empleados, casos, etc.
+                eliminados += 1
 
             db.delete(s)
 
@@ -831,8 +958,16 @@ def limpiar_demos_expirados_core() -> dict:
             except Exception as e:
                 logger.warning(f"⚠️ Sin servicio Drive para borrar Sheets de demos: {e}")
 
-        logger.info(f"🗑️ Demos limpiados: {eliminados} empresas, {sheets_borrados} Sheets borrados de Drive")
-        return {"ok": True, "demos_eliminados": eliminados, "sheets_borrados": sheets_borrados}
+        logger.info(
+            f"🗑️ Limpieza de demos: {desactivados} desactivados (gracia), "
+            f"{eliminados} purgados, {sheets_borrados} Sheets borrados de Drive"
+        )
+        return {
+            "ok": True,
+            "demos_desactivados": desactivados,
+            "demos_eliminados": eliminados,
+            "sheets_borrados": sheets_borrados,
+        }
     finally:
         db.close()
 
@@ -853,58 +988,126 @@ async def limpiar_demos_expirados(
 @leads_router.post("/{lead_id}/activar-empresa")
 async def activar_empresa_desde_demo(
     lead_id: int,
+    background_tasks: BackgroundTasks,
     user=Depends(require_role("superadmin", "admin")),
     db: Session = Depends(get_db),
 ):
     """
     Convierte una empresa demo en empresa real permanente.
     - Elimina la DemoSession (quita el timer)
+    - REACTIVA la empresa si el demo ya había expirado (periodo de gracia)
     - Conserva TODA la configuración, empleados, y portal ya creados
-    - La empresa queda como cliente activo sin necesidad de re-registro
+    - Si el demo fue purgado (gracia vencida): recrea la empresa y envía una
+      nueva invitación de registro al contacto
+    - Envía email al contacto con los links de sus 3 portales
     """
     lead = db.query(DemoRequest).filter(DemoRequest.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    if not lead.company_id:
-        raise HTTPException(status_code=400, detail="Este lead no tiene empresa asociada")
 
-    company = db.query(Company).filter(Company.id == lead.company_id).first()
+    company = None
+    if lead.company_id:
+        company = db.query(Company).filter(Company.id == lead.company_id).first()
+
+    # ── Caso purga: el demo expiró y sus datos ya fueron eliminados → recrear desde cero
     if not company:
-        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+        company = Company(
+            nombre=lead.empresa_nombre,
+            nit=lead.nit,
+            contacto_email=lead.contacto_email,
+            contacto_telefono=lead.contacto_telefono,
+            activa=True,
+        )
+        db.add(company)
+        db.flush()
+        asignar_slug(db, company)
 
+        token = secrets.token_urlsafe(64)
+        expires_at = datetime.utcnow() + timedelta(days=7)
+        invitacion = TenantInvitation(
+            token=token,
+            company_id=company.id,
+            creado_por=user.username,
+            expires_at=expires_at,
+            demo_request_id=lead.id,
+        )
+        db.add(invitacion)
+        lead.company_id = company.id
+        lead.estado = "aprobado"
+        lead.aprobado_por = user.username
+        db.commit()
+
+        link_registro = f"{ADMIN_ORIGIN}/onboarding?token={token}"
+        background_tasks.add_task(
+            _enviar_email_aprobacion,
+            lead.contacto_email,
+            lead.contacto_nombre,
+            company.nombre,
+            link_registro,
+        )
+        logger.info(
+            f"♻️ Demo purgado reactivado como empresa real: '{company.nombre}' "
+            f"(id={company.id}) — nueva invitación enviada, por {user.username}"
+        )
+        return {
+            "ok": True,
+            "recreada": True,
+            "company_id": company.id,
+            "empresa_nombre": company.nombre,
+            "link_registro": link_registro,
+            "mensaje": (
+                f"El demo de '{company.nombre}' ya había sido eliminado. "
+                f"Se creó la empresa de nuevo y se envió una invitación de registro a {lead.contacto_email}."
+            ),
+        }
+
+    # ── Caso normal: la empresa existe (demo vigente o expirado en gracia)
     demo_session = db.query(DemoSession).filter(
         DemoSession.company_id == lead.company_id,
     ).first()
 
-    if not demo_session:
-        # La empresa ya es real (no tiene DemoSession), no hay problema
-        return {
-            "ok": True,
-            "ya_activa": True,
-            "company_id": company.id,
-            "empresa_nombre": company.nombre,
-            "mensaje": f"La empresa '{company.nombre}' ya es una empresa activa.",
-        }
+    reactivada = not company.activa
+    company.activa = True  # reactiva si estaba desactivada por expiración
+    if lead.estado == "expirado":
+        lead.estado = "aprobado"
 
-    # Eliminar la sesión de demo → empresa queda permanente
-    feedback = {
-        "calificacion": demo_session.feedback_calificacion,
-        "mejoras": demo_session.feedback_mejoras,
-        "quiere_contratar": demo_session.feedback_quiere_contratar,
-    }
-    db.delete(demo_session)
+    feedback = None
+    if demo_session:
+        feedback = {
+            "calificacion": demo_session.feedback_calificacion,
+            "mejoras": demo_session.feedback_mejoras,
+            "quiere_contratar": demo_session.feedback_quiere_contratar,
+        }
+        db.delete(demo_session)  # quita el timer → empresa permanente
     db.commit()
+
+    # Email al contacto con los links de sus 3 portales + su personalización
+    config = db.query(TenantConfig).filter(TenantConfig.company_id == company.id).first()
+    paleta_id = config.paleta_id if config else None
+    email_destino = company.contacto_email or lead.contacto_email
+    if email_destino:
+        background_tasks.add_task(
+            _enviar_email_empresa_activada,
+            email_destino,
+            lead.contacto_nombre,
+            company.nombre,
+            links_de_company(company.slug),
+            paleta_id,
+        )
 
     logger.info(
         f"✅ Empresa demo activada como real: '{company.nombre}' (id={company.id}) "
-        f"por {user.username} | Feedback: {feedback}"
+        f"por {user.username} | reactivada={reactivada} | Feedback: {feedback}"
     )
 
     return {
         "ok": True,
-        "ya_activa": False,
+        "ya_activa": demo_session is None and not reactivada,
+        "reactivada": reactivada,
         "company_id": company.id,
         "empresa_nombre": company.nombre,
+        "slug": company.slug,
+        "links": links_de_company(company.slug),
         "mensaje": f"¡Empresa '{company.nombre}' activada exitosamente! Ya es una empresa real.",
         "feedback": feedback,
     }

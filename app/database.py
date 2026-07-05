@@ -4,7 +4,7 @@ Modelos SQLAlchemy para gestión de casos de incapacidades
 VERSIÓN 3.0 - Con soporte para jefes y recordatorios
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index, Float, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -65,6 +65,7 @@ class Company(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String(200), nullable=False, unique=True, index=True)
+    slug = Column(String(120), unique=True, index=True, nullable=True)  # URL por empresa: repogemin.vercel.app/?empresa={slug}
     nit = Column(String(50), unique=True)
     contacto_email = Column(String(200))
     contacto_telefono = Column(String(50))
@@ -77,12 +78,35 @@ class Company(Base):
     empleados = relationship("Employee", back_populates="empresa", cascade="all, delete-orphan")
     casos = relationship("Case", back_populates="empresa")
 
+def slugify_empresa(nombre: str) -> str:
+    """Convierte un nombre de empresa en slug para URL: 'Mi Empresa S.A.S' → 'mi-empresa-s-a-s'."""
+    import re
+    import unicodedata
+    s = unicodedata.normalize('NFKD', nombre or '').encode('ascii', 'ignore').decode()
+    s = re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')
+    return s[:100] or 'empresa'
+
+
+def asignar_slug(db, company) -> str:
+    """Asigna un slug único a la Company (agrega sufijo -2, -3... si ya existe). No hace commit."""
+    base = slugify_empresa(company.nombre)
+    slug = base
+    i = 2
+    while db.query(Company).filter(Company.slug == slug, Company.id != company.id).first():
+        slug = f"{base}-{i}"
+        i += 1
+    company.slug = slug
+    return slug
+
+
 class Employee(Base):
     """Empleados registrados (Base de datos Excel)"""
     __tablename__ = 'employees'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    cedula = Column(String(50), nullable=False, unique=True, index=True)
+    # ✅ MULTI-TENANT: la cédula es única POR EMPRESA (no global) — el mismo
+    # empleado puede existir en dos empresas cliente sin mezclar datos.
+    cedula = Column(String(50), nullable=False, index=True)
     nombre = Column(String(200), nullable=False, index=True)
     correo = Column(String(200))
     telefono = Column(String(50))
@@ -105,7 +129,11 @@ class Employee(Base):
     
     created_at = Column(DateTime, default=get_utc_now)
     updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
-    
+
+    __table_args__ = (
+        UniqueConstraint('company_id', 'cedula', name='uq_employee_company_cedula'),
+    )
+
     # Relaciones
     empresa = relationship("Company", back_populates="empleados")
     casos = relationship("Case", back_populates="empleado")
@@ -366,6 +394,9 @@ class TenantConfig(Base):
     paleta_id = Column(String(50), default='ocean')
     paleta_colores = Column(JSON, default=dict)       # {primary, secondary, accent}
     estilo_ui = Column(String(50), default='default') # default | futurista | minimalista | ux_focus
+    # Paleta distinta por portal (opcional). Si un portal no aparece aquí, usa la paleta general.
+    # {"admin": {"paleta_id": "...", "colores": {...}}, "portal": {...}, "repogemin": {...}}
+    paletas_portales = Column(JSON, default=dict)
 
     # Estructura
     tipo_estructura = Column(String(20), default='unica')  # unica | holding
