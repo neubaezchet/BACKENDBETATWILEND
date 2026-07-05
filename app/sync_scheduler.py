@@ -306,6 +306,22 @@ def ejecutar_vaciado_quincenal():
 
 
 # ═══════════════════════════════════════════════════════════════════
+# LIMPIEZA AUTOMÁTICA DE DEMOS EXPIRADOS
+# ═══════════════════════════════════════════════════════════════════
+
+def _limpiar_demos_expirados_job():
+    """Job del scheduler: elimina demos vencidos (BD + Sheet en Drive). Nunca propaga excepciones."""
+    timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+    try:
+        from app.routes.demo import limpiar_demos_expirados_core
+        resultado = limpiar_demos_expirados_core()
+        if resultado.get("demos_eliminados", 0) > 0:
+            print(f"[{timestamp}] 🗑️ Limpieza automática: {resultado['demos_eliminados']} demo(s) expirado(s) eliminados, {resultado.get('sheets_borrados', 0)} Sheet(s) borrados")
+    except Exception as e:
+        print(f"[{timestamp}] ⚠️ Error en limpieza automática de demos: {str(e)[:100]}")
+
+
+# ═══════════════════════════════════════════════════════════════════
 # INICIALIZADOR DEL SCHEDULER
 # ═══════════════════════════════════════════════════════════════════
 
@@ -368,6 +384,18 @@ def iniciar_sincronizacion_automatica():
         minute=30,
         id='vaciado_quincenal_kactus',
         name='Limpieza quincenal Hoja Kactus',
+        replace_existing=True
+    )
+
+    # ✅ Limpieza automática de demos expirados (cada hora)
+    # Evita que empresas demo vencidas sigan consumiendo ciclos de sync,
+    # y borra su Sheet de Drive para no acumular huérfanos.
+    scheduler.add_job(
+        _limpiar_demos_expirados_job,
+        'interval',
+        minutes=60,
+        id='limpieza_demos_expirados',
+        name='Limpieza demos expirados',
         replace_existing=True
     )
     

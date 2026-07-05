@@ -627,6 +627,18 @@ async def factory_reset(
     try:
         from sqlalchemy import text
 
+        # Capturar los Sheets de los tenants ANTES de borrar tenant_configs,
+        # para eliminarlos también de Drive (si no, quedan huérfanos en la Unidad Compartida)
+        sheets_a_borrar = []
+        try:
+            rows = db.execute(text(
+                "SELECT google_sheets_id FROM tenant_configs "
+                "WHERE google_sheets_id IS NOT NULL AND google_sheets_id != ''"
+            )).fetchall()
+            sheets_a_borrar = [r[0] for r in rows]
+        except Exception as e:
+            print(f"⚠️ No se pudieron listar Sheets de tenants: {e}")
+
         tablas_en_orden = [
             # Sub-tablas de casos primero
             "case_events",
@@ -641,14 +653,19 @@ async def factory_reset(
             "alertas_180_log",
             "alerta_emails",
             "pendientes_envio",
+            "radicacion_cola",
             # Datos principales
             "cases",
             "correos_notificacion",
             "empresa_bot_config",
             "employees",
+            # Demo (antes de companies por FK)
+            "demo_sessions",
             # Tenant
             "tenant_invitations",
             "tenant_configs",
+            # Leads (después de tenant_invitations que las referencia)
+            "demo_requests",
             # Empresas
             "companies",
         ]
@@ -665,6 +682,23 @@ async def factory_reset(
         resumen["admin_users_tenant"] = result.rowcount
 
         db.commit()
+
+        # Borrar los Sheets de Drive (best-effort, después del commit para no revertir la BD)
+        sheets_borrados = 0
+        if sheets_a_borrar:
+            try:
+                from app.services.tenant_provisioning import _get_drive_service
+                drive = _get_drive_service()
+                for sheet_id in sheets_a_borrar:
+                    try:
+                        drive.files().delete(fileId=sheet_id, supportsAllDrives=True).execute()
+                        sheets_borrados += 1
+                    except Exception as e:
+                        print(f"⚠️ No se pudo borrar Sheet {sheet_id}: {str(e)[:100]}")
+            except Exception as e:
+                print(f"⚠️ Sin servicio Drive para borrar Sheets: {e}")
+        resumen["sheets_drive_borrados"] = sheets_borrados
+
         print(f"🔴 FACTORY RESET ejecutado. Resumen: {resumen}")
         return {"ok": True, "resumen": resumen}
 
