@@ -1282,6 +1282,28 @@ def obtener_estado_sync():
 # SYNC MULTI-EMPRESA: itera por cada tenant con su propio Sheet
 # ════════════════════════════════════════════════════════════
 
+# Cache in-process: sheet_id → modifiedTime del último sync exitoso.
+# Permite saltar la descarga completa cuando el Sheet no ha cambiado.
+_last_modified_por_sheet = {}
+
+
+def _obtener_modified_time(sheet_id: str):
+    """Retorna el modifiedTime del Sheet, o None si no se pudo consultar (fail-open)."""
+    try:
+        drive = _get_drive_service()
+        if not drive:
+            return None
+        meta = drive.files().get(
+            fileId=sheet_id,
+            fields="modifiedTime",
+            supportsAllDrives=True,
+        ).execute()
+        return meta.get("modifiedTime")
+    except Exception as e:
+        print(f"   ⚠️ No se pudo leer modifiedTime de {sheet_id}: {str(e)[:100]}")
+        return None
+
+
 def sincronizar_todas_las_empresas():
     """
     ✅ Sincroniza CADA empresa con su propio Google Sheet.
@@ -1326,6 +1348,22 @@ def sincronizar_todas_las_empresas():
             print(f"\n➡️  {'Holding' if tipo == 'holding' else 'Empresa'}: {company.nombre} (id={company.id})")
             print(f"   Sheet: {config.google_sheets_id}")
 
+            # Saltar si el Sheet no ha cambiado desde el último sync exitoso
+            # (1 llamada de metadata en vez de descargar el Excel completo)
+            mod_time = _obtener_modified_time(config.google_sheets_id)
+            if mod_time and _last_modified_por_sheet.get(config.google_sheets_id) == mod_time:
+                print(f"   ⏭️  Sin cambios desde el último sync — omitido")
+                resultados.append({
+                    "company_id": company.id,
+                    "nombre": company.nombre,
+                    "sheet_id": config.google_sheets_id,
+                    "ok": True,
+                    "skipped": True,
+                })
+                continue
+
+            sync_exitoso = True
+
             if tipo == "holding" and sub_empresas:
                 for sub in sub_empresas:
                     corto = _tab_corto(sub)
@@ -1347,6 +1385,7 @@ def sincronizar_todas_las_empresas():
                         })
                     except Exception as e:
                         print(f"   ❌ Error sincronizando sub-empresa {sub}: {e}")
+                        sync_exitoso = False
                         resultados.append({
                             "company_id": company.id,
                             "nombre": f"{company.nombre} / {sub}",
@@ -1368,6 +1407,7 @@ def sincronizar_todas_las_empresas():
                     })
                 except Exception as e:
                     print(f"   ❌ Error sincronizando {company.nombre}: {e}")
+                    sync_exitoso = False
                     resultados.append({
                         "company_id": company.id,
                         "nombre": company.nombre,
@@ -1375,6 +1415,11 @@ def sincronizar_todas_las_empresas():
                         "ok": False,
                         "error": str(e)[:200],
                     })
+
+            # Solo recordar el modifiedTime si TODO el sync de esta empresa fue exitoso;
+            # si falló, el próximo ciclo lo reintenta completo.
+            if sync_exitoso and mod_time:
+                _last_modified_por_sheet[config.google_sheets_id] = mod_time
 
         # Empresas SIN Sheet propio (o sin onboarding completo) → usan el Sheet maestro
         ids_con_sheet = {c.id for _, c in tenants_con_sheet}
@@ -1386,13 +1431,26 @@ def sincronizar_todas_las_empresas():
 
         if empresas_sin_sheet:
             print(f"\n➡️  {len(empresas_sin_sheet)} empresa(s) sin Sheet propio → sincronizando desde Sheet maestro")
-            sincronizar_excel_completo()  # sheet maestro
-            resultados.append({
-                "company_id": "maestro",
-                "nombre": "Sheet maestro (empresas sin Sheet propio)",
-                "sheet_id": GOOGLE_DRIVE_FILE_ID,
-                "ok": True,
-            })
+            mod_maestro = _obtener_modified_time(GOOGLE_DRIVE_FILE_ID)
+            if mod_maestro and _last_modified_por_sheet.get(GOOGLE_DRIVE_FILE_ID) == mod_maestro:
+                print(f"   ⏭️  Sheet maestro sin cambios — omitido")
+                resultados.append({
+                    "company_id": "maestro",
+                    "nombre": "Sheet maestro (empresas sin Sheet propio)",
+                    "sheet_id": GOOGLE_DRIVE_FILE_ID,
+                    "ok": True,
+                    "skipped": True,
+                })
+            else:
+                sincronizar_excel_completo()  # sheet maestro
+                if mod_maestro:
+                    _last_modified_por_sheet[GOOGLE_DRIVE_FILE_ID] = mod_maestro
+                resultados.append({
+                    "company_id": "maestro",
+                    "nombre": "Sheet maestro (empresas sin Sheet propio)",
+                    "sheet_id": GOOGLE_DRIVE_FILE_ID,
+                    "ok": True,
+                })
 
         exitos = sum(1 for r in resultados if r["ok"])
         fallos = sum(1 for r in resultados if not r["ok"])

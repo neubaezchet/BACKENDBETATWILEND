@@ -782,16 +782,37 @@ async def limpiar_demos_expirados(
     ).all()
 
     eliminados = 0
+    sheets_a_borrar = []
     for s in sessions_expiradas:
         company = db.query(Company).filter(Company.id == s.company_id).first()
         if company:
+            # Capturar el Sheet del tenant ANTES del cascade (TenantConfig se borra con la Company)
+            config = db.query(TenantConfig).filter(TenantConfig.company_id == company.id).first()
+            if config and config.google_sheets_id:
+                sheets_a_borrar.append(config.google_sheets_id)
             db.delete(company)  # CASCADE borra empleados, casos, etc.
             eliminados += 1
         db.delete(s)
 
     db.commit()
-    logger.info(f"🗑️ Demos limpiados: {eliminados} empresas eliminadas")
-    return {"ok": True, "demos_eliminados": eliminados}
+
+    # Borrar los Sheets de Drive (best-effort: un fallo aquí no debe revertir la limpieza en BD)
+    sheets_borrados = 0
+    if sheets_a_borrar:
+        try:
+            from app.services.tenant_provisioning import _get_drive_service
+            drive = _get_drive_service()
+            for sheet_id in sheets_a_borrar:
+                try:
+                    drive.files().delete(fileId=sheet_id, supportsAllDrives=True).execute()
+                    sheets_borrados += 1
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo borrar Sheet {sheet_id} de demo expirado: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ Sin servicio Drive para borrar Sheets de demos: {e}")
+
+    logger.info(f"🗑️ Demos limpiados: {eliminados} empresas, {sheets_borrados} Sheets borrados de Drive")
+    return {"ok": True, "demos_eliminados": eliminados, "sheets_borrados": sheets_borrados}
 
 
 # ═══════════════════════════════════════════════════════════

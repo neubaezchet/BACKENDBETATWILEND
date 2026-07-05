@@ -802,14 +802,16 @@ class DriveVerifyBody(BaseModel):
 async def verificar_drive(
     company_id: int,
     body: DriveVerifyBody,
+    background_tasks: BackgroundTasks,
     user: AdminUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     Verifica que la Service Account tenga acceso a la carpeta de Drive especificada.
-    Si tiene acceso, marca drive_verificado=True en TenantConfig.
+    Si tiene acceso, marca drive_verificado=True en TenantConfig y crea la
+    estructura de carpetas (Empresa/Año/Quincena) si aún no existe.
     """
-    _get_or_404(db, company_id)
+    company = _get_or_404(db, company_id)
 
     resultado = _verificar_acceso_drive(body.drive_folder_id)
 
@@ -820,6 +822,18 @@ async def verificar_drive(
         if body.correo_drive:
             config.correo_drive = body.correo_drive
         db.commit()
+
+        # La estructura solo se crea en el registro si la carpeta ya estaba
+        # configurada; si el cliente la conecta después, este es el único
+        # punto donde podemos crearla. create_folder_if_not_exists es
+        # idempotente, así que repetir la verificación no duplica carpetas.
+        background_tasks.add_task(
+            _crear_estructura_drive_background,
+            company_id=company_id,
+            company_nombre=company.nombre,
+            tipo_estructura=config.tipo_estructura or "unica",
+            sub_empresas=config.sub_empresas or [],
+        )
 
     return resultado
 

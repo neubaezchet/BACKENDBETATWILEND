@@ -79,9 +79,22 @@ def duplicar_sheet_maestro(company_nombre: str, company_id: int) -> dict:
         drive = _get_drive_service()
         nombre_sheet = f"{company_nombre} — Base de Datos"
 
+        # Carpeta destino dentro de la Unidad Compartida (ej. INCAPACIDADES/Sheets Empresas).
+        # Sin esto, la copia queda en el My Drive de la service account (cuota limitada).
+        tenants_folder_id = os.environ.get("GOOGLE_TENANTS_FOLDER_ID")
+        body = {"name": nombre_sheet}
+        if tenants_folder_id:
+            body["parents"] = [tenants_folder_id]
+        else:
+            logger.warning(
+                "⚠️ GOOGLE_TENANTS_FOLDER_ID no configurado — el Sheet quedará "
+                "en el My Drive de la service account (no recomendado en producción)"
+            )
+
         resultado = drive.files().copy(
             fileId=master_id,
-            body={"name": nombre_sheet},
+            body=body,
+            supportsAllDrives=True,
             fields="id,name,webViewLink"
         ).execute()
 
@@ -229,6 +242,7 @@ def compartir_sheet_con_email(spreadsheet_id: str, email: str, rol: str = "reade
                 "Tu base de datos de incapacidades ha sido creada y configurada. "
                 "Puedes consultarla en este enlace."
             ),
+            supportsAllDrives=True,
             fields="id"
         ).execute()
         logger.info(f"✅ Sheet {spreadsheet_id} compartido con {email} (rol: {rol})")
