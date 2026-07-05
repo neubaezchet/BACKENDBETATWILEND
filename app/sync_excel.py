@@ -625,21 +625,44 @@ def sincronizar_excel_completo(
             df = pd.DataFrame()
             skip_retire = True
 
-        # Obtener empleados activos: si es sheet propio, solo los de las empresas en esta pestaña
-        if sheet_id and df is not None and "empresa" in df.columns:
-            empresas_en_tab = set(df["empresa"].dropna().str.strip().unique())
+        # Obtener empleados activos SOLO del alcance de este sheet (aislamiento multi-tenant):
+        #  - Sheet propio → empresas nombradas en la pestaña + la empresa dueña del sheet.
+        #    Nunca todos: un sheet de tenant vacío NO debe retirar empleados de otras empresas.
+        #  - Sheet maestro → excluir empresas con Sheet propio (las gestiona su propio sync).
+        if sheet_id:
+            empresas_en_tab = set()
+            if df is not None and not df.empty and "empresa" in df.columns:
+                empresas_en_tab = set(df["empresa"].dropna().str.strip().unique())
+
+            company_ids_tab = []
             if empresas_en_tab:
                 company_ids_tab = [
                     c.id for c in db.query(Company).filter(Company.nombre.in_(empresas_en_tab)).all()
                 ]
+            if company_id and company_id not in company_ids_tab:
+                company_ids_tab.append(company_id)
+
+            if company_ids_tab:
                 empleados_bd = db.query(Employee).filter(
                     Employee.activo == True,
                     Employee.company_id.in_(company_ids_tab),
                 ).all()
             else:
-                empleados_bd = db.query(Employee).filter(Employee.activo == True).all()
+                # Sin empresa identificable: no tocar empleados de nadie
+                empleados_bd = []
+                skip_retire = True
         else:
-            empleados_bd = db.query(Employee).filter(Employee.activo == True).all()
+            from app.database import TenantConfig
+            ids_sheet_propio = [
+                cid for (cid,) in db.query(TenantConfig.company_id).filter(
+                    TenantConfig.google_sheets_id.isnot(None),
+                    TenantConfig.google_sheets_id != "",
+                ).all()
+            ]
+            q = db.query(Employee).filter(Employee.activo == True)
+            if ids_sheet_propio:
+                q = q.filter(~Employee.company_id.in_(ids_sheet_propio))
+            empleados_bd = q.all()
         empleados_por_cedula = {e.cedula: e for e in empleados_bd}
         print(f"   📋 BD tiene {len(empleados_por_cedula)} empleados activos")
         
@@ -721,6 +744,22 @@ def sincronizar_excel_completo(
                     db.commit()
                     actualizados += 1
                 else:
+                    # ⚠️ CONFLICTO MULTI-TENANT: la cédula ya existe ACTIVA en otra empresa.
+                    # No robar el empleado ni crashear con unique violation: la transferencia
+                    # correcta es que la empresa anterior lo quite de su Sheet (se retira) y
+                    # entonces este sync lo reactiva y reasigna automáticamente.
+                    activo_otra_empresa = db.query(Employee).filter(
+                        Employee.cedula == cedula, Employee.activo == True
+                    ).first()
+                    if activo_otra_empresa:
+                        otra = activo_otra_empresa.empresa.nombre if activo_otra_empresa.empresa else "?"
+                        print(
+                            f"   ⚠️ CONFLICTO: cédula {cedula} ya está activa en '{otra}' — "
+                            f"omitida en '{empresa_nombre}'. Para transferirla, primero "
+                            f"retírala del Sheet de '{otra}'."
+                        )
+                        continue
+
                     # ✅ CREAR nuevo empleado (cédula no existe en BD)
                     nuevo_empleado = Employee(
                         cedula=cedula,

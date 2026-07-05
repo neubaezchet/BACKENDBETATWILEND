@@ -1612,6 +1612,7 @@ async def subir_incapacidad(
 
         # Obtener carpeta Drive del cliente si tiene onboarding completo
         client_drive_id = None
+        client_ciclo_reporte = None
         if empleado_bd and empleado_bd.company_id:
             try:
                 from app.database import TenantConfig
@@ -1622,6 +1623,8 @@ async def subir_incapacidad(
                 if tenant_cfg and tenant_cfg.google_workspace_drive_id:
                     client_drive_id = tenant_cfg.google_workspace_drive_id
                     print(f"📁 Drive del cliente: {client_drive_id}")
+                if tenant_cfg and tenant_cfg.ciclo_reporte:
+                    client_ciclo_reporte = tenant_cfg.ciclo_reporte
             except Exception as _te:
                 print(f"⚠️ No se pudo obtener Drive del cliente: {_te}")
 
@@ -1640,6 +1643,7 @@ async def subir_incapacidad(
                 tiene_licencia=tiene_licencia,
                 subtipo=subType,
                 client_drive_id=client_drive_id,
+                ciclo_reporte=client_ciclo_reporte,
             )
             pdf_final_path.unlink(missing_ok=True)
         except Exception as drive_err:
@@ -1666,6 +1670,7 @@ async def subir_incapacidad(
                 "tiene_licencia": tiene_licencia,
                 "subtipo": subType,
                 "client_drive_id": client_drive_id,
+                "ciclo_reporte": client_ciclo_reporte,
             }, error=str(drive_err))
             drive_en_cola = True
             link_pdf = None  # Se actualizará cuando la cola lo procese

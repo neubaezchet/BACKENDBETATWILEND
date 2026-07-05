@@ -440,11 +440,12 @@ async def _crear_estructura_drive_background(
 
         client_drive_id = config.google_workspace_drive_id
 
-        from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists, get_quinzena_folder_name
+        from app.drive_uploader import get_authenticated_service, create_folder_if_not_exists, get_periodo_folder_name
 
         service = get_authenticated_service()
         año_actual = str(datetime.now().year)
-        quinzena_nombre = get_quinzena_folder_name()
+        # Respeta el ciclo elegido en el onboarding: mensual → 'Julio', quincenal → 'Primera_Quincena_Julio'
+        quinzena_nombre = get_periodo_folder_name(config.ciclo_reporte)
 
         # Para holdings crear una subcarpeta por sub-empresa; para individuales usar el nombre de la empresa
         empresas = sub_empresas if (tipo_estructura == "holding" and sub_empresas) else [company_nombre]

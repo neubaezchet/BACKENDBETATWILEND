@@ -211,9 +211,11 @@ async def solicitar_demo_auto(
     - Retorna link_registro para redirigir al wizard "Hola"
     - Solo permite un demo por email
     """
-    # Bloquear si ya existe demo para ese email
+    # Bloquear solo si hay un demo VIGENTE para ese email (pendiente o aprobado con
+    # empresa viva). Los expirados/rechazados no bloquean: pueden pedir otro demo.
     existente = db.query(DemoRequest).filter(
         DemoRequest.contacto_email == body.contacto_email,
+        DemoRequest.estado.in_(["pendiente", "aprobado"]),
     ).first()
     if existente:
         return {
@@ -799,6 +801,17 @@ def limpiar_demos_expirados_core() -> dict:
                     sheets_a_borrar.append(config.google_sheets_id)
                 db.delete(company)  # CASCADE borra empleados, casos, etc.
                 eliminados += 1
+
+            # Marcar el lead como expirado: conserva el historial en el panel de
+            # Solicitudes pero libera el email para que puedan pedir otro demo.
+            lead = None
+            if s.demo_request_id:
+                lead = db.query(DemoRequest).filter(DemoRequest.id == s.demo_request_id).first()
+            if not lead and s.company_id:
+                lead = db.query(DemoRequest).filter(DemoRequest.company_id == s.company_id).first()
+            if lead and lead.estado == "aprobado":
+                lead.estado = "expirado"
+
             db.delete(s)
 
         db.commit()

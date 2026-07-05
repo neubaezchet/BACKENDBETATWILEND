@@ -491,6 +491,32 @@ def get_quinzena_folder_name():
     else:
         return f"Segunda_Quincena_{mes_es}"
 
+
+MESES_ES = {
+    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
+    7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre',
+}
+
+
+def get_periodo_folder_name(ciclo_reporte: str = None, fecha=None):
+    """
+    Nombre de la carpeta del período según el ciclo elegido por la empresa
+    en el onboarding (personalización self-service):
+      - 'mensual'   → 'Julio'
+      - 'quincenal' → 'Primera_Quincena_Julio' (comportamiento clásico)
+    """
+    from datetime import datetime
+    fecha = fecha or datetime.now()
+
+    if (ciclo_reporte or "").strip().lower() == "mensual":
+        return MESES_ES.get(fecha.month, str(fecha.month))
+
+    mes_es = MESES_ES.get(fecha.month, str(fecha.month))
+    if fecha.day <= 15:
+        return f"Primera_Quincena_{mes_es}"
+    return f"Segunda_Quincena_{mes_es}"
+
+
 def normalize_tipo_incapacidad(tipo: str, subtipo: str = None) -> str:
     """Normaliza el tipo de incapacidad al formato de carpeta"""
     tipo_a_usar = subtipo if subtipo else tipo
@@ -532,6 +558,7 @@ def upload_to_drive(
     fecha_inicio = None,
     fecha_fin = None,
     client_drive_id: str = None,
+    ciclo_reporte: str = None,
 ) -> str:
     """
     Sube archivo a Google Drive con estructura de carpetas
@@ -563,9 +590,9 @@ def upload_to_drive(
             )
         year_folder_id = create_folder_if_not_exists(service, año_actual.encode(), empresa_folder_id)
         
-        quinzena_nombre = get_quinzena_folder_name()
+        quinzena_nombre = get_periodo_folder_name(ciclo_reporte)
         quinzena_folder_id = create_folder_if_not_exists(service, quinzena_nombre.encode(), year_folder_id)
-        
+
         tipo_normalizado = normalize_tipo_incapacidad(tipo, subtipo)
         tipo_folder_id = create_folder_if_not_exists(service, tipo_normalizado.encode(), quinzena_folder_id)
         
@@ -702,6 +729,7 @@ def upload_certificado_o_prelicencia(
     serial: str,
     fecha_inicio: date_type,
     client_drive_id: str = None,
+    ciclo_reporte: str = None,
 ) -> str:
     """
     Sube certificado o prelicencia a Drive
@@ -738,7 +766,10 @@ def upload_certificado_o_prelicencia(
         
         # === CREAR ESTRUCTURA ===
         año_str = str(fecha_inicio.year)
-        quinzena_nombre = get_quinzena_from_date(fecha_inicio)
+        if (ciclo_reporte or "").strip().lower() == "mensual":
+            quinzena_nombre = get_periodo_folder_name("mensual", fecha_inicio)
+        else:
+            quinzena_nombre = get_quinzena_from_date(fecha_inicio)
 
         if client_drive_id:
             # Carpeta del cliente: empresa / año / quinzena / tipo
@@ -872,6 +903,7 @@ def upload_inteligente(
         return upload_certificado_o_prelicencia(
             file_path, empresa, cedula, tipo, serial, fecha_inicio,
             client_drive_id=client_drive_id,
+            ciclo_reporte=kwargs.get('ciclo_reporte'),
         )
 
     # INCAPACIDADES TRADICIONALES → Mantener sistema actual
@@ -890,6 +922,7 @@ def upload_inteligente(
             fecha_inicio=fecha_inicio,
             fecha_fin=fecha_fin,
             client_drive_id=client_drive_id,
+            ciclo_reporte=kwargs.get('ciclo_reporte'),
         )
 
 
