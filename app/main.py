@@ -1597,7 +1597,8 @@ async def subir_incapacidad(
         try:
             from app.pdf_enhancer import get_enhancer
             pdf_original = pdf_final_path.read_bytes()
-            pdf_mejorado = get_enhancer("fast").enhance_bytes(pdf_original, only_if_needed=True)
+            # nivel rápido para no demorar la subida; auto decide BW/color por página
+            pdf_mejorado = get_enhancer("rapido", "auto").enhance_bytes(pdf_original, only_if_needed=True)
             if pdf_mejorado is not pdf_original and pdf_mejorado != pdf_original:
                 pdf_final_path.write_bytes(pdf_mejorado)
                 print(f"✅ Auto-mejora HD aplicada a {consecutivo}")

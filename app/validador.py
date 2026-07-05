@@ -4576,33 +4576,44 @@ from fastapi.responses import Response
 async def mejorar_calidad_hd(
     serial: str,
     archivo: UploadFile = File(...),
-    mode: str = Query("fast", regex="^(fast|hd)$"),
+    nivel: str = Query("estandar", regex="^(rapido|estandar|premium)$"),
+    modo: str = Query("auto", regex="^(auto|bw|color|hd)$"),
+    mode: str = Query(None, regex="^(fast|hd)$"),  # legacy v2 (frontend viejo)
     _: bool = Depends(verificar_token_admin)
 ):
     """
     Mejora la calidad de un PDF y lo devuelve (NO lo guarda todavía).
-    - mode="fast": OpenCV, rápido (~1-3 s/página). Recomendado.
-    - mode="hd":   Real-ESRGAN si está disponible (lento sin GPU; docs cortos).
+    - nivel: rapido (1.8x) | estandar (2.5x) | premium (3.5x)
+    - modo:  auto  -> decide por página: binariza texto puro, conserva sellos/fotos
+             bw    -> forzar blanco/negro limpio (look HD del mejorador original)
+             color -> forzar conservar color
+             hd    -> Real-ESRGAN (solo si está instalado; lento sin GPU)
     El frontend muestra el antes/después y luego guarda con /guardar-pdf-editado.
     """
     from app.pdf_enhancer import get_enhancer
+
+    # Compat v2: ?mode=fast|hd del frontend anterior
+    if mode == "fast":
+        nivel, modo = "rapido", "auto"
+    elif mode == "hd":
+        modo = "hd"
 
     pdf_bytes = await archivo.read()
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="PDF vacío")
 
     # Límite de seguridad para modo HD sin GPU (evita timeouts de Railway)
-    if mode == "hd":
+    if modo == "hd":
         try:
             from pdf2image import pdfinfo_from_bytes
             n = pdfinfo_from_bytes(pdf_bytes).get("Pages", 1)
             if n > 5:
-                mode = "fast"   # demasiadas páginas para HD en CPU -> degradar a fast
+                modo = "auto"   # demasiadas páginas para HD en CPU -> degradar a auto
         except Exception:
             pass
 
     try:
-        enhancer = get_enhancer(mode)
+        enhancer = get_enhancer(nivel, modo)
         mejorado = enhancer.enhance_bytes(pdf_bytes)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error mejorando: {e}")

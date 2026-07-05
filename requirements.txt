@@ -48,8 +48,11 @@ reportlab==4.0.9
 pdf2image==1.17.0
 img2pdf==0.5.1
 pytesseract==0.3.10
-# Modo "hd" (Real-ESRGAN) es OPCIONAL; sin estos paquetes cae a upscale cúbico OpenCV.
-# realesrgan / basicsr / torch / torchvision  -> instalar solo si hay GPU
+# Modo "hd": Real-ESRGAN en GPU vía Replicate (calidad tipo Artguru).
+# Solo se activa si existe la variable de entorno REPLICATE_API_TOKEN.
+replicate>=1.0.0
+# Alternativa local (requiere GPU propia + modelo 4x-UltraSharp.pth):
+# realesrgan / basicsr / torch / torchvision
 
 # IA
 anthropic==0.40.0
