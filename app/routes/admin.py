@@ -146,7 +146,7 @@ class CorreoUpdate(BaseModel):
 # ═══════════════════════════════════════════════════════════
 
 class BotConfigCreate(BaseModel):
-    nombre_empresa: str = Field(..., description="Nombre exacto de la empresa")
+    nombre_empresa: Optional[str] = None  # viene en el path, no es necesario en el body
     bot_nombre: str = Field(..., description="ej: sura_eps, famisanar, compensar, arl_sura")
     bot_tipo_medio: str = Field("portal", description="portal | email | api")
     estado: str = Field("configuracion", description="configuracion | activo | inactivo | suspendido")
