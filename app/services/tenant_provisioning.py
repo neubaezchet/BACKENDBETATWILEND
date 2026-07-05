@@ -112,6 +112,35 @@ def duplicar_sheet_maestro(company_nombre: str, company_id: int) -> dict:
                 "spreadsheet_url": None, "error": str(e)[:300]}
 
 
+# ─── Vaciar filas de datos de la copia ────────────────────────────────────────
+
+def vaciar_filas_datos(spreadsheet_id: str) -> bool:
+    """
+    Borra todas las filas de datos (fila 2 en adelante) de TODAS las pestañas,
+    conservando los encabezados. El Sheet maestro es un sheet vivo con datos
+    reales, así que la copia nace con empleados de otras empresas si no se limpia.
+    """
+    try:
+        svc = _get_sheets_service()
+        meta = svc.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        titulos = [h["properties"]["title"] for h in meta.get("sheets", [])]
+
+        if not titulos:
+            return True
+
+        rangos = [f"'{t}'!A2:ZZ" for t in titulos]
+        svc.spreadsheets().values().batchClear(
+            spreadsheetId=spreadsheet_id,
+            body={"ranges": rangos},
+        ).execute()
+
+        logger.info(f"✅ Filas de datos vaciadas en Sheet {spreadsheet_id} ({len(titulos)} pestañas)")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error vaciando filas de datos en {spreadsheet_id}: {e}")
+        return False
+
+
 # ─── Pestañas adicionales para Holdings ──────────────────────────────────────
 
 def _nombre_corto(nombre: str, max_len: int = 25) -> str:
@@ -300,6 +329,13 @@ def provisionar_tenant_completo(
     nuevo_url = sheet_result["spreadsheet_url"]
     resultado["google_sheets_id"]  = nuevo_id
     resultado["google_sheets_url"] = nuevo_url
+
+    # PASO 1b: Vaciar los datos heredados del maestro (el cliente empieza con Sheet limpio).
+    # Se hace ANTES de configurar pestañas holding para que las duplicadas nazcan limpias.
+    if not vaciar_filas_datos(nuevo_id):
+        resultado["errores"].append(
+            "El Sheet se creó pero no se pudieron vaciar los datos de la plantilla — revisar manualmente"
+        )
 
     # PASO 2: Si es Holding → configurar pestañas por sub-empresa
     if tipo_estructura == "holding" and sub_empresas:

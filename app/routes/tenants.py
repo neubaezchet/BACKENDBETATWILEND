@@ -115,6 +115,52 @@ async def get_service_account_email_public():
 
 
 # ═════════════════════════════════════════════════════════
+# TEMA VISUAL DEL TENANT
+# GET /tenants/me/theme  |  GET /tenants/{company_id}/theme
+# (el hook useTenantTheme del frontend consume estos endpoints)
+# ═════════════════════════════════════════════════════════
+
+def _theme_de_company(db: Session, company_id: int) -> dict:
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+    return {
+        "ok": True,
+        "company_id": company.id,
+        "empresa": company.nombre,
+        "paleta_id": config.paleta_id if config else None,
+        "paleta_colores": (config.paleta_colores if config else None) or {},
+        "estilo_ui": config.estilo_ui if config else "default",
+        "logo_url": config.logo_url if config else None,
+        "tipo_estructura": (config.tipo_estructura if config else None) or "unica",
+        "sub_empresas": (config.sub_empresas if config else None) or [],
+        "ciclo_reporte": (config.ciclo_reporte if config else None) or "mensual",
+    }
+
+
+@router.get("/me/theme")
+async def get_mi_theme(
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Tema visual de la empresa del usuario autenticado."""
+    if not user.company_id:
+        return {"ok": False, "mensaje": "Usuario sin empresa asociada (admin global)"}
+    return _theme_de_company(db, user.company_id)
+
+
+@router.get("/{company_id}/theme")
+async def get_theme_de_empresa(
+    company_id: int,
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Tema visual de una empresa específica (para previews desde el admin global)."""
+    return _theme_de_company(db, company_id)
+
+
+# ═════════════════════════════════════════════════════════
 # ENDPOINT PÚBLICO: POST /tenants/registro/completar
 # ═════════════════════════════════════════════════════════
 

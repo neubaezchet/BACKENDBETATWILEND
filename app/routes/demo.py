@@ -144,7 +144,7 @@ Una vez registrado, tendrás acceso a los 3 portales:
    https://portal-neurobaeza.vercel.app
 
 🟡 RopoGemini — Recepción de incapacidades
-   https://ropogemini.vercel.app
+   https://repogemin.vercel.app
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 Puedes enviar una incapacidad de prueba, ver cómo se procesa y cómo aparece en el validador.
