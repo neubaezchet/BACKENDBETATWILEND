@@ -383,6 +383,15 @@ def startup_event():
                 "DROP INDEX IF EXISTS ix_employees_cedula;",
                 "CREATE INDEX IF NOT EXISTS ix_employees_cedula ON employees (cedula);",
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_employee_company_cedula ON employees (company_id, cedula);",
+                # ✅ Estado de aprovisionamiento (Sheet/Drive) con reintentos
+                "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS sheet_status VARCHAR(20);",
+                "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS drive_status VARCHAR(20);",
+                "ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS provision_error TEXT;",
+                # Backfill: configs existentes con Sheet/Drive ya funcionando quedan en 'ok'
+                "UPDATE tenant_configs SET sheet_status='ok' WHERE google_sheets_id IS NOT NULL AND sheet_status IS NULL;",
+                "UPDATE tenant_configs SET sheet_status='pendiente' WHERE sheet_status IS NULL;",
+                "UPDATE tenant_configs SET drive_status='ok' WHERE drive_verificado = TRUE AND drive_status IS NULL;",
+                "UPDATE tenant_configs SET drive_status='pendiente' WHERE drive_status IS NULL;",
             ]
             for sql in migraciones:
                 conn.execute(text(sql))

@@ -16,9 +16,11 @@ Endpoints de admin (superadmin / admin):
 import secrets
 import logging
 import os
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
@@ -49,6 +51,7 @@ class SolicitarDemoBody(BaseModel):
     como_conocio: Optional[str] = Field(None, max_length=200)
     mensaje: Optional[str] = Field(None, max_length=1000)
     cantidad_empleados: Optional[str] = Field(None, max_length=20)  # "1-10" | "11-50" | "51-200" | "200+"
+    captcha_token: Optional[str] = Field(None, max_length=2048)     # token de Cloudflare Turnstile
 
 
 class RechazarLeadBody(BaseModel):
@@ -57,6 +60,65 @@ class RechazarLeadBody(BaseModel):
 
 class AprobarLeadBody(BaseModel):
     notas_internas: Optional[str] = None
+
+
+# ═══════════════════════════════════════════════════════════
+# SEGURIDAD — rate-limit por IP + captcha (Cloudflare Turnstile)
+# ═══════════════════════════════════════════════════════════
+
+# Rate-limit in-process: máximo N solicitudes por IP por ventana.
+# Suficiente para un solo proceso (Railway); si algún día hay réplicas, migrar a Redis.
+_RATE_VENTANA_SEG = 3600      # 1 hora
+_RATE_MAX_POR_IP = 3          # 3 demos/hora por IP
+_rate_hits = defaultdict(deque)  # ip -> deque de timestamps
+
+
+def _client_ip(request: Request) -> str:
+    """IP real del cliente (Railway pone la original en X-Forwarded-For)."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "desconocida"
+
+
+def _rate_limit_ok(ip: str) -> bool:
+    """True si la IP aún tiene cupo en la ventana. Registra el hit si pasa."""
+    ahora = time.monotonic()
+    hits = _rate_hits[ip]
+    while hits and ahora - hits[0] > _RATE_VENTANA_SEG:
+        hits.popleft()
+    if len(hits) >= _RATE_MAX_POR_IP:
+        return False
+    hits.append(ahora)
+    # Evitar crecimiento sin límite del dict (IPs viejas sin hits vigentes)
+    if len(_rate_hits) > 10000:
+        for k in [k for k, v in _rate_hits.items() if not v]:
+            _rate_hits.pop(k, None)
+    return True
+
+
+def _verificar_turnstile(token: str, ip: str) -> bool:
+    """
+    Valida el captcha de Cloudflare Turnstile.
+    Si TURNSTILE_SECRET_KEY no está configurada, se omite (retorna True) para
+    poder lanzar sin captcha y activarlo después solo con la variable de entorno.
+    """
+    secret = os.environ.get("TURNSTILE_SECRET_KEY")
+    if not secret:
+        return True
+    if not token:
+        return False
+    try:
+        import requests as _requests
+        resp = _requests.post(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data={"secret": secret, "response": token, "remoteip": ip},
+            timeout=10,
+        )
+        return bool(resp.json().get("success"))
+    except Exception as e:
+        logger.warning(f"⚠️ Turnstile no verificable ({e}) — rechazando por seguridad")
+        return False
 
 
 # ═══════════════════════════════════════════════════════════
@@ -270,15 +332,31 @@ El equipo de NeuroBareza
 async def solicitar_demo_auto(
     body: SolicitarDemoBody,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Demo auto-servicio: sin aprobación manual del admin.
+    - Rate-limit por IP + captcha Turnstile (si TURNSTILE_SECRET_KEY está configurada)
     - Crea DemoRequest visible en el panel de Solicitudes
     - Crea Company + TenantInvitation (24h) + DemoSession (3h)
-    - Retorna link_registro para redirigir al wizard "Hola"
+    - El link de registro se envía SOLO POR EMAIL (verifica propiedad del correo,
+      no se expone en la respuesta)
     - Solo permite un demo por email
     """
+    # ── SEGURIDAD 1: rate-limit por IP
+    ip = _client_ip(request)
+    if not _rate_limit_ok(ip):
+        logger.warning(f"🛑 Rate-limit demo auto-servicio: IP {ip}")
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiadas solicitudes desde esta conexión. Intenta de nuevo en una hora.",
+        )
+
+    # ── SEGURIDAD 2: captcha (activo solo si TURNSTILE_SECRET_KEY está configurada)
+    if not _verificar_turnstile(body.captcha_token, ip):
+        raise HTTPException(status_code=400, detail="Verificación de seguridad fallida. Recarga la página e intenta de nuevo.")
+
     # Bloquear solo si hay un demo VIGENTE para ese email (pendiente o aprobado con
     # empresa viva). Los expirados/rechazados no bloquean: pueden pedir otro demo.
     existente = db.query(DemoRequest).filter(
@@ -361,14 +439,27 @@ async def solicitar_demo_auto(
 
     db.commit()
 
+    # ── SEGURIDAD 3: el link va SOLO por correo — verifica que el email sea suyo.
+    # (Antes se devolvía en la respuesta: cualquier bot obtenía acceso sin email real.)
     link_registro = f"{ADMIN_ORIGIN}/onboarding?token={token}&demo=1&horas={HORAS_DEMO}"
-    logger.info(f"🎯 Demo auto-servicio: {body.empresa_nombre} ({body.contacto_email}) → company_id={company.id}")
+    background_tasks.add_task(
+        _enviar_email_demo_aprobado,
+        body.contacto_email,
+        body.contacto_nombre,
+        body.empresa_nombre,
+        link_registro,
+        HORAS_DEMO,
+        links_de_company(company.slug),
+    )
+
+    logger.info(f"🎯 Demo auto-servicio: {body.empresa_nombre} ({body.contacto_email}) → company_id={company.id} | link enviado por email")
 
     return {
         "ok": True,
-        "link_registro": link_registro,
+        "email_enviado": True,
         "horas": HORAS_DEMO,
         "empresa_nombre": body.empresa_nombre,
+        "mensaje": f"Te enviamos el enlace de registro a {body.contacto_email}. Revisa tu bandeja (y spam). Expira en 24 horas.",
     }
 
 
@@ -376,12 +467,23 @@ async def solicitar_demo_auto(
 async def solicitar_demo(
     body: SolicitarDemoBody,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Endpoint público: registra una solicitud de demo.
     No requiere autenticación. Queda en estado 'pendiente'.
     """
+    # Rate-limit por IP (mismo límite que el auto-servicio)
+    ip = _client_ip(request)
+    if not _rate_limit_ok(ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiadas solicitudes desde esta conexión. Intenta de nuevo en una hora.",
+        )
+    if not _verificar_turnstile(body.captcha_token, ip):
+        raise HTTPException(status_code=400, detail="Verificación de seguridad fallida. Recarga la página e intenta de nuevo.")
+
     # Verificar si ya existe una solicitud pendiente del mismo email
     existente = db.query(DemoRequest).filter(
         DemoRequest.contacto_email == body.contacto_email,

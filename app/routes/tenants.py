@@ -497,10 +497,28 @@ async def _provisionar_sheet_background(
     tipo_estructura: str = "unica",
     sub_empresas: list = None,
 ):
-    """Tarea en background: crea el Sheet (con pestañas para holdings) y guarda el ID en TenantConfig."""
+    """
+    Tarea en background: crea el Sheet (con pestañas para holdings) y guarda el ID en TenantConfig.
+    Registra el resultado en sheet_status ('ok' | 'error') para que el admin lo vea y pueda reintentar.
+    """
+    from app.database import SessionLocal
+
+    def _marcar(status: str, error: str = None):
+        db = SessionLocal()
+        try:
+            config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+            if config:
+                config.sheet_status = status
+                if error is not None:
+                    config.provision_error = error[:2000]
+                elif status == "ok":
+                    config.provision_error = None
+                db.commit()
+        finally:
+            db.close()
+
     try:
         from app.services.tenant_provisioning import provisionar_tenant_completo
-        from app.database import SessionLocal
 
         resultado = provisionar_tenant_completo(
             company_nombre,
@@ -510,18 +528,24 @@ async def _provisionar_sheet_background(
             sub_empresas=sub_empresas or [],
         )
 
-        if resultado["google_sheets_id"]:
+        if resultado.get("google_sheets_id"):
             db = SessionLocal()
             try:
                 config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
                 if config:
                     config.google_sheets_id = resultado["google_sheets_id"]
                     config.google_sheets_url = resultado["google_sheets_url"]
+                    config.sheet_status = "ok"
+                    config.provision_error = None
                     db.commit()
                     logger.info(f"✅ Sheet guardado en TenantConfig para company_id={company_id}")
             finally:
                 db.close()
+        else:
+            _marcar("error", "El aprovisionamiento no devolvió un Sheet (revisa credenciales/carpeta de Drive)")
+            logger.error(f"❌ Provisionamiento sin Sheet para company_id={company_id}")
     except Exception as e:
+        _marcar("error", str(e))
         logger.error(f"❌ Error en provisionamiento background para company_id={company_id}: {e}")
 
 
@@ -548,6 +572,9 @@ async def _crear_estructura_drive_background(
     try:
         config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
         if not config or not config.google_workspace_drive_id:
+            if config:
+                config.drive_status = "sin_drive"
+                db.commit()
             logger.warning(
                 f"⚠️ Sin carpeta Drive configurada para company_id={company_id} — estructura omitida"
             )
@@ -584,9 +611,18 @@ async def _crear_estructura_drive_background(
             )
             logger.info(f"✅ Carpeta Drive creada: {emp_nombre}/{año_actual}/{quinzena_nombre}")
 
+        config.drive_status = "ok"
+        db.commit()
         logger.info(f"✅ Estructura Drive lista para '{company_nombre}' (company_id={company_id})")
 
     except Exception as e:
+        try:
+            if config:
+                config.drive_status = "error"
+                config.provision_error = str(e)[:2000]
+                db.commit()
+        except Exception:
+            db.rollback()
         logger.error(f"❌ Error creando estructura Drive para company_id={company_id}: {e}")
     finally:
         db.close()
@@ -712,6 +748,11 @@ async def get_tenant(
             "drive_verificado": config.drive_verificado,
             "onboarding_completado": config.onboarding_completado,
             "onboarding_step": config.onboarding_step,
+            "google_sheets_id": config.google_sheets_id,
+            "google_sheets_url": config.google_sheets_url,
+            "sheet_status": config.sheet_status or "pendiente",
+            "drive_status": config.drive_status or "pendiente",
+            "provision_error": config.provision_error,
         }
 
     from app.services.portal_links import links_de_company
@@ -725,6 +766,80 @@ async def get_tenant(
         "slug": company.slug,
         "links": links_de_company(company.slug),
         "tenant_config": config_data,
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT: POST /tenants/{company_id}/reprovisionar
+# Reintenta el aprovisionamiento (Sheet y/o estructura Drive)
+# cuando las tareas background fallaron.
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/{company_id}/reprovisionar")
+async def reprovisionar_tenant(
+    company_id: int,
+    background_tasks: BackgroundTasks,
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Re-lanza el aprovisionamiento en background:
+    - Sheet: SOLO si aún no existe (evita duplicados en Drive).
+    - Estructura Drive: siempre (create_folder_if_not_exists es idempotente).
+    Permitido para admins globales y para el tenant admin de ESA empresa.
+    """
+    if user.company_id and user.company_id != company_id:
+        raise HTTPException(status_code=403, detail="No puedes reaprovisionar otra empresa")
+    if not user.company_id and user.rol not in ("superadmin", "admin"):
+        raise HTTPException(status_code=403, detail="Sin permisos")
+
+    company = _get_or_404(db, company_id)
+    config = db.query(TenantConfig).filter(TenantConfig.company_id == company_id).first()
+    if not config:
+        raise HTTPException(status_code=400, detail="La empresa aún no tiene configuración (onboarding sin iniciar)")
+
+    acciones = []
+
+    # Sheet: solo si no existe todavía
+    if not config.google_sheets_id:
+        config.sheet_status = "pendiente"
+        config.provision_error = None
+        db.commit()
+        background_tasks.add_task(
+            _provisionar_sheet_background,
+            company_id=company_id,
+            company_nombre=company.nombre,
+            contacto_email=config.contacto_email or company.contacto_email or "",
+            tipo_estructura=config.tipo_estructura or "unica",
+            sub_empresas=config.sub_empresas or [],
+        )
+        acciones.append("sheet")
+
+    # Estructura Drive: siempre que haya carpeta del cliente (idempotente)
+    if config.google_workspace_drive_id:
+        config.drive_status = "pendiente"
+        db.commit()
+        background_tasks.add_task(
+            _crear_estructura_drive_background,
+            company_id=company_id,
+            company_nombre=company.nombre,
+            tipo_estructura=config.tipo_estructura or "unica",
+            sub_empresas=config.sub_empresas or [],
+        )
+        acciones.append("drive")
+
+    if not acciones:
+        return {
+            "ok": True,
+            "acciones": [],
+            "mensaje": "Nada que reaprovisionar: el Sheet ya existe y no hay carpeta Drive configurada.",
+        }
+
+    logger.info(f"♻️ Reaprovisionamiento de company_id={company_id} por {user.username}: {acciones}")
+    return {
+        "ok": True,
+        "acciones": acciones,
+        "mensaje": f"Reaprovisionamiento en marcha ({' + '.join(acciones)}). Revisa el estado en unos segundos.",
     }
 
 

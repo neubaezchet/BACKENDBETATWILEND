@@ -454,11 +454,17 @@ async def configurar_email_copia(
 
 @router.get("/empresas")
 async def listar_empresas(
+    request: Request,
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
-    """Lista todas las empresas activas"""
+    """Lista empresas activas (usuario tenant → solo la suya)"""
     try:
+        from app.services.tenant_scope import empresa_scope
+        empresa_forzada = empresa_scope(request, db, "all")
+        if empresa_forzada != "all":
+            return [empresa_forzada]
+
         empresas = db.query(Company.nombre).filter(Company.activa == True).distinct().all()
         empresas_list = [e[0] for e in empresas if e[0]]
         
@@ -471,6 +477,7 @@ async def listar_empresas(
 
 @router.get("/casos")
 async def listar_casos(
+    request: Request,
     empresa: Optional[str] = None,
     estado: Optional[str] = None,
     tipo: Optional[str] = None,
@@ -481,6 +488,8 @@ async def listar_casos(
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
+    from app.services.tenant_scope import empresa_scope
+    empresa = empresa_scope(request, db, empresa)
     """
     Lista casos con filtros avanzados
     
@@ -579,11 +588,14 @@ async def listar_casos(
 
 @router.get("/casos/tabla-viva")
 async def obtener_tabla_viva(
+    request: Request,
     empresa: Optional[str] = None,
     periodo: Optional[str] = None,
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
+    from app.services.tenant_scope import empresa_scope
+    empresa = empresa_scope(request, db, empresa)
     """
     Endpoint para Tabla Viva (Dashboard en tiempo real)
     
@@ -1227,10 +1239,13 @@ async def agregar_nota(
 
 @router.get("/stats")
 async def obtener_estadisticas(
+    request: Request,
     empresa: Optional[str] = None,
     db: Session = Depends(get_db),
     _: bool = Depends(verificar_token_admin)
 ):
+    from app.services.tenant_scope import empresa_scope
+    empresa = empresa_scope(request, db, empresa)
     """
     Obtiene estadísticas para el dashboard
     

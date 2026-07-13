@@ -416,6 +416,11 @@ class TenantConfig(Base):
     google_sheets_id = Column(String(200), nullable=True)   # ID del spreadsheet de esta empresa
     google_sheets_url = Column(String(500), nullable=True)  # URL del spreadsheet
 
+    # ✅ Estado del aprovisionamiento background (visibilidad + reintentos desde el admin)
+    sheet_status = Column(String(20), default='pendiente')   # pendiente | ok | error
+    drive_status = Column(String(20), default='pendiente')   # pendiente | ok | error | sin_drive
+    provision_error = Column(Text, nullable=True)            # último error (diagnóstico)
+
     # Estado del onboarding
     onboarding_completado = Column(Boolean, default=False)
     onboarding_step = Column(Integer, default=1)

@@ -4,7 +4,7 @@ RUTAS DE REPORTES
 Endpoints principales para tabla viva y exportaciones
 """
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Response
+from fastapi import APIRouter, Depends, Query, HTTPException, Response, Request
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case as sql_case, distinct
@@ -39,6 +39,17 @@ from app.checks_disponibles import CHECKS_DISPONIBLES
 
 logger = logging.getLogger(__name__)
 
+
+# ═══════════════════════════════════════════════════════════
+# AISLAMIENTO MULTI-TENANT EN REPORTES
+# Si el request trae el JWT de un usuario de empresa (tenant),
+# el filtro "empresa" se FUERZA a la suya — sin importar qué
+# pida el frontend. Los admins globales siguen viendo todo.
+# ═══════════════════════════════════════════════════════════
+
+from app.services.tenant_scope import empresa_scope as _empresa_scope
+
+
 # Crear router
 router = APIRouter(prefix="/validador/casos", tags=["Reportes"])
 
@@ -47,10 +58,12 @@ router = APIRouter(prefix="/validador/casos", tags=["Reportes"])
 # ============================================================
 @router.get("/tabla-viva", response_model=TablaVivaResponse)
 async def get_tabla_viva(
+    request: Request,
     empresa: str = Query("all", description="Nombre de empresa o 'all'"),
     periodo: str = Query("mes_actual", description="Tipo de período"),
     db: Session = Depends(get_db)
 ):
+    empresa = _empresa_scope(request, db, empresa)
     """
     📊 TABLA VIVA EN TIEMPO REAL
     
@@ -77,6 +90,7 @@ async def get_tabla_viva(
 # ============================================================
 @router.get("/preview-exportacion", response_model=PreviewExportResponse)
 async def get_preview_exportacion(
+    request: Request,
     empresa: str = Query("all"),
     fecha_inicio: Optional[str] = Query(None, description="YYYY-MM-DD"),
     fecha_fin: Optional[str] = Query(None, description="YYYY-MM-DD"),
@@ -84,6 +98,7 @@ async def get_preview_exportacion(
     tipos: Optional[str] = Query(None, description="tipo1,tipo2,..."),
     db: Session = Depends(get_db)
 ):
+    empresa = _empresa_scope(request, db, empresa)
     """
     👁️ PREVIEW DE EXPORTACIÓN
     
@@ -125,6 +140,7 @@ async def get_preview_exportacion(
 # ============================================================
 @router.get("/exportar-avanzado")
 async def exportar_avanzado(
+    request: Request,
     empresa: str = Query("all"),
     fecha_inicio: Optional[str] = Query(None, description="YYYY-MM-DD"),
     fecha_fin: Optional[str] = Query(None, description="YYYY-MM-DD"),
@@ -134,6 +150,7 @@ async def exportar_avanzado(
     formato: str = Query("xlsx", description="xlsx, csv o json"),
     db: Session = Depends(get_db)
 ):
+    empresa = _empresa_scope(request, db, empresa)
     """
     📥 EXPORTAR DATOS AVANZADO
     
@@ -287,12 +304,14 @@ def _calcular_fechas_periodo(periodo: str, fecha_desde: str = None, fecha_hasta:
 
 @router.get("/dashboard-completo")
 async def get_dashboard_completo(
+    request: Request,
     empresa: str = Query("all"),
     periodo: str = Query("mes_actual"),
     fecha_desde: str = Query(None, description="Fecha inicio YYYY-MM-DD (solo si periodo=personalizado)"),
     fecha_hasta: str = Query(None, description="Fecha fin YYYY-MM-DD (solo si periodo=personalizado)"),
     db: Session = Depends(get_db)
 ):
+    empresa = _empresa_scope(request, db, empresa)
     """
     📊 DASHBOARD COMPLETO 2026
     Retorna TODOS los datos necesarios para el panel de reportes:
@@ -706,12 +725,14 @@ def _nombre_a_eps_key(nombre: str) -> str:
 
 @router.get("/plano-ocr")
 async def get_plano_ocr(
+    request: Request,
     empresa: str = Query("all"),
     periodo: str = Query("mes_actual"),
     fecha_desde: str = Query(None),
     fecha_hasta: str = Query(None),
     db: Session = Depends(get_db),
 ):
+    empresa = _empresa_scope(request, db, empresa)
     """
     📋 PLANO INCAPACIDADES — 100% OCR
     Todos los campos vienen del texto extraído por Mistral + Gemini.
@@ -1019,6 +1040,7 @@ async def powerbi_analisis_persona(
 # ============================================================
 @router.get("/powerbi/buscar")
 async def powerbi_buscar_empleados(
+    request: Request,
     q: str = Query("", description="Búsqueda por cédula o nombre"),
     empresa: str = Query("all", description="Filtrar por empresa"),
     db: Session = Depends(get_db)
@@ -1027,6 +1049,7 @@ async def powerbi_buscar_empleados(
     🔍 Busca empleados para el Power BI dashboard.
     Retorna lista de empleados con resumen rápido.
     """
+    empresa = _empresa_scope(request, db, empresa)
     try:
         query = db.query(
             Case.cedula,
@@ -1090,6 +1113,7 @@ async def powerbi_buscar_empleados(
 # ============================================================
 @router.get("/powerbi/global")
 async def powerbi_global(
+    request: Request,
     empresa: str = Query("all", description="Filtrar por empresa"),
     cedulas: str = Query("", description="Cédulas separadas por coma"),
     db: Session = Depends(get_db)
@@ -1098,6 +1122,7 @@ async def powerbi_global(
     📊 POWER BI GLOBAL — Vista de TODAS las personas con su estado de prórroga,
     180 días, gaps, etc. Para visualización masiva.
     """
+    empresa = _empresa_scope(request, db, empresa)
     try:
         from datetime import date as date_type
 
@@ -1267,12 +1292,14 @@ async def get_estado_sync():
 
 @router.get("/sync/traslapos")
 async def get_traslapos(
+    request: Request,
     empresa: str = Query("all"),
     db: Session = Depends(get_db)
 ):
     """
     🔀 Listado de todas las incapacidades con traslapo de fechas detectado
     """
+    empresa = _empresa_scope(request, db, empresa)
     try:
         query = db.query(Case).filter(Case.dias_traslapo > 0)
         
