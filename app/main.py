@@ -41,6 +41,7 @@ from app.routes.ocr import router as ocr_router
 from app.routes.tenants import router as tenants_router, public_router as tenants_public_router
 from app.routes.radicacion import router as radicacion_router
 from app.routes.demo import demo_router, leads_router  # ✅ Demo/Leads
+from app.routes.browserbase import router as browserbase_router  # ✅ Browserbase Agents (navegador cloud)
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ✅ Cola resiliente persistente (Drive)
@@ -219,6 +220,9 @@ app.include_router(radicacion_router)
 
 # ⭐ OCR con Mistral - Extracción de texto de documentos
 app.include_router(ocr_router)
+
+# ⭐ Browserbase — Agentes de navegador autónomos en la nube
+app.include_router(browserbase_router)
 
 app.include_router(validador_router)
 
