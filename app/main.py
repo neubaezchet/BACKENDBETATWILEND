@@ -1808,7 +1808,16 @@ async def subir_incapacidad(
     db.refresh(nuevo_caso)
     
     print(f"✅ Caso {consecutivo} guardado (ID {nuevo_caso.id}) - Empresa: {empleado_bd.empresa.nombre if empleado_bd and empleado_bd.empresa else 'N/A'}")
-    
+
+    # ✅ AUTO-ENCOLAR RADICACIÓN (Browserbase) — si la empresa tiene bot para esta EPS
+    try:
+        from app.services.radicacion_dispatcher import encolar_caso
+        cola_id = encolar_caso(db, nuevo_caso)
+        if cola_id:
+            print(f"🤖 Caso {consecutivo} encolado para radicación automática (cola #{cola_id})")
+    except Exception as e:
+        print(f"⚠️ Error auto-encolando radicación: {e}")
+
     # ✅ SINCRONIZAR CON GOOGLE SHEETS
     try:
         from app.google_sheets_tracker import actualizar_caso_en_sheet

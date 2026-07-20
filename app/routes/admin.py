@@ -813,6 +813,9 @@ async def listar_bots_empresa(
                 "soporte_nombre": b.soporte_nombre,
                 "soporte_actualizado_en": b.soporte_actualizado_en.isoformat() if b.soporte_actualizado_en else None,
                 "tiene_soporte": bool(b.soporte_drive_url),
+                # ✅ Browserbase — sesión de navegador persistente (context)
+                "tiene_sesion_guardada": bool(b.browserbase_context_id),
+                "context_ultimo_login": b.context_ultimo_login.isoformat() if b.context_ultimo_login else None,
                 "actualizado_en": b.actualizado_en.isoformat() if b.actualizado_en else None,
                 "actualizado_por": b.actualizado_por,
             } for b in bots]

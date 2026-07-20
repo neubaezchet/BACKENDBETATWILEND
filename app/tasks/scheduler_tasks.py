@@ -249,6 +249,18 @@ def iniciar_scheduler():
             )
             logger.info("✅ Tarea registrada: Cola radicación — reintentos (cada 2 min)")
 
+            # Tarea 6: Dispatcher Browserbase — lanza runs desde la cola y
+            # sincroniza resultados (reemplaza el ciclo de browser-use)
+            from app.services.radicacion_dispatcher import ciclo_dispatcher_sync
+            scheduler.add_job(
+                ciclo_dispatcher_sync,
+                IntervalTrigger(minutes=1),
+                id='dispatcher_browserbase',
+                name='Dispatcher Browserbase — cola → runs → resultados',
+                replace_existing=True,
+            )
+            logger.info("✅ Tarea registrada: Dispatcher Browserbase (cada 1 min)")
+
             scheduler.start()
             logger.info("=" * 60)
             logger.info("✅ SCHEDULER INICIADO CORRECTAMENTE")

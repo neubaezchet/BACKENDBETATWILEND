@@ -698,6 +698,12 @@ class EmpresaBotConfig(Base):
     creado_por = Column(String(200))  # Usuario admin que lo creó
     actualizado_por = Column(String(200))  # Usuario admin que lo actualizó
 
+    # ✅ Browserbase — sesión de navegador persistente (context) por bot
+    # Guarda cookies/login del portal EPS entre radicaciones (cifrado en Browserbase)
+    browserbase_context_id = Column(String(100), nullable=True)
+    context_ultimo_login   = Column(DateTime, nullable=True)   # Última vez que se hizo login manual
+    context_login_session  = Column(String(100), nullable=True) # Sesión de login en curso (si hay una abierta)
+
     creado_en = Column(DateTime, default=get_utc_now, index=True)
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
     
@@ -808,6 +814,7 @@ class RadicacionCola(Base):
 
     # Resultado
     radicado          = Column(String(200), nullable=True)
+    observacion       = Column(Text, nullable=True)   # Observación del portal (éxito o rechazo)
     ultimo_error      = Column(Text, nullable=True)
     historial_errores = Column(JSONB, default=list)   # [{intento, error, ts}]
     fallo_motivo      = Column(Text, nullable=True)   # Resumen del fallo definitivo
@@ -910,6 +917,9 @@ def init_db():
 
         # ✅ Migrar tabla cola de radicación (seguro de re-ejecutar)
         migrar_cola_radicacion()
+
+        # ✅ Migrar columnas de Browserbase en empresa_bot_config (seguro de re-ejecutar)
+        migrar_columnas_browserbase()
 
         # Verificar conexión
         db = SessionLocal()
@@ -1088,6 +1098,43 @@ def migrar_columnas_tenant():
         return True
     except Exception as e:
         print(f"❌ Error en migración tenant: {e}")
+        return False
+
+
+def migrar_columnas_browserbase():
+    """
+    Agrega columnas de Browserbase (context persistente) a empresa_bot_config.
+    Seguro de re-ejecutar (IF NOT EXISTS en PostgreSQL).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando columnas de Browserbase...")
+
+        migraciones = [
+            ("empresa_bot_config", "browserbase_context_id", "VARCHAR(100)"),
+            ("empresa_bot_config", "context_ultimo_login",   "TIMESTAMP"),
+            ("empresa_bot_config", "context_login_session",  "VARCHAR(100)"),
+            ("radicacion_cola",    "observacion",            "TEXT"),
+        ]
+        for tabla, col, tipo in migraciones:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT"))
+                else:
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en {tabla} agregada")
+            except Exception as e:
+                if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                    print(f"   ℹ️  Columna '{col}' ya existe en {tabla}")
+                else:
+                    print(f"   ⚠️  {tabla}.{col}: {e}")
+
+        db.commit()
+        print("✅ Migración Browserbase completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración Browserbase: {e}")
         return False
 
 

@@ -37,18 +37,18 @@ class BrowserbaseError(Exception):
         super().__init__(f"Browserbase API error {status_code}: {detail}")
 
 
-def _headers() -> dict:
+def _headers(with_body: bool) -> dict:
     if not BROWSERBASE_API_KEY:
         raise BrowserbaseError(500, "BROWSERBASE_API_KEY no está configurada en las variables de entorno")
-    return {
-        "X-BB-API-Key": BROWSERBASE_API_KEY,
-        "Content-Type": "application/json",
-    }
+    headers = {"X-BB-API-Key": BROWSERBASE_API_KEY}
+    if with_body:
+        headers["Content-Type"] = "application/json"
+    return headers
 
 
 async def _request(method: str, path: str, json: Optional[dict] = None, params: Optional[dict] = None) -> dict:
     async with httpx.AsyncClient(base_url=BROWSERBASE_API_URL, timeout=60.0) as client:
-        resp = await client.request(method, path, headers=_headers(), json=json, params=params)
+        resp = await client.request(method, path, headers=_headers(json is not None), json=json, params=params)
     if resp.status_code >= 400:
         try:
             detail = resp.json()
@@ -149,8 +149,70 @@ async def stop_run(run_id: str) -> dict:
 
 
 # ──────────────────────────────────────────────
-#  SESIONES (observabilidad / live view)
+#  CONTEXTS (persistencia de sesión/credenciales)
+#  Un context guarda cookies, tokens y localStorage entre sesiones.
+#  Best practice Browserbase: un context por sitio + login.
 # ──────────────────────────────────────────────
+
+async def create_context() -> dict:
+    """Crea un context vacío. Devuelve {'id': ...}. El project se infiere de la API key."""
+    body = {"projectId": BROWSERBASE_PROJECT_ID} if BROWSERBASE_PROJECT_ID else {}
+    return await _request("POST", "/v1/contexts", json=body)
+
+
+async def get_context(context_id: str) -> dict:
+    return await _request("GET", f"/v1/contexts/{context_id}")
+
+
+async def delete_context(context_id: str) -> dict:
+    """Elimina un context permanentemente (borra la sesión/login guardado)."""
+    return await _request("DELETE", f"/v1/contexts/{context_id}")
+
+
+# ──────────────────────────────────────────────
+#  SESIONES (navegador directo — para login manual y observabilidad)
+# ──────────────────────────────────────────────
+
+async def create_session(context_id: Optional[str] = None,
+                         persist: bool = True,
+                         keep_alive: bool = True,
+                         timeout: int = 900,
+                         proxies: Optional[Any] = None,
+                         user_metadata: Optional[dict] = None,
+                         browser_settings_extra: Optional[dict] = None) -> dict:
+    """
+    Crea una sesión de navegador (sin agente). Se usa para el flujo de
+    login manual: el admin abre el live view, inicia sesión en el portal
+    de la EPS y el context guarda las cookies al cerrar.
+    """
+    browser_settings: dict = {"solveCaptchas": True, "blockAds": True}
+    if context_id:
+        browser_settings["context"] = {"id": context_id, "persist": persist}
+    if browser_settings_extra:
+        browser_settings.update(browser_settings_extra)
+
+    body: dict = {
+        "browserSettings": browser_settings,
+        "keepAlive": keep_alive,
+        "timeout": timeout,
+    }
+    if BROWSERBASE_PROJECT_ID:
+        body["projectId"] = BROWSERBASE_PROJECT_ID
+    if proxies is not None:
+        body["proxies"] = proxies
+    if user_metadata:
+        body["userMetadata"] = user_metadata
+    return await _request("POST", "/v1/sessions", json=body)
+
+
+async def release_session(session_id: str) -> dict:
+    """
+    Cierra la sesión de forma limpia (REQUEST_RELEASE). Importante:
+    dispara la persistencia del context y evita cobrar minutos de más.
+    """
+    return await _request("POST", f"/v1/sessions/{session_id}",
+                          json={"status": "REQUEST_RELEASE"})
+
 
 async def get_live_view_urls(session_id: str) -> dict:
     """
@@ -162,3 +224,12 @@ async def get_live_view_urls(session_id: str) -> dict:
 
 async def get_session(session_id: str) -> dict:
     return await _request("GET", f"/v1/sessions/{session_id}")
+
+
+# ──────────────────────────────────────────────
+#  HELPERS DE RADICACIÓN
+# ──────────────────────────────────────────────
+
+# Proxy Browserbase con geolocalización Colombia — consistencia de ubicación
+# para que los portales EPS no invaliden la sesión guardada del context.
+PROXY_COLOMBIA = [{"type": "browserbase", "geolocation": {"country": "CO"}}]

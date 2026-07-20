@@ -756,6 +756,7 @@ def _fmt_cola_item(i: RadicacionCola) -> dict:
         "intentos":         i.intentos,
         "proximo_intento":  i.proximo_intento.isoformat() if i.proximo_intento else None,
         "radicado":         i.radicado,
+        "observacion":      i.observacion,
         "ultimo_error":     i.ultimo_error,
         "fallo_motivo":     i.fallo_motivo,
         "historial_errores":i.historial_errores or [],
