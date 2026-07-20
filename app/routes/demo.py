@@ -1186,6 +1186,35 @@ async def activar_empresa_desde_demo(
     # Email al contacto con los links de sus 3 portales + su personalización
     config = db.query(TenantConfig).filter(TenantConfig.company_id == company.id).first()
     paleta_id = config.paleta_id if config else None
+
+    # ♻️ AUTOCURACIÓN: si el aprovisionamiento quedó incompleto durante el demo,
+    # reintentarlo automáticamente al activar la empresa (Sheet solo si no existe;
+    # estructura Drive es idempotente).
+    if config:
+        try:
+            from app.routes.tenants import _provisionar_sheet_background, _crear_estructura_drive_background
+            if not config.google_sheets_id:
+                config.sheet_status = "pendiente"
+                db.commit()
+                background_tasks.add_task(
+                    _provisionar_sheet_background,
+                    company_id=company.id,
+                    company_nombre=company.nombre,
+                    contacto_email=config.contacto_email or company.contacto_email or "",
+                    tipo_estructura=config.tipo_estructura or "unica",
+                    sub_empresas=config.sub_empresas or [],
+                )
+                logger.info(f"♻️ Activación: Sheet faltante para '{company.nombre}' — reaprovisionando")
+            if config.google_workspace_drive_id:
+                background_tasks.add_task(
+                    _crear_estructura_drive_background,
+                    company_id=company.id,
+                    company_nombre=company.nombre,
+                    tipo_estructura=config.tipo_estructura or "unica",
+                    sub_empresas=config.sub_empresas or [],
+                )
+        except Exception as _e:
+            logger.warning(f"⚠️ Autocuración de aprovisionamiento al activar falló: {_e}")
     email_destino = company.contacto_email or lead.contacto_email
     if email_destino:
         background_tasks.add_task(

@@ -642,11 +642,37 @@ async def actualizar_empresa(
         empresa.contacto_email = data["contacto_email"]
     if "contacto_telefono" in data:
         empresa.contacto_telefono = data["contacto_telefono"]
+
+    aviso_sheet = None
     if "nombre" in data and data["nombre"]:
-        empresa.nombre = data["nombre"].strip()
-    
+        nuevo_nombre = data["nombre"].strip()
+        if nuevo_nombre != empresa.nombre:
+            # Evitar chocar con otra empresa existente
+            duplicada = db.query(Company).filter(
+                Company.nombre == nuevo_nombre, Company.id != empresa.id
+            ).first()
+            if duplicada:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Ya existe otra empresa llamada '{nuevo_nombre}' (id={duplicada.id})",
+                )
+            nombre_anterior = empresa.nombre
+            empresa.nombre = nuevo_nombre
+            # Regenerar el slug para que los links por empresa usen el nombre nuevo
+            from app.database import asignar_slug
+            asignar_slug(db, empresa)
+            aviso_sheet = (
+                f"⚠️ Si el Sheet (maestro o propio) tiene filas con empresa='{nombre_anterior}', "
+                f"cámbialas a '{nuevo_nombre}' — si no, el sync volverá a crear '{nombre_anterior}'."
+            )
+
     db.commit()
-    return {"ok": True, "mensaje": f"Empresa '{empresa.nombre}' actualizada"}
+    return {
+        "ok": True,
+        "mensaje": f"Empresa '{empresa.nombre}' actualizada",
+        "slug": empresa.slug,
+        "aviso": aviso_sheet,
+    }
 
 
 # ═══════════════════════════════════════════════════════════

@@ -1707,9 +1707,10 @@ async def subir_incapacidad(
         if company_id_drive:
             try:
                 from app.database import TenantConfig
+                # Sin exigir onboarding_completado: si la empresa tiene Drive/ciclo
+                # configurados, se respetan aunque el wizard haya quedado a medias.
                 tenant_cfg = db.query(TenantConfig).filter(
                     TenantConfig.company_id == company_id_drive,
-                    TenantConfig.onboarding_completado == True,
                 ).first()
                 if tenant_cfg and tenant_cfg.google_workspace_drive_id:
                     client_drive_id = tenant_cfg.google_workspace_drive_id

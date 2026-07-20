@@ -1402,9 +1402,10 @@ def sincronizar_todas_las_empresas():
             db.query(TenantConfig, Company)
             .join(Company, TenantConfig.company_id == Company.id)
             .filter(
+                # La señal real es que EXISTA el Sheet — no la bandera de onboarding:
+                # un demo que no terminó todos los pasos del wizard también debe sincronizar.
                 TenantConfig.google_sheets_id.isnot(None),
                 TenantConfig.google_sheets_id != "",
-                TenantConfig.onboarding_completado == True,
                 Company.activa == True,
             )
             .all()
