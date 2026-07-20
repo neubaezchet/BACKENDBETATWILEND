@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, Form, File, Depends, HTTPException
+from fastapi import FastAPI, UploadFile, Form, File, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -1515,6 +1515,7 @@ async def subir_incapacidad(
     incapacityStartDate: Optional[str] = Form(None),
     incapacityEndDate: Optional[str] = Form(None),
     empresa: Optional[str] = Form(None),  # slug de la empresa (link por empresa de repogemin)
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
     """Endpoint de recepción de incapacidades"""
@@ -1819,25 +1820,38 @@ async def subir_incapacidad(
     except Exception as e:
         print(f"⚠️ Error auto-encolando radicación: {e}")
 
-    # ✅ SINCRONIZAR CON GOOGLE SHEETS
-    try:
-        from app.google_sheets_tracker import actualizar_caso_en_sheet
-        actualizar_caso_en_sheet(nuevo_caso, accion="crear")
-        print(f"✅ Caso {consecutivo} sincronizado con Google Sheets")
-    except Exception as e:
-        print(f"⚠️ Error sincronizando con Sheets: {e}")
-    
-    # ✅ VERIFICAR SI ES PRÓRROGA EN CONTEXTO DE MATERNIDAD/PRELICENCIA
-    # Si hay licencia de maternidad y cadena de prórrogas previa, verificar correlación
-    try:
-        from app.services.prorroga_detector import verificar_prorroga_contexto_maternidad
-        resultado_maternidad = verificar_prorroga_contexto_maternidad(db, nuevo_caso)
-        if resultado_maternidad.get("es_prorroga_cadena_previa"):
-            print(f"✅ PRÓRROGA MATERNIDAD: {resultado_maternidad['explicacion']}")
-        elif resultado_maternidad.get("aplica_regla_maternidad"):
-            print(f"ℹ️ Regla maternidad aplicada pero sin correlación: {resultado_maternidad['explicacion']}")
-    except Exception as e:
-        print(f"⚠️ Error verificando prórroga maternidad: {e}")
+    # ⚡ SHEETS + PRÓRROGA EN SEGUNDO PLANO (corren después de responder —
+    # el colaborador no espera estas tareas internas; el resultado no afecta
+    # ni la respuesta ni el correo)
+    def _post_proceso_caso(case_id: int):
+        from app.database import SessionLocal
+        db_bg = SessionLocal()
+        try:
+            caso_bg = db_bg.query(Case).filter(Case.id == case_id).first()
+            if not caso_bg:
+                return
+            try:
+                from app.google_sheets_tracker import actualizar_caso_en_sheet
+                actualizar_caso_en_sheet(caso_bg, accion="crear")
+                print(f"✅ Caso {caso_bg.serial} sincronizado con Google Sheets (bg)")
+            except Exception as e:
+                print(f"⚠️ Error sincronizando con Sheets (bg): {e}")
+            try:
+                from app.services.prorroga_detector import verificar_prorroga_contexto_maternidad
+                resultado_maternidad = verificar_prorroga_contexto_maternidad(db_bg, caso_bg)
+                if resultado_maternidad.get("es_prorroga_cadena_previa"):
+                    print(f"✅ PRÓRROGA MATERNIDAD: {resultado_maternidad['explicacion']}")
+                elif resultado_maternidad.get("aplica_regla_maternidad"):
+                    print(f"ℹ️ Regla maternidad sin correlación: {resultado_maternidad['explicacion']}")
+            except Exception as e:
+                print(f"⚠️ Error verificando prórroga maternidad (bg): {e}")
+        finally:
+            db_bg.close()
+
+    if background_tasks is not None:
+        background_tasks.add_task(_post_proceso_caso, nuevo_caso.id)
+    else:
+        _post_proceso_caso(nuevo_caso.id)
     
     quinzena_actual = get_current_quinzena()
     

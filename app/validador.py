@@ -2605,6 +2605,28 @@ async def obtener_pdf_stream(
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
+# ⚡ Caché en memoria de PDFs por ETag (evita re-descargar de Drive en cada
+# primera carga de cada validador). Tope ~150 MB con desalojo del más viejo.
+_PDF_BYTES_CACHE: dict = {}          # etag → bytes
+_PDF_CACHE_ORDEN: list = []          # etags en orden de inserción
+_PDF_CACHE_MAX_BYTES = 150 * 1024 * 1024
+
+
+def _pdf_cache_get(etag: str):
+    return _PDF_BYTES_CACHE.get(etag)
+
+
+def _pdf_cache_put(etag: str, data: bytes):
+    if etag in _PDF_BYTES_CACHE:
+        return
+    _PDF_BYTES_CACHE[etag] = data
+    _PDF_CACHE_ORDEN.append(etag)
+    total = sum(len(v) for v in _PDF_BYTES_CACHE.values())
+    while total > _PDF_CACHE_MAX_BYTES and _PDF_CACHE_ORDEN:
+        viejo = _PDF_CACHE_ORDEN.pop(0)
+        total -= len(_PDF_BYTES_CACHE.pop(viejo, b""))
+
+
 @router.get("/casos/{serial}/pdf/fast")
 async def obtener_pdf_fast(
     serial: str,
@@ -2658,33 +2680,40 @@ async def obtener_pdf_fast(
                 }
             )
         
-        # ✅ Descargar usando API autenticada (más rápida y confiable)
-        try:
-            from app.drive_uploader import get_authenticated_service
-            service = get_authenticated_service()
-            
-            # Descargar contenido del archivo
-            request_drive = service.files().get_media(fileId=file_id)
-            
-            pdf_content = io.BytesIO()
-            from googleapiclient.http import MediaIoBaseDownload
-            downloader = MediaIoBaseDownload(pdf_content, request_drive)
-            
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
-            
-            pdf_bytes = pdf_content.getvalue()
-            print(f"✅ [PDF Fast] {serial}: {len(pdf_bytes)} bytes via API autenticada")
-            
-        except Exception as drive_api_error:
-            # Fallback: URL pública si la API falla
-            print(f"⚠️ [PDF Fast] API falló, usando URL pública: {drive_api_error}")
-            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-            response = requests.get(download_url, timeout=25)
-            if response.status_code != 200:
-                raise HTTPException(status_code=500, detail=f"Error descargando PDF")
-            pdf_bytes = response.content
+        # ⚡ Caché de servidor: si otro validador ya cargó esta versión, 0 viajes a Drive
+        pdf_bytes = _pdf_cache_get(etag_value)
+        if pdf_bytes:
+            print(f"⚡ [PDF Fast] {serial}: {len(pdf_bytes)} bytes desde caché de servidor")
+        else:
+            # ✅ Descargar usando API autenticada (más rápida y confiable)
+            try:
+                from app.drive_uploader import get_authenticated_service
+                service = get_authenticated_service()
+
+                # Descargar contenido del archivo
+                request_drive = service.files().get_media(fileId=file_id)
+
+                pdf_content = io.BytesIO()
+                from googleapiclient.http import MediaIoBaseDownload
+                downloader = MediaIoBaseDownload(pdf_content, request_drive)
+
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+
+                pdf_bytes = pdf_content.getvalue()
+                print(f"✅ [PDF Fast] {serial}: {len(pdf_bytes)} bytes via API autenticada")
+
+            except Exception as drive_api_error:
+                # Fallback: URL pública si la API falla
+                print(f"⚠️ [PDF Fast] API falló, usando URL pública: {drive_api_error}")
+                download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                response = requests.get(download_url, timeout=25)
+                if response.status_code != 200:
+                    raise HTTPException(status_code=500, detail=f"Error descargando PDF")
+                pdf_bytes = response.content
+
+            _pdf_cache_put(etag_value, pdf_bytes)
         
         # Retornar PDF completo con headers de caché
         from fastapi.responses import Response
@@ -2711,6 +2740,102 @@ async def obtener_pdf_fast(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/casos/{serial}/preview")
+async def obtener_preview_caso(
+    serial: str,
+    if_none_match: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    ⚡ Preview instantáneo de la primera página del soporte (JPEG ~60-120 KB).
+    Es una imagen DERIVADA — el PDF original en Drive queda intacto.
+    Cacheado en disco por versión (ETag): el primer render tarda ~1s,
+    los siguientes son instantáneos para todos los validadores.
+    """
+    import hashlib as _hashlib
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+    from fastapi.responses import Response as _Response
+
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso or not caso.drive_link:
+        raise HTTPException(status_code=404, detail="Caso o PDF no encontrado")
+
+    if '/file/d/' in caso.drive_link:
+        file_id = caso.drive_link.split('/file/d/')[1].split('/')[0]
+    elif 'id=' in caso.drive_link:
+        file_id = caso.drive_link.split('id=')[1].split('&')[0]
+    else:
+        raise HTTPException(status_code=400, detail="Link de Drive inválido")
+
+    updated_str = caso.updated_at.isoformat() if caso.updated_at else ""
+    etag_value = _hashlib.md5(f"{file_id}:{updated_str}:preview".encode()).hexdigest()
+    etag_header = f'"{etag_value}"'
+
+    if if_none_match and if_none_match.strip('"') == etag_value:
+        return _Response(status_code=304, headers={
+            "ETag": etag_header,
+            "Cache-Control": "private, max-age=86400",
+            "Access-Control-Allow-Origin": "*",
+        })
+
+    # Caché en disco (sobrevive entre requests; se regenera si cambia la versión)
+    cache_dir = _Path(_tempfile.gettempdir()) / "previews_incapacidades"
+    cache_dir.mkdir(exist_ok=True)
+    cache_file = cache_dir / f"{etag_value}.jpg"
+
+    if cache_file.exists():
+        img_bytes = cache_file.read_bytes()
+    else:
+        # Obtener el PDF (reusa el caché de bytes de /pdf/fast si está)
+        pdf_etag = _hashlib.md5(f"{file_id}:{updated_str}".encode()).hexdigest()
+        pdf_bytes = _pdf_cache_get(pdf_etag)
+        if not pdf_bytes:
+            try:
+                from app.drive_uploader import get_authenticated_service
+                from googleapiclient.http import MediaIoBaseDownload
+                service = get_authenticated_service()
+                buf = io.BytesIO()
+                downloader = MediaIoBaseDownload(buf, service.files().get_media(fileId=file_id))
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+                pdf_bytes = buf.getvalue()
+            except Exception:
+                resp = requests.get(f"https://drive.google.com/uc?export=download&id={file_id}", timeout=25)
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=500, detail="Error descargando PDF para preview")
+                pdf_bytes = resp.content
+            _pdf_cache_put(pdf_etag, pdf_bytes)
+
+        # Render de la primera página (~1100px de ancho, JPEG calidad 80)
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            page = doc[0]
+            zoom = 1100 / max(page.rect.width, 1)
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            try:
+                img_bytes = pix.tobytes("jpeg")
+            except Exception:
+                img_bytes = pix.tobytes("png")
+        finally:
+            doc.close()
+        try:
+            cache_file.write_bytes(img_bytes)
+        except Exception:
+            pass  # sin caché en disco no pasa nada — solo será un poco más lento
+
+    media = "image/jpeg" if img_bytes[:3] == b"\xff\xd8\xff" else "image/png"
+    return _Response(content=img_bytes, media_type=media, headers={
+        "ETag": etag_header,
+        "Cache-Control": "private, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "ETag",
+    })
 
 
 @router.get("/casos/{serial}/pdf/meta")
