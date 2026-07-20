@@ -111,10 +111,29 @@ def encolar_caso(db: Session, caso) -> Optional[int]:
         if not empresa_nombre or not caso.drive_link:
             return None
 
-        bot = _mapear_eps_a_bot(db, empresa_nombre, caso.eps or "")
+        # Prioridad de EPS: 1) la que indica la incapacidad (OCR/Gemini)  2) la de la BD del empleado.
+        # (El documento manda: es la EPS donde el médico emitió la incapacidad.)
+        meta_pre = caso.metadata_form or {}
+        eps_ocr = ((meta_pre.get("plano") or {}).get("eps") or "").strip()
+        eps_bd = (caso.eps or "").strip()
+
+        bot = None
+        eps_usada, fuente_eps = None, None
+        if eps_ocr:
+            bot = _mapear_eps_a_bot(db, empresa_nombre, eps_ocr)
+            if bot:
+                eps_usada, fuente_eps = eps_ocr, "ocr"
+        if not bot and eps_bd:
+            bot = _mapear_eps_a_bot(db, empresa_nombre, eps_bd)
+            if bot:
+                eps_usada, fuente_eps = eps_bd, "base_datos"
         if not bot:
-            logger.info(f"[Encolar] Caso {caso.serial}: sin bot para EPS '{caso.eps}' en '{empresa_nombre}' — flujo manual")
+            logger.info(
+                f"[Encolar] Caso {caso.serial}: sin bot para EPS "
+                f"(OCR: '{eps_ocr or '—'}' / BD: '{eps_bd or '—'}') en '{empresa_nombre}' — flujo manual"
+            )
             return None
+        logger.info(f"[Encolar] Caso {caso.serial}: EPS '{eps_usada}' (fuente: {fuente_eps}) → bot '{bot.bot_nombre}'")
 
         # Evitar duplicados: no encolar si ya hay ítem activo para este caso
         existente = db.query(RadicacionCola).filter(
@@ -130,10 +149,12 @@ def encolar_caso(db: Session, caso) -> Optional[int]:
             "cedula": caso.cedula,
             "tipo_doc_trabajador": plano.get("tipo_doc") or "CC",
             "fecha_inicio": (meta.get("fecha_inicio_incapacidad") or "")[:10],
-            "dias": meta.get("dias_incapacidad") or plano.get("dias") or "",
+            "dias": meta.get("dias_incapacidad") or plano.get("dias_incapacidad") or plano.get("dias") or "",
             "motivo": (caso.tipo.value if hasattr(caso.tipo, "value") else str(caso.tipo or "")),
             "diagnostico": caso.diagnostico or plano.get("diagnostico") or "",
             "cie10": caso.codigo_cie10 or plano.get("cie10") or "",
+            "eps_detectada": eps_usada,
+            "eps_fuente": fuente_eps,
         }
 
         item = RadicacionCola(
