@@ -178,6 +178,7 @@ class ActualizarThemeBody(BaseModel):
     paleta_colores: Optional[dict] = None   # {primary, secondary, accent}
     estilo_ui: Optional[str] = None
     portal: Optional[str] = None            # admin | portal | repogemin | None/"todos" = general
+    quitar_override: bool = False           # True + portal específico → ese portal vuelve a heredar la general
 
 
 @router.put("/me/theme")
@@ -206,19 +207,27 @@ async def actualizar_mi_theme(
         raise HTTPException(status_code=400, detail=f"Portal inválido: {body.portal}")
 
     if portal == "todos":
-        if body.paleta_id is not None:
-            config.paleta_id = body.paleta_id
-        if body.paleta_colores is not None:
-            config.paleta_colores = body.paleta_colores
+        if body.quitar_override:
+            # "Predeterminado" a nivel general: fábrica (índigo) + limpia todo override
+            config.paleta_id = "indigo"
+            config.paleta_colores = {"primary": "#4F46E5", "secondary": "#4338CA", "accent": "#312E81"}
+        else:
+            if body.paleta_id is not None:
+                config.paleta_id = body.paleta_id
+            if body.paleta_colores is not None:
+                config.paleta_colores = body.paleta_colores
         if body.estilo_ui is not None:
             config.estilo_ui = body.estilo_ui
         config.paletas_portales = {}  # los 3 portales vuelven a la paleta general
     else:
         overrides = dict(config.paletas_portales or {})
-        overrides[portal] = {
-            "paleta_id": body.paleta_id,
-            "colores": body.paleta_colores or {},
-        }
+        if body.quitar_override:
+            overrides.pop(portal, None)  # ese portal vuelve a heredar la paleta general
+        else:
+            overrides[portal] = {
+                "paleta_id": body.paleta_id,
+                "colores": body.paleta_colores or {},
+            }
         config.paletas_portales = overrides
 
     db.commit()

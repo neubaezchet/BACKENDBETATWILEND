@@ -228,6 +228,30 @@ def generar_mensaje_whatsapp(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════
+# FUNCIÓN SIMPLE — EMAILS DE ONBOARDING/DEMO (texto plano, sin serial/caso)
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+def enviar_email_simple(destinatario: str, asunto: str, cuerpo_texto: str, cc_email: Optional[str] = None) -> bool:
+    """
+    Envía un email simple (aprobación de lead, demo listo, empresa activada, rechazo).
+    Reutiliza el Service Account de Gmail; no requiere serial/caso como enviar_notificacion.
+    """
+    cc_list = [c.strip() for c in cc_email.split(",") if c.strip()] if cc_email else []
+    html_content = (
+        "<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;"
+        "line-height:1.6;color:#0F172A;white-space:pre-wrap\">"
+        + cuerpo_texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        + "</div>"
+    )
+    return _enviar_email_service_account(
+        email=destinatario,
+        cc_list=cc_list,
+        subject=asunto,
+        html_content=html_content,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════
 # FUNCIÓN PRINCIPAL — ENVIAR NOTIFICACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════════
 
