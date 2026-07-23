@@ -1845,6 +1845,13 @@ async def subir_incapacidad(
                     print(f"ℹ️ Regla maternidad sin correlación: {resultado_maternidad['explicacion']}")
             except Exception as e:
                 print(f"⚠️ Error verificando prórroga maternidad (bg): {e}")
+            # 🤖 Validación IA del soporte (semáforo verde/amarillo/rojo para el portal)
+            try:
+                from app.services.validacion_ia_service import validar_caso_con_ia
+                resumen_ia = validar_caso_con_ia(db_bg, caso_bg)
+                print(f"🤖 Validación IA {caso_bg.serial}: {resumen_ia.get('decision')} ({resumen_ia.get('semaforo')})")
+            except Exception as e:
+                print(f"⚠️ Error en validación IA (bg): {e}")
         finally:
             db_bg.close()
 

@@ -555,7 +555,20 @@ async def listar_casos(
             reenvios = caso.metadata_form.get('reenvios', [])
             if isinstance(reenvios, list):
                 total_reenvios = len(reenvios)
-        
+
+        # 🤖 Resumen ligero de la validación IA (semáforo para la lista)
+        validacion_ia = None
+        if caso.metadata_form and isinstance(caso.metadata_form, dict):
+            v = caso.metadata_form.get('validacion_ia')
+            if isinstance(v, dict):
+                validacion_ia = {
+                    "decision": v.get("decision"),
+                    "semaforo": v.get("semaforo"),
+                    "motivo": (v.get("motivo") or "")[:300],
+                    "reglas_fallidas": v.get("reglas_fallidas", []),
+                    "fecha": v.get("fecha"),
+                }
+
         items.append({
             "id": caso.id,
             "serial": caso.serial,
@@ -576,6 +589,7 @@ async def listar_casos(
             "recordatorios_count": caso.recordatorios_count or 0,
             "fraude_confirmado": bool(caso.metadata_form.get('fraude_confirmado')) if caso.metadata_form and isinstance(caso.metadata_form, dict) else False,
             "drive_link": caso.drive_link,
+            "validacion_ia": validacion_ia,
         })
     
     return {
@@ -723,6 +737,41 @@ async def detalle_caso(
             for nota in notas
         ]
     }
+
+@router.post("/casos/{serial}/validar-ia")
+async def validar_caso_ia_endpoint(
+    serial: str,
+    forzar: bool = True,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    🤖 Ejecuta (o re-ejecuta) la validación IA del soporte de un caso.
+    Devuelve el semáforo (verde/amarillo/rojo) y el detalle del análisis
+    que el portal muestra como pre-análisis para el validador humano.
+    """
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+
+    from app.services.validacion_ia_service import validar_caso_con_ia
+    resumen = validar_caso_con_ia(db, caso, forzar=forzar)
+
+    try:
+        registrar_evento(
+            db, caso.id,
+            accion="VALIDACION_IA",
+            actor="IA",
+            motivo=f"Decisión: {resumen.get('decision') or 'SIN ANÁLISIS'} — {resumen.get('motivo', '')[:200]}"
+        )
+    except Exception:
+        pass
+
+    return {
+        "serial": caso.serial,
+        "validacion_ia": resumen,
+    }
+
 
 @router.post("/casos/{serial}/estado")
 async def cambiar_estado(

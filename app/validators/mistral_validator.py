@@ -41,9 +41,9 @@ REGLAS_VALIDACION = cargar_reglas()
 #  PROMPT DE VALIDACIÓN
 # ──────────────────────────────────────────────
 
-def construir_prompt_validacion(texto_ocr: str, reglas: Dict) -> str:
+def construir_prompt_validacion(texto_ocr: str, reglas: Dict, contexto_formulario: Optional[Dict] = None) -> str:
     """Construye el prompt para validar el OCR contra las reglas"""
-    
+
     # Formatear las reglas de forma clara
     reglas_texto = ""
     for regla in reglas.get("reglas", []):
@@ -53,12 +53,34 @@ def construir_prompt_validacion(texto_ocr: str, reglas: Dict) -> str:
 - Tipo: {regla.get('tipo', 'general')}
 - Decisión si falla: {regla['decision']}
 """
-    
+
+    contexto_texto = ""
+    if contexto_formulario:
+        campos = {
+            "cedula": "Cédula registrada en el formulario",
+            "tipo": "Tipo de incapacidad declarado",
+            "subtipo": "Subtipo declarado",
+            "fecha_inicio": "Fecha de inicio declarada",
+            "fecha_fin": "Fecha de fin declarada",
+            "dias_incapacidad": "Días de incapacidad declarados",
+        }
+        lineas = [
+            f"- {label}: {contexto_formulario[key]}"
+            for key, label in campos.items()
+            if contexto_formulario.get(key) not in (None, "")
+        ]
+        if lineas:
+            contexto_texto = f"""
+DATOS DECLARADOS EN EL FORMULARIO (compáralos contra el documento — reglas de concordancia como R02 y R09):
+{chr(10).join(lineas)}
+"""
+
     prompt = f"""
 Eres un validador EXPERTO de incapacidades médicas colombianas.
 Tu tarea es analizar el texto extraído de un documento y validarlo contra las siguientes REGLAS ESTRICTAS:
 
 {reglas_texto}
+{contexto_texto}
 
 INSTRUCCIONES:
 1. Analiza el texto OCR línea por línea
@@ -120,13 +142,15 @@ class ValidadorIncapacidadIA:
         else:
             raise ValueError(f"❌ Modelo no soportado: {self.modelo}")
     
-    def validar(self, texto_ocr: str) -> Dict:
+    def validar(self, texto_ocr: str, contexto_formulario: Optional[Dict] = None) -> Dict:
         """
         Valida un texto OCR contra las reglas
-        
+
         Args:
             texto_ocr: Texto extraído por OCR (Mistral)
-            
+            contexto_formulario: Datos declarados en el formulario (cédula, tipo,
+                fechas, días) para las reglas de concordancia
+
         Returns:
             {
                 "exito": bool,
@@ -140,7 +164,7 @@ class ValidadorIncapacidadIA:
             }
         """
         try:
-            prompt = construir_prompt_validacion(texto_ocr, self.reglas)
+            prompt = construir_prompt_validacion(texto_ocr, self.reglas, contexto_formulario)
             
             if self.modelo == "gemini":
                 respuesta = self._validar_con_gemini(prompt)
