@@ -67,12 +67,14 @@ def get_current_user(
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 
 class SkillUpdate(BaseModel):
-    estado: str                     # activa | fallo | pendiente
+    estado: Optional[str] = None    # activa | fallo | pendiente — si se omite, no se toca (permite guardar solo el agent_id)
     cache_key: Optional[str] = None
     script_path: Optional[str] = None
     tokens: Optional[int] = 0
     campos_credenciales: Optional[List[dict]] = None  # Schema dinámico del formulario de login
     max_pdf_mb: Optional[float] = None               # Límite de peso del PDF en el portal
+    agent_id: Optional[str] = None                   # Agent reutilizable de Browserbase que RADICA en esta EPS/ARL
+    agent_id_reportes: Optional[str] = None          # Agent reutilizable que CONSULTA ESTADO en el mismo portal (misma credencial)
 
 class SesionCreate(BaseModel):
     sesion_id: str
@@ -231,6 +233,10 @@ async def listar_skills(
             "usos":   s.usos_totales if s else 0,
             "ultimo_uso": s.ultimo_uso_at.isoformat() if s and s.ultimo_uso_at else None,
             "campos_credenciales": s.campos_credenciales if s else None,
+            "agent_id": s.agent_id if s else None,
+            "tiene_agente": bool(s and s.agent_id),
+            "agent_id_reportes": s.agent_id_reportes if s else None,
+            "tiene_agente_reportes": bool(s and s.agent_id_reportes),
         })
 
     return {"ok": True, "skills": resultado}
@@ -250,24 +256,28 @@ async def registrar_skill(
     skill = db.query(RadicacionSkill).filter(RadicacionSkill.eps_key == eps_key).first()
 
     if skill:
-        skill.estado         = data.estado
+        if data.estado:       skill.estado         = data.estado
         if data.cache_key:    skill.cache_key      = data.cache_key
         if data.script_path:  skill.script_path    = data.script_path
         if data.tokens:       skill.primer_run_tokens = data.tokens
         if data.campos_credenciales: skill.campos_credenciales = data.campos_credenciales
         if data.max_pdf_mb is not None: skill.max_pdf_mb = data.max_pdf_mb
+        if data.agent_id: skill.agent_id = data.agent_id
+        if data.agent_id_reportes: skill.agent_id_reportes = data.agent_id_reportes
         skill.ultimo_uso_at  = datetime.utcnow()
         skill.usos_totales   = (skill.usos_totales or 0) + 1
         skill.actualizado_en = datetime.utcnow()
     else:
         skill = RadicacionSkill(
             eps_key             = eps_key,
-            estado              = data.estado,
+            estado              = data.estado or "activa",
             cache_key           = data.cache_key,
             script_path         = data.script_path,
             primer_run_tokens   = data.tokens or 0,
             campos_credenciales = data.campos_credenciales,
             max_pdf_mb          = data.max_pdf_mb,
+            agent_id            = data.agent_id,
+            agent_id_reportes   = data.agent_id_reportes,
             primer_run_at       = datetime.utcnow(),
             ultimo_uso_at       = datetime.utcnow(),
             usos_totales        = 1,
@@ -275,7 +285,10 @@ async def registrar_skill(
         db.add(skill)
 
     db.commit()
-    return {"ok": True, "eps_key": eps_key, "estado": data.estado}
+    return {
+        "ok": True, "eps_key": eps_key, "estado": skill.estado,
+        "agent_id": skill.agent_id, "agent_id_reportes": skill.agent_id_reportes,
+    }
 
 
 # ─── POST /admin/radicacion/sesiones ──────────────────────────────────────────

@@ -739,6 +739,13 @@ class RadicacionSkill(Base):
     # Límite de peso del PDF aceptado por el portal (MB). El bot comprimirá antes de subir.
     # Sobreescribe el valor por defecto del MANIFEST si se detectó un límite distinto en vivo.
     max_pdf_mb     = Column(Float, nullable=True)
+    # ID del Agent reutilizable en Browserbase para esta EPS/ARL (uno por eps_key, no por empresa —
+    # el portal es el mismo para todas las empresas, solo cambian las credenciales).
+    # Se registra vía PUT /admin/radicacion/skills/{eps_key} sin necesidad de deploy.
+    agent_id       = Column(String(100), nullable=True)
+    # ID del Agent de Browserbase que consulta el ESTADO/reportes en este mismo portal
+    # (misma credencial de arriba — solo cambia la tarea: leer en vez de radicar).
+    agent_id_reportes = Column(String(100), nullable=True)
     creado_en      = Column(DateTime, default=get_utc_now)
     actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
 
@@ -1115,6 +1122,8 @@ def migrar_columnas_browserbase():
             ("empresa_bot_config", "context_ultimo_login",   "TIMESTAMP"),
             ("empresa_bot_config", "context_login_session",  "VARCHAR(100)"),
             ("radicacion_cola",    "observacion",            "TEXT"),
+            ("radicacion_skills",  "agent_id",                "VARCHAR(100)"),
+            ("radicacion_skills",  "agent_id_reportes",       "VARCHAR(100)"),
         ]
         for tabla, col, tipo in migraciones:
             try:
@@ -1130,6 +1139,24 @@ def migrar_columnas_browserbase():
                     print(f"   ⚠️  {tabla}.{col}: {e}")
 
         db.commit()
+
+        # Seed único: el agente de Compensar vivía hardcodeado en AGENTES_POR_BOT
+        # (app/routes/browserbase.py). Lo copiamos a la tabla de skills para que de
+        # ahora en adelante el registro de agentes nuevos sea un PUT a
+        # /admin/radicacion/skills/{eps_key}, sin tocar código ni hacer deploy.
+        try:
+            skill = db.query(RadicacionSkill).filter(RadicacionSkill.eps_key == "compensar").first()
+            if not skill:
+                skill = RadicacionSkill(eps_key="compensar", estado="activa")
+                db.add(skill)
+            if not skill.agent_id:
+                skill.agent_id = "82ccb16d-1776-4ee2-8e7b-227cb033a0db"
+                db.commit()
+                print("   ✅ Seed: agent_id de Compensar registrado en radicacion_skills")
+        except Exception as e:
+            db.rollback()
+            print(f"   ⚠️  Seed agent_id Compensar omitido: {e}")
+
         print("✅ Migración Browserbase completada")
         db.close()
         return True

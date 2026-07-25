@@ -332,9 +332,18 @@ def _upsert_skill(db: Session, eps_key: str, bot: EmpresaBotConfig, exito: Optio
         skill.estado = "fallo"
 
 
+def _resolver_agent_id(db: Session, eps_key: str) -> Optional[str]:
+    """Agente reutilizable de Browserbase para esta EPS/ARL.
+    Se busca primero en radicacion_skills.agent_id (registrado sin deploy vía
+    PUT /admin/radicacion/skills/{eps_key}); si no está, cae al fallback legacy
+    en app.routes.browserbase.AGENTES_POR_BOT."""
+    from app.routes.browserbase import AGENTES_POR_BOT  # import tardío para evitar ciclo
+    skill = db.query(RadicacionSkill).filter(RadicacionSkill.eps_key == eps_key).first()
+    return (skill.agent_id if skill else None) or AGENTES_POR_BOT.get(eps_key)
+
+
 async def despachar_pendientes(db: Session) -> dict:
     """Toma ítems pendientes de la cola y lanza un run de Browserbase por cada uno."""
-    from app.routes.browserbase import AGENTES_POR_BOT  # import tardío para evitar ciclo
 
     ahora = datetime.utcnow()
     items = (
@@ -358,7 +367,7 @@ async def despachar_pendientes(db: Session) -> dict:
             errores.append({"item": item.id, "error": item.ultimo_error})
             continue
 
-        agent_id = AGENTES_POR_BOT.get(item.eps_key)
+        agent_id = _resolver_agent_id(db, item.eps_key)
         if not agent_id:
             # Sin agente entrenado aún — el ítem espera (no cuenta como intento fallido)
             logger.info(f"[Dispatcher] Item #{item.id}: sin agente para '{item.eps_key}' — en espera")

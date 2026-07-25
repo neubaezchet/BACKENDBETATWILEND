@@ -21,7 +21,7 @@ from app.services import browserbase_service as bb
 from app.services.browserbase_service import (
     BrowserbaseError, TERMINAL_STATUSES, PROXY_COLOMBIA,
 )
-from app.database import get_db, EmpresaBotConfig
+from app.database import get_db, EmpresaBotConfig, RadicacionSkill
 from app.routes.admin import get_current_user  # 🔒 mismo JWT del portal admin
 
 logger = logging.getLogger(__name__)
@@ -290,11 +290,18 @@ RESULT_SCHEMA_RADICACION = {
 }
 
 
-# Agentes reutilizables por bot (system prompt probado + result schema fijos en Browserbase).
-# Si el request no trae agent_id, se usa el del bot correspondiente.
+# Fallback legacy — el registro real de agentes vive en radicacion_skills.agent_id
+# (se registra con PUT /admin/radicacion/skills/{eps_key}, sin deploy). Este dict solo
+# cubre el caso de que la tabla no tenga aún el agente y no debería crecer.
 AGENTES_POR_BOT = {
     "compensar": "82ccb16d-1776-4ee2-8e7b-227cb033a0db",  # Compensar - Radicación de Incapacidades
 }
+
+
+def _resolver_agent_id(db: Session, eps_key: str) -> Optional[str]:
+    """Agente reutilizable para una EPS/ARL: primero la tabla de skills, luego el fallback legacy."""
+    skill = db.query(RadicacionSkill).filter(RadicacionSkill.eps_key == eps_key).first()
+    return (skill.agent_id if skill else None) or AGENTES_POR_BOT.get(eps_key)
 
 
 class RadicarRequest(BaseModel):
@@ -340,7 +347,7 @@ async def radicar(req: RadicarRequest, db: Session = Depends(get_db)):
     try:
         run = await bb.create_run(
             task=req.task,
-            agent_id=req.agent_id or AGENTES_POR_BOT.get(bot.bot_nombre),
+            agent_id=req.agent_id or _resolver_agent_id(db, bot.bot_nombre),
             variables=variables or None,
             result_schema=req.result_schema or RESULT_SCHEMA_RADICACION,
             browser_settings=browser_settings,
