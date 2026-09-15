@@ -1,0 +1,171 @@
+<!DOCTYPE html><html><head>
+    <meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+    <meta http-equiv="cache-control" content="no-cache">
+    <meta http-equiv="cache-control" content="no-store">
+    <meta http-equiv="expires" content="0">
+    <meta http-equiv="expires" content="Tue, 01 Jan 1980 1:00:00 GMT">
+    <meta http-equiv="pragma" content="no-cache">
+    <title>Redireccion</title>
+    <script type="text/javascript" src="/Portal/js/jquery-3.6.02b.js?v=1789359309805" integrity="sha256-eqaw4I9IoPldjffqieTL/h7z0ejA9zc/fyXt+05KMl4= sha384-apfJm2DWye6itJXDari7QfgbBXzkNeRsr1xgTfEH0SCvYV+NlzqP+MkX/LHMZIPI" crossorigin="anonymous"></script>
+<style>
+  /* Container styles */
+  .bb-custom-select-container {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+  }
+
+  /* Opener button styles */
+  .bb-custom-select-opener {
+    display: none;
+  }
+
+  /* Disabled state styles */
+  .bb-custom-select-container.bb-is-disabled .bb-custom-select-opener {
+    background-color: #e9ecef;
+    border-color: #505050;
+    color: #6c757d;
+    cursor: not-allowed;
+  }
+
+  /* Add not-allowed cursor to the entire container when disabled */
+  .bb-custom-select-container.bb-is-disabled {
+    cursor: not-allowed;
+  }
+
+  /* Also ensure the select element shows not-allowed cursor when disabled */
+  .bb-custom-select-container.bb-is-disabled select {
+    cursor: not-allowed;
+  }
+
+  .bb-custom-select-container.bb-is-disabled .bb-custom-select-opener::after {
+    border-top-color: #6c757d;
+  }
+
+  /* Add dropdown arrow */
+  .bb-custom-select-opener::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid #666;
+  }
+
+  /* Rotate arrow when open */
+  .bb-custom-select-opener.bb-is-open::after {
+    transform: translateY(-50%) rotate(180deg);
+  }
+
+  /* Keep native select visible */
+  .bb-customSelect select {
+    position: relative;
+    width: 100%;
+  }
+
+  /* Dropdown panel */
+  .bb-custom-select-panel {
+    display: none;  /* Hide by default */
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 999999; /* Should always be on top of other elements */
+    margin-top: 4px;
+    width: max-content; /* Allow panel to grow based on content */
+    min-width: 100%;   /* But ensure it's at least as wide as the opener */
+    background-color: #fff;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* Show panel when container has bb-is-open class */
+  .bb-custom-select-container.bb-is-open .bb-custom-select-panel {
+    display: block;
+  }
+
+  /* Option styles */
+  .bb-custom-select-option {
+    padding: 6px 12px;
+    line-height: 1.5;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .bb-custom-select-option:hover,
+  .bb-custom-select-option.bb-has-focus {
+    background-color: #f0f9fa;
+  }
+
+  .bb-custom-select-option.bb-is-selected {
+    background-color: #e9ecef;
+  }
+</style></head>
+<body onkeydown="return false" onload="enviar();" marginwidth="0" marginheight="0">
+
+<form method="GET" action="https://consultasportalw.nuevaeps.com.co/FormularioTranscripcion/validacion/VRTDMnCFsjlsofhyEVlSMkcFKJwWxr8ypXAcchpUAcZIlNKPyr38k0M4y2EnLb2SwhqDh-E9BZS_xygxup4X7D9-awD3PA-raJEH08UFX9S2BRtk_78k9oAjl1fQ6GdT1OP0AHd9Gk30xU1wjUjJn8Cvmekm5pTQcN9nbKulOhc-HP9jM5x82sxvRCVmG6o2wxSAOs-d" name="calleCollectexpress" id="callerForm" target="_blank" enctype="application/x-www-form-urlencoded">
+    <input type="HIDDEN" name="app" readonly="readonly" value="PortalFamisanar" id="app" style="">
+    <input type="HIDDEN" name="id" readonly="readonly" value="VRTDMnCFsjlsofhyEVlSMkcFKJwWxr8ypXAcchpUAcZIlNKPyr38k0M4y2EnLb2SwhqDh-E9BZS_xygxup4X7D9-awD3PA-raJEH08UFX9S2BRtk_78k9oAjl1fQ6GdT1OP0AHd9Gk30xU1wjUjJn8Cvmekm5pTQcN9nbKulOhc-HP9jM5x82sxvRCVmG6o2wxSAOs-d" id="id" style="">
+    <input type="HIDDEN" name="session" readonly="readonly" value="VRTDMnCFsjlsofhyEVlSMkcFKJwWxr8ypXAcchpUAcZIlNKPyr38k0M4y2EnLb2SwhqDh-E9BZS_xygxup4X7D9-awD3PA-raJEH08UFX9S2BRtk_78k9oAjl1fQ6GdT1OP0AHd9Gk30xU1wjUjJn8Cvmekm5pTQcN9nbKulOhc-HP9jM5x82sxvRCVmG6o2wxSAOs-d" id="session" style="">
+    <input type="HIDDEN" name="n" readonly="readonly" value="1" id="n" style="">
+    <input type="HIDDEN" name="d" readonly="readonly" value="0" id="d" style="">
+    <input type="HIDDEN" name="m" readonly="readonly" value="3" id="m" style="">
+    <input type="HIDDEN" name="opt" readonly="readonly" value="1881" id="opt" style="">
+    <input type="HIDDEN" name="mods" readonly="readonly" value="1" id="mods" style="">
+    <input type="HIDDEN" name="apps" readonly="readonly" value="1" id="apps" style="">
+    <input type="HIDDEN" name="fil" readonly="readonly" value="5" id="fil" style="">
+    <input id="SJT" name="SJT" readonly="readonly" type="hidden" value="NjYzNTQ0NDY1MTYyMzA2MjJiNTk2YTM0NzY1OTcwMmY1NDY4NzY3MDdhNTA3ODY5NGQzODY1NzU3NzQ1NTk2ZTRhMmY1MjUwNzA0NTcyNjY1MDJmNmM2OTZiNGY2OTRiNTQ0NDcyMzM1OTM5NmI3NzYzMzM1NDc0Njc2ODYyNzU2YjMyNjI0YzJiNDk3OTU4N2E3YTZiNTU2YzY0NTc1NzMyNzMzNzU5NzczNjU2MzI1YTQ0NDg1MTU0NjY2OTc3MzA2NTQyNTI3MTMyNmU3YTcxNjE3NzMzNjQ2ZjU5NGE2OTc5Njk2ZDYzNzQ1NDM3Mzk2OTRhNzk0YjY2MzkzNDQ1NDc2MjMxNDc2OTQ5NzI0NTJmMzg3MTQxNzM0YzYxNTk3NTY3NTE0ZDM0NDM2NDMyNjYzMzRiNmE1NDQ1NGE2NDU3MzU0MjU2MzQ0NTc1MzI3YTdhNjk3MTQ1NGUzMjdhNTk1NjU5NDM2Zjc3MzY0NjZiNzc3MzQ3NmU0ODMwMzU0ZDMxNzUzNzc3NmUyZjc2NWEyZjQ4MzMzMjU1NmM0MzM4NmQ0NDMzMzM0YjYyNjk0MTZhNTM0Yzc4NzIzNjQ3NGI0MzQ3Mzc2ZjcxNWE1NzYzNjU2ZTdhNTI1NjMxNmE3MDc5NGYzMjY1NTY1Njc4NmUzODZjNGIzNzRiNTg0ZTRjMzcyZjQ2NTQ3MjQyNzg1ODRkNzQ3MjYyNGYzNTMyNTY2YzRkNTUzOTZiNTg0ODc4NDE2ZTM3NDc0MjY0NTg2NTc4NzEzMDMzNDIzMDM5NzA1NTM4NjU3OTJmMzY2MzM5NTg2OTUwNTg1Njc1MzI0OTJiMzczMDYyNTY0ZjJmNzA3MTZmMzQ3NjMzNDY2YzRlNzE0ZDZhMzI3MDRlNDI0MjQ1NGY2YzRjN2E2ZDU4NGU3MDJiNTE0MTVhNTA0OTU3NDgzMjY1NDM1NjYzNTIzMzZmNjQ0NDY3MmY1ODczMzkzOTRhNzA2MTQ5NGY2YzQ3NzY1NTY3Njc0YTM1NDc2NzYyMzA2YTRjNTk0OTZiNjU2OTUyNDY3MDcxMzM3MDQxNzY3NDc2NTk0NTQ0NGQzMjc3NmY1NzQ3NDU0NjU2NGEzOTc4NGI2NTZiNTM3ODYxNTM2MzZiNjY1YTYxNDc1MzcyNTE2YzZhNTI2ZDM5NDk1NTQyNTMyYjU3NmU0NTUzNGI1NjczNjk0OTczNmQ1ODc0NGE1YTZiNzE2Yjc4NDI3MDM5Njk1ODY2MzU2NDMyNmY0NjUwNWEzMzc0NzM2NDRiNzE1NjM3Mzg0NzYxNGU0MzcxMzQ2MzYxNDg0MzM1NDczNDc3NTg3MTUxNTg0ZTU4MzE0MTY4MzU2YzZjNTU3OTRjNjg0ZjY5MzA3MTRlNDU3OTcxNjkzMjM0NmY1YTZkMzU3MzQyNTY1NTcyNjI0YzY5Nzk3YTY2NzA3YTUzNzcyZjM2NmE3YTU1NTE2ZjZlNzU1MjUxNjI0ZDZlMzgzNzYxNjM1NzQ1NmYyYjZiNTE1NTQzNTU0NDQ2NmU3MDMzMzM0NjJiNDM0ODZmNDM0Zjc0NjE1MTc2NmIzOTZjNzgyZjY3Mzk1NjYzNTIyYjJmNTc3ODRmNjIzODMxNmI2YzM4NDM0OTRmNGIzODc4NTQ0MzQ5NzQ1NDM3MzE2OTY2NmI1NDY5NmQ1MDQ2NzE2MTU5NmY3MjQ0NGM3NzUxNTU2MjczNzI1MDQxNTc3MzU2NmYzMzUzNmQ0Yzc0NTU2ODc0MzMzOTU0NGU2MzcwMzk2NjJmMzgzODQ5NTE0YjUwMmIzNzQ0NjEzNjZmNTQ0YTQ1NmE3NTY0MmYzMjM4NTA1ODQ0NDgzMTMwMzg3MzQyNzQ2YTY3NjU0MjU2NTU0YzYzMzgyZjRjN2E3OTM2N2EzNzM5Mzk3MzQ4NTI2ZTMxMzQ3NDMwMzc0NjU4Njc3Mzc2NTU3NzcwNTIzOTQyMzM3MDUwNjQ1YTQ1NTI3NzQ0NDQ0MTRmNmU0ZTczNTk3MDRiNDE0MjM1MzE1NDM3NTg1YTY2Nzk0MTU2NDg0OTM2NjM1MDM1Njk2MzZlNTE3OTM2MzA2NjczNzI2OTYxNGQyZjY0NjIzMzczNzY1MzZkMmY0MTM3NTk2ZjZlNGY0YzRkNDM0ZjM5NTU1NzYzNTA0OTY4NjE0ZTU4NDE0MzY2NDMyZjU4NGU0ODJiMzk0YTY3MzU0NjQ2NmE2MjMwNTE1MzRmNzg2Njc3NDczNDcxNzU2YjQxNjMzODM1NmU3MDMwNDUyZjY2MzkzMTUxMzA3NzdhMzg0YTRlNzQ1NjYzNzA2Mjc4MzMzNjQ2NDg1YTZiMzc0ZDc3MmI2OTY2NmQ0YzRlNTk3MjMyNjkyYjVhNDc0MTZlNGU0YjYyNTQ1OTQ4NGE1MzQ5Mzg3MjdhMzk3OTMwNjE0ODU2NTc3MTUyNDk0YTQ0NjczNTQ0NDI3OTY2NmEzMzMyMzI1NjY5Njg3ODY2NTg0ZDU1NzE2NTRlNGM0MTQ0N2E1NDYxNGE2MzQ0NGQ2ZDM3NDQ2MTc0NzczMzY4NzU1MzY5NDI2NDc5NjY1NjU3MzI2MzRiNTEzODU3NGQ0NjYyNDI3MzU0NjI0ZDJmNGQ2NzU3NzE3NDYzNjk2ZjM3MzI2ZjM5Njk1MTRiMzM3NjQzMzEzMjRlNTU0OTc5NjQ1OTY5MmY2ZDcwNGQ0NTc0MzYzNTQyNDk2OTY3Nzg2MTU4NjUzMjUwNjI0YzQ1MzA0MzcyNzczMTYzMzQzNTUxNTU3OTRiNzgyZjZjNzY1NDYzNmU1NTU5NDg3NDQzNDE0MzU3NDg0MTQ3NjIzNzY3NDM2NTQ1NDk2Nzc5Njc2ZDZiNjg2Yzc2Nzg3NzQyNzkzMTY3NzAzNDQyNjE0YzU3MzM3NTY3MzI2NzRhNzM3NDc3Njk2Zjc3NTc0ZjZiNzQ2ZTc3NjU0Yzc5NTIzMjRmNzQzNjQ2NDQ2MzMxMmY2MzYyNGU0MjQ4NTQ3ODM1NzE0NDRhNGI3ODU3NGM1ODcwNjI1NTUyNzk1ODUxMzY1NTZlN2EzMzU2NTk2ZTUyNmE1NjUwMmY1NzQzNjM2MTY2MzA1MDU4NDQ1NDRlNTQ1NjU1NGU3OTUxMzE3OTY4NDM2ZDQyMzI0YzU5NTM2ZTUxNzI2YTYyNjI0YTQ4NjU3YTM0NmQ3ODc3NzM0YTcxNGU2MzY2NTg0ZTM0NzE3MTc3NmQ3YTQ4NTI2NTZlNzAyYjZhMzEyYjRlNTUzMTQ2Nzg0NTY3MzI0MTM3NmM3ODQzN2EzMTMzNzg3MDVhNjMzMzMwNzk1MjZiMzk0OTQ5NGM1NTU3NDM2NjQ2MzcyYjc5Mzk2YjM3NmU3NjU2MzgzODcxNGEzMzYxNTkzOTc2NGY0YjY3NTc3NTU4MzQ0NDY2NTc1MzMyNDMzNTdhMzE3MTc5NmI2ZTU3Nzc0ODRiNmI2ZjU5NmUyZjY5NGIzOTZmNzQ0ZjU4NTk2NzU2NWE0MjRhNzM3NzcxNDQzMDRiNzQzNTcyNDg2MjJiNzc2MzYyNTI3NTMxNTA2ZjQ0Njg2ZTY1NGM2ZjU4NzY1OTJiNjE1OTM4NTc0ZTc0NzI0MjY4NzY0NDY0Njg3MTRjNDM0ZTU2NTYzMDc0NjU0YzYyNDgyYjRmNTU3NTQzMzk2NDRhNmE1YTMzNmI1MzM4NzU2OTZjNDY0ZDZiNzE0ZTY1Njg0NzRhNGE1NDU3MzAzMjZjNmQ0OTU1NGIzNDczMzQyYjY4NGM2ODRkMzA2YTMwNjg0YzU3NmY0NjcwNmQ0MTY0NTk1NjdhN2E2ZDcwNzE2YzYyMzg1OTRjNTYzMDc4NTgzMTYxNmUzMzU0MzY0NzM1NGIzNjcxNDQzNjY3NDQzMjc2NDQ2OTJmNjc0MzQ1Nzk2NDU2NGY0ZjQ3NzU0NDQ0NjM2Yjc1Mzk0ZTYzNDY1YTZmNDEzMjRhNjM1NTQ0NWE0MjMyNmY1NTMwNDM2ODZmNTQ0OTQyNWE1OTY1NzU2ZTU2NGQzOTM0NmE3NDZiNDM0ZTc4NzA3ODZhNTEzMDczNzUzOTQ4NDg0MTQ1NTkyYjQ1MzgzMjUwNTg3NzQxNGQ3OTRjNTQzMDRhNmY3NzU4NzEzNDczN2EyZjcxNTYzNzU5Nzg2MTRmNjU3MDU2NjE2MTUxNTM0ZjJmNGY0NTY2NmU0NDY2NTg3ODcyNDI0MzUxNzEzMzcyNmY2ZDZmNzY2NDMxMzg2MTYxNDEzMDQzNDIzNzc5NGEzNjRkMzY1MTU0MmI3NjM4NGYzMjRkNTM2ZTZlMzc2ZDRjNDQzODZjNTE2YjJmNzQ2YTUzNTc2ODZmNzc0OTUyNGI2NjYxNDQ3OTM5NDYzMzQzMzgyZjM0NzA3YTZkNmQ0MzU3NDU1MTc1NGY2ZTQyNzYzMTZjNzQ0OTUxMzczMTM0Nzc2ZTJmNzI2Mjc3NGUzNTQ4NDk2MTY5NmI3MzQ4NjU0ZDc3NzU2ZjZhNTk3MDc4NGU2NTQ3NWE2ZjQ1NTQ1ODQyNmQ0NjYzNTk0YjM1NjQ0NDZhNWE0ZjU4NzA2YjcyNTU0NDY5Mzk2ZDc1N2E2YzU0Nzc0NzRkMzE2MzQxNzA0NzMwMzQ1OTU4NTM3OTUzNDk0ZjQxMzE2OTc1NTg0ZTc2NGU2Nzc2MzIyZjMyNmY3OTZmNDc1NjMxNjI2ZDMwNjUzNTRmNTA0OTY0NGE2ZDQ4NmE0YTdhNzMzNDczMzEzMjQxNTE3MTM1NTE0MTQ3NzU2OTM0NzY1ODMxNGQ2ZTcyNGI1MzM4NDQ1NDM0NGM0NDMzMzgzMDc3NWE3NDJmNzE0MzcxNGU1OTY3NmM2Mjc0NGI1MDQ2NTU2YzY1NjM2ODUxNjQ2NTVhNTk0ZjRlNGU2MTM5NzE2ZTRhNjIzMDc4MmI3NDY3MzU0OTMzNGE0NjUyNjU2ZTczMmIzNDQ4NzU1ODcyNGM0ZDU3NjE2NDRmNDY0ZDMyNGM2NzQ1NTEzODQ4Mzg1ODMzMzg0MzQ1NDIzNzdhMzEzOTRmNjc2MTM5NTQ2YjU4NzY0ZjQ1NmU1MDM1NmI1NjUwNDY0YzYyMzg3NjRlNzA2NTcyNTc1ODc0NTg3OTY5NTc3YTY4NTY2NDMxNDg0MzQ3NzU3NjQ3MzM1YTcyMzk0MjUwNzM0MzRkNTY1MjZmNzI3MjY3NjkzMzM1MzE2ZTM0NGQzMDdhNzY1MzM2NDUzMzc0NjI2OTQxNjI0MjY5NmE3YTQxNzM0MzQ5NmU2MTU2MzU2MzM2N2E3MTY3Njk3ODM4NmM3MzM0MmY2MTM1NjEzOTcxNzA0ZTMxNjQzODUyNzE2ZjRhMmI1NzM5NzI0ZDM5NGU1NTMzNmE2NzNkM2Q" disabled="" style="">
+    <input type="HIDDEN" name="menu" value="3" id="menu" style="">
+    <input type="HIDDEN" name="f" readonly="readonly" value="5" id="f" style="">
+    <input type="HIDDEN" name="mod" readonly="readonly" value="1" id="mod" style="">
+    <input type="HIDDEN" name="menun" readonly="readonly" value="Empleador" id="menun" style="">
+    <input type="HIDDEN" name="fn" readonly="readonly" value="General" id="fn" style="">
+    <input type="HIDDEN" name="modn" readonly="readonly" value="CORE" id="modn" style="">
+    <input id="javax_faces_Token" name="OWASP-CSRFTOKEN" type="hidden" readonly="readonly" value="SkQ4emRPOHRBdTByR2RyTXBRTzV4VnZrbHJZRUxZU1FMWms2RWFiNTBUVT0=" disabled="" style="">
+    <input id="JWT" name="JWT" readonly="readonly" type="hidden" value="" disabled="" style="">
+    <input id="jwt1" name="jwt1" readonly="readonly" type="hidden" value="" disabled="" style="">
+    <input id="JWT-Simple" name="JWT-Simple" readonly="readonly" type="hidden" value="" disabled="" style="">
+</form>
+<script type="text/javascript">
+    document.oncontextmenu = new Function("return false");
+
+
+    function enviar() {
+        document.getElementById("callerForm").submit();
+        setTimeout(function () {
+            window.close();
+        }, 100);
+    }
+</script>
+<script type="text/javascript">
+    document.oncontextmenu = function () {
+        return false
+    }
+
+    function right(e) {
+        const msg = "Prohibido usar Click Derecho !!! ";
+        if (navigator.appName === 'Netscape' && (window.event.button === 3 || e.which === 3)) {
+            alert(msg); //- Si no quieres asustar a tu usuario entonces quita esta linea...
+            return false;
+        } else if (navigator.appName === 'Microsoft Internet Explorer' && (window.event.button === 2 || e.which === 2)) {
+            alert(msg); //- Si no quieres asustar al usuario que utiliza IE,  entonces quita esta linea...
+            //- Aunque realmente se lo merezca...
+            return false;
+        }
+        return true;
+    }
+
+    document.onmousedown = right;
+</script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon="{&quot;version&quot;:&quot;2024.11.0&quot;,&quot;token&quot;:&quot;91158c3c8ccc4c088e274996b230e3ff&quot;,&quot;spa&quot;:2}" crossorigin="anonymous"></script>
+
+
+
+
+</body></html>

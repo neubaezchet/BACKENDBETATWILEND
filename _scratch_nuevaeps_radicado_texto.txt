@@ -1,0 +1,63 @@
+SOLICITUDES DE TRANSCRIPCIÓN DE INCAPACIDADES Y LICENCIAS
+Sr. Empleador: Antes de radicar la solicitud de transcripción, valide si ya se encuentra previamente transcrita en el sistema de información de Nueva EPS. Para ello, ingrese en el siguiente enlace el tipo y número de identificación del empleado y verifique por fecha de inicio de la incapacidad o licencia https://portal.nuevaeps.com.co/Portal/pages/empleador/certificadoIncapacidades.jspx
+
+En el caso de que no pueda visualizarlas, por favor proceda a radicar la solicitud de transcripción de sus empleados:
+Radique las solicitudes de transcripción de incapacidades y licencias de sus empleados.
+*Datos Empleado Incapacitado
+Datos obligatorios(*)
+
+Tipo documento*
+AS
+CC
+CD
+CE
+CN
+ME
+NT
+NU
+PS
+PE
+RC
+SC
+TI
+PT
+Número documento*
+Fecha inicio incapacidad*
+BUSCAR
+Nombre
+* Datos de Contacto Solicitante
+
+Estos datos de contacto será donde usted recibirá la notificación del proceso de esta solicitud
+Número celular*
+
+
+Correo electrónico*
+
+
+TÉRMINOS
+• Favor anexar la documentación de su solicitud de transcripción de incapacidad y/o licencia con un máximo de 10 megas en formato pdf. Los documentos requeridos para su trámite, podrá consultarlos en nuestro portal https://www.nuevaeps.com.co/empresas/licencias-e-incapacidades
+
+
+• Adjunte por cada solicitud, únicamente los documentos correspondientes a la incapacidad y/o licencia para la cual registró la fecha inicio incapacidad. (Una incapacidad y/o licencia por cada transacción).
+Soportes*
+Cargar
+	soportes
+	_scratch_soporte_6010345.pdf
+• Estimado(a) usuario(a). Por favor realice el proceso de radicación de su solicitud una única vez. Dentro de los tres (3) días hábiles subsiguientes a su solicitud, recibirá la respuesta del proceso de transcripción "Resolución 2266 de 1988 Art 23"
+
+
+• En caso de que su solicitud de transcripción sea transcrita, podrá descargar e imprimir el certificado de incapacidad a través de la opción certificaciones en el portal transaccional de NUEVA EPS
+
+
+
+Importante! Recuerde que el plazo de trámite de transcripción iniciará a contar únicamente desde el momento en el que radique la totalidad de los documentos y/o requisitos reglamentados en el marco normativo vigente; así mismo, una vez reciba la notificación de transcripción exitosa y transcurridos 30 días posteriores a la fecha de inicio, deberá radicar la solicitud de pago en el siguiente enlace:
+https://portal.nuevaeps.com.co/Portal/pages/empleador/solicitudPagoIncapacidades.jspx; por lo cual no procederá el pago de intereses moratorios de acuerdo con lo definido en el artículo 4 del Decreto Ley 1281 de 2002 sin haber dado curso a lo mencionado.
+
+Así mismo, los soportes originales deben permanecer en custodia del afiliado (Ley 1995 de 1999). NUEVA EPS se reserva el derecho de solicitar ampliación de información y/o documentación adicional en caso de ser requerida para dar trámite de su solicitud. Al aceptar los términos el empleador brindará todo lo requerido en caso de abuso de derecho de acuerdo con el capítulo 7 del Decreto 1427 de 2022.
+
+ACEPTO
+CANCELAR
+RADICAR
+¿Está seguro que desea continuar con el proceso?
+CANCELAR
+ACEPTAR
