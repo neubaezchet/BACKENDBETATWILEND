@@ -4,13 +4,27 @@ Modelos SQLAlchemy para gestión de casos de incapacidades
 VERSIÓN 3.0 - Con soporte para jefes y recordatorios
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, JSON, text, Index, Float, UniqueConstraint
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Date, Boolean, Text, ForeignKey, Enum, JSON, text, Index, Float, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 import os
 import enum
+
+try:
+    from pgvector.sqlalchemy import Vector
+    PGVECTOR_INSTALADO = True
+except ImportError:
+    # Paquete no instalado (p.ej. entorno viejo sin requirements actualizados).
+    # Las columnas de embeddings quedan sin tipo vectorial real; el servicio de
+    # calificación IA detecta esto y cae a modo "sin búsqueda semántica".
+    PGVECTOR_INSTALADO = False
+    Vector = lambda dim: JSON  # noqa: E731 - fallback de tipo, nunca se usa en producción
+
+# Dimensión de embeddings: gemini-embedding-001 con output_dimensionality=768
+# (ver app/embeddings_service.py). Cambiar aquí obliga a re-embeber todo lo existente.
+EMBEDDING_DIM = 768
 
 # Base para modelos
 Base = declarative_base()
@@ -113,7 +127,17 @@ class Employee(Base):
     company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
     eps = Column(String(100))
     activo = Column(Boolean, default=True)
-    
+
+    # ✅ Verificación mensual de EPS (CoreSoft / ADRES-BDUA) — ver app/services/eps_verificacion.py
+    # eps_anterior solo se llena cuando la verificación detecta un cambio real.
+    eps_anterior = Column(String(100), nullable=True)
+    eps_actualizado_en = Column(DateTime, nullable=True)
+    # Datos informativos de BDUA, se refrescan en cada verificación (cambie o no la EPS)
+    eps_regimen = Column(String(50), nullable=True)
+    eps_estado = Column(String(50), nullable=True)
+    eps_tipo_afiliado = Column(String(50), nullable=True)
+    eps_fecha_afiliacion = Column(Date, nullable=True)
+
     # ✅ NUEVAS COLUMNAS - Información de jefes
     jefe_nombre = Column(String(200))
     jefe_email = Column(String(200))
@@ -345,6 +369,95 @@ class AlertaEmail(Base):
     empresa = relationship("Company", backref="alerta_emails")
 
 
+# ==================== CENTRO DE COSTOS — SERVICIOS Y SUSCRIPCIONES PAGAS ====================
+# Ver app/routes/servicios_pago.py y app/tasks/servicios_pago_alertas.py
+
+class ServicioPago(Base):
+    """
+    Inventario centralizado de todos los servicios/APIs pagos que Sebastián debe
+    pagar (Google Workspace, Mistral, Gemini, GLM, Anthropic, Browserbase, CoreSoft,
+    Replicate, ICD API, Railway, WhatsApp Business, OneDrive, etc.)
+
+    NO consolida el pago real (cada proveedor cobra por su lado a la tarjeta) —
+    es el panel único de seguimiento + alertas antes de que algo se venza,
+    se agote o suba de precio.
+    """
+    __tablename__ = 'servicios_pago'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    nombre = Column(String(150), nullable=False)         # "Google Workspace", "Anthropic Claude API"...
+    proveedor = Column(String(150), nullable=True)        # "Google", "Anthropic", "Meta"...
+    categoria = Column(String(50), nullable=False, default='otros')
+    # categoria: ia | infraestructura | comunicaciones | almacenamiento | desarrollo | otros
+
+    costo_mensual = Column(Float, nullable=True)          # estimado/actual en la moneda de abajo
+    moneda = Column(String(10), nullable=False, default='COP')  # COP | USD
+    ciclo_facturacion = Column(String(20), nullable=False, default='mensual')  # mensual | anual
+
+    fecha_proximo_cobro = Column(Date, nullable=True)     # próxima fecha de cobro/renovación
+    dia_cobro = Column(Integer, nullable=True)             # día del mes en que cobra (1-31), informativo
+
+    metodo_pago = Column(String(150), nullable=True)      # "Tarjeta •••• 1234", texto libre
+    url_panel = Column(String(500), nullable=True)        # link al dashboard de facturación del proveedor
+
+    estado = Column(String(20), nullable=False, default='activo')
+    # estado: activo | en_riesgo | suspendido | cancelado | pendiente (aún no contratado)
+
+    # Verificación programática de saldo/crédito restante (solo para servicios medidos)
+    tipo_verificacion = Column(String(30), nullable=False, default='ninguna')
+    # tipo_verificacion: ninguna | coresoft_creditos | browserbase_uso | railway_uso
+    umbral_alerta_dias = Column(Integer, nullable=False, default=5)      # avisar X días antes del cobro
+    umbral_alerta_credito_pct = Column(Integer, nullable=False, default=15)  # avisar si queda < X% de crédito
+
+    email_alertas = Column(String(500), nullable=True)     # correos separados por coma; vacío = usar default
+    whatsapp_alertas = Column(String(100), nullable=True)  # número E.164 opcional para alertas por WhatsApp
+
+    notas = Column(Text, nullable=True)
+    activo = Column(Boolean, default=True)  # false = archivado, ya no se sigue
+
+    creado_en = Column(DateTime, default=get_utc_now)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+
+class ServicioPagoHistorial(Base):
+    """
+    Historial de cambios relevantes de un ServicioPago — principalmente para
+    detectar y mostrar cuándo un proveedor subió de precio ("si suben, que me
+    avise"). Se registra automáticamente al editar costo_mensual o estado.
+    """
+    __tablename__ = 'servicios_pago_historial'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    servicio_id = Column(Integer, ForeignKey('servicios_pago.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    campo = Column(String(50), nullable=False)     # "costo_mensual" | "estado" | ...
+    valor_anterior = Column(String(200), nullable=True)
+    valor_nuevo = Column(String(200), nullable=True)
+
+    registrado_en = Column(DateTime, default=get_utc_now)
+
+    servicio = relationship("ServicioPago", backref="historial")
+
+
+class ServicioPagoAlertaLog(Base):
+    """
+    Evita reenviar la misma alerta (renovación próxima, crédito bajo, vencido)
+    varias veces seguidas — una por servicio+tipo+ciclo.
+    """
+    __tablename__ = 'servicios_pago_alerta_log'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    servicio_id = Column(Integer, ForeignKey('servicios_pago.id', ondelete='CASCADE'), nullable=False, index=True)
+    tipo = Column(String(30), nullable=False)  # renovacion_proxima | credito_bajo | vencido | precio_subio
+    referencia_ciclo = Column(String(20), nullable=True)  # p.ej. "2026-09" para no repetir en el mismo mes
+    enviado_en = Column(DateTime, default=get_utc_now)
+
+    __table_args__ = (
+        Index('idx_alerta_servicio_tipo_ciclo', 'servicio_id', 'tipo', 'referencia_ciclo'),
+    )
+
+
 class AdminUser(Base):
     """
     Usuarios administrativos del portal admin.
@@ -408,9 +521,22 @@ class TenantConfig(Base):
     correo_drive = Column(String(200))
     zona_horaria = Column(String(100), default='America/Bogota')
 
-    # Google Drive
+    # Google Drive (modo LEGACY: cliente pega el ID de SU PROPIA carpeta y el
+    # archivo original se sube directo ahí, sin pasar por el histórico de
+    # Neurobaeza. Se mantiene por compatibilidad; el flujo nuevo es Entrega.)
     google_workspace_drive_id = Column(String(200))
     drive_verificado = Column(Boolean, default=False)
+
+    # ✅ Storage multi-proveedor — Fase 0 (ver app/entrega_manager.py y
+    # app/storage/contract.py). El histórico (Incapacidades/Completas/
+    # Incompletas) sigue viviendo SIEMPRE en el Drive de Neurobaeza; Entrega
+    # es una copia paralela en la nube de Neurobaeza compartida con el
+    # cliente. Lo que el cliente cambie en Entrega nunca toca el histórico.
+    storage_provider = Column(String(20), default='google')        # google | microsoft | dropbox | ninguno
+    entrega_status = Column(String(20), default='pendiente')       # pendiente | ok | error
+    entrega_folder_id = Column(String(200), nullable=True)         # Entrega/{Empresa} en la nube de Neurobaeza
+    entrega_compartido_en = Column(DateTime, nullable=True)
+    entrega_error = Column(Text, nullable=True)
 
     # ✅ Google Sheets por empresa (cada tenant tiene su propio Sheet)
     google_sheets_id = Column(String(200), nullable=True)   # ID del spreadsheet de esta empresa
@@ -646,6 +772,82 @@ class ResultadoValidacion(Base):
     )
 
 
+# ==================== CALIFICACIÓN IA: REGLAS Y PRECEDENTES (RAG) ====================
+
+class ReglaValidacionIA(Base):
+    """
+    Reglas de validación editables en vivo (reemplaza data/reglas_validacion.json).
+    Cada regla se vectoriza (embedding) para que el calificador solo traiga por RAG
+    las reglas relevantes al soporte que está evaluando, en vez de mandar las 30+
+    reglas completas en cada prompt (más barato y más preciso).
+
+    Reglas globales (company_id NULL) aplican a todas las empresas; una empresa
+    puede tener reglas propias además de las globales.
+    """
+    __tablename__ = 'reglas_validacion_ia'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    codigo = Column(String(20), unique=True, nullable=False)  # R01, R12... o slug generado
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=True, index=True)
+
+    nombre = Column(String(200), nullable=False)
+    descripcion = Column(Text, nullable=False)  # texto fuente (lenguaje natural o estructurado)
+    decision = Column(Enum(DecisionValidacion), nullable=False, default=DecisionValidacion.REVISAR)
+    tipo = Column(String(50))  # estructural, identidad, coherencia, completitud, calidad, especializada...
+    tipos_incapacidad = Column(JSON, default=list)  # [] = aplica a todos los TipoIncapacidad
+    motivo_rechazo_template = Column(Text)  # plantilla del mensaje al colaborador, con placeholders {campo}
+
+    embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
+
+    activa = Column(Boolean, default=True, nullable=False, index=True)
+    version = Column(Integer, default=1, nullable=False)
+    reemplaza_a_id = Column(Integer, ForeignKey('reglas_validacion_ia.id', ondelete='SET NULL'), nullable=True)
+
+    creada_por = Column(String(150))  # email del admin que la escribió por chat
+    origen = Column(String(20), default='chat')  # 'chat' | 'seed_json' | 'sistema'
+
+    creado_en = Column(DateTime, default=get_utc_now, index=True)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+    __table_args__ = (
+        Index('idx_regla_ia_activa_company', 'activa', 'company_id'),
+    )
+
+
+class PrecedenteValidacion(Base):
+    """
+    Memoria de casos ya resueltos por un humano, vectorizada como precedente
+    para dar contexto (RAG) al calificador y para detectar si una regla nueva
+    contradice decisiones históricas ya tomadas.
+
+    Se alimenta de dos formas: automáticamente desde el historial de CaseEvent
+    ya existente (backfill), y en vivo cada vez que un validador confirma o
+    corrige un veredicto del calificador IA (modo prueba / uso real).
+    """
+    __tablename__ = 'precedentes_validacion'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    caso_id = Column(Integer, ForeignKey('cases.id', ondelete='SET NULL'), nullable=True, index=True)
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='SET NULL'), nullable=True, index=True)
+    serial = Column(String(100), index=True)
+
+    resumen = Column(Text, nullable=False)  # texto corto: tipo, hallazgos, contexto relevante del caso
+    decision_humana = Column(String(50), nullable=False)  # EstadoCaso al que lo movió el validador
+    motivo = Column(Text)
+    checks_aplicados = Column(JSON, default=list)
+
+    sugerencia_ia_original = Column(String(50), nullable=True)  # decisión que había dado el calificador
+    fue_correccion_ia = Column(Boolean, default=False)  # True si el humano corrigió a la IA
+
+    embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
+
+    creado_en = Column(DateTime, default=get_utc_now, index=True)
+
+    __table_args__ = (
+        Index('idx_precedente_company_creado', 'company_id', 'creado_en'),
+    )
+
+
 # ==================== CONFIGURACIÓN DE BOTS POR EMPRESA ====================
 
 class EmpresaBotConfig(Base):
@@ -779,11 +981,14 @@ class RadicacionCola(Base):
     Cola persistente de radicaciones con reintentos automáticos y backoff escalado.
 
     Estados:
-      pendiente       → esperando ser procesada (respeta proximo_intento)
-      procesando      → actualmente en proceso por browser-use
-      exitosa         → radicación completada exitosamente
-      fallo_temporal  → falló, se reintentará según backoff
-      fallo_definitivo→ se agotaron los reintentos (~48 h) o error irrecuperable
+      pendiente         → esperando ser procesada (respeta proximo_intento)
+      procesando        → actualmente en proceso por browser-use
+      exitosa           → radicación completada exitosamente (o registrada manualmente con radicado)
+      fallo_temporal    → falló, se reintentará según backoff
+      fallo_definitivo  → se agotaron los reintentos (~48 h) o error irrecuperable
+      bloqueado_revision→ el calificador IA marcó el caso RECHAZAR (faltan datos básicos:
+                          diagnóstico, días, datos del médico, fecha) — no se radica
+                          automáticamente hasta que un humano lo revise
 
     Backoff de reintentos (intentos acumulados):
       1-2   → cada 5 min
@@ -829,6 +1034,12 @@ class RadicacionCola(Base):
     # Sesión browser-use que lo procesó (o está procesando)
     sesion_id = Column(String(100), nullable=True)
 
+    # Radicación manual: cuando el bot falló o hubo error y un humano radicó
+    # por fuera del sistema. Deja trazabilidad sin perder el registro.
+    resuelto_manualmente = Column(Boolean, default=False)
+    resuelto_por = Column(String(200), nullable=True)   # nombre de quien la radicó a mano
+    resuelto_en  = Column(DateTime, nullable=True)
+
     # Timestamps
     creado_en    = Column(DateTime, default=get_utc_now, index=True)
     procesado_en = Column(DateTime, nullable=True)
@@ -838,6 +1049,29 @@ class RadicacionCola(Base):
         Index('idx_cola_eps_estado',  'eps_key', 'estado'),
         Index('idx_cola_proximo_est', 'proximo_intento', 'estado'),
     )
+
+
+class WhatsAppConversacion(Base):
+    """
+    Estado del bot conversacional de WhatsApp, una fila por número de teléfono.
+    Mismo patrón de "paso + JSON acumulado" que TenantConfig.onboarding_step.
+
+    `modulo` deja preparado el router para futuros bots (cartera, servicio
+    automovilístico) sobre el mismo número/webhook sin cambiar este modelo.
+    `ultimo_message_id` da idempotencia contra reintentos del webhook de Meta.
+    """
+    __tablename__ = 'whatsapp_conversaciones'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    telefono = Column(String(50), nullable=False, unique=True, index=True)
+    modulo = Column(String(50), default='incapacidades', index=True)
+    paso = Column(String(50), default='inicio')
+    datos_json = Column(JSON, default=dict)  # numero_documento, employee_id, company_id, nombre...
+    intentos_confirmacion = Column(Integer, default=0)
+    ultimo_message_id = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime, default=get_utc_now)
+    updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
 
 
 # ==================== FUNCIONES DE INICIALIZACIÓN ====================
@@ -884,9 +1118,47 @@ else:
 # Sesión
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def _asegurar_extension_pgvector():
+    """
+    Crea la extensión `vector` en PostgreSQL si no existe. Debe correr ANTES de
+    create_all() porque las tablas reglas_validacion_ia/precedentes_validacion
+    usan una columna tipo VECTOR. Fail-safe: si falla (SQLite, o el usuario de
+    BD no tiene permiso de CREATE EXTENSION), el calificador IA cae a modo sin
+    búsqueda semántica en vez de romper el arranque.
+    """
+    global PGVECTOR_DISPONIBLE
+    PGVECTOR_DISPONIBLE = False
+
+    if not PGVECTOR_INSTALADO:
+        print("⚠️ Paquete 'pgvector' no instalado — calificación IA sin búsqueda semántica")
+        return
+
+    if database_url.startswith("sqlite"):
+        print("ℹ️  SQLite (desarrollo): extensión pgvector no aplica, se omite")
+        return
+
+    try:
+        db = SessionLocal()
+        db.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        db.commit()
+        db.close()
+        PGVECTOR_DISPONIBLE = True
+        print("✅ Extensión pgvector lista en PostgreSQL")
+    except Exception as e:
+        print(f"⚠️ No se pudo crear la extensión pgvector (se omite búsqueda semántica): {e}")
+
+
+# Bandera consultada por el servicio de calificación IA para saber si puede
+# hacer búsqueda vectorial o debe usar todas las reglas activas sin filtrar.
+PGVECTOR_DISPONIBLE = False
+
+
 def init_db():
     """Crea todas las tablas en la base de datos"""
     try:
+        # ✅ Asegurar extensión pgvector ANTES de crear tablas (las usan como tipo de columna)
+        _asegurar_extension_pgvector()
+
         # ✅ CREAR TODAS LAS TABLAS FALTANTES
         Base.metadata.create_all(bind=engine)
         print("✅ Base de datos inicializada correctamente")
@@ -922,11 +1194,28 @@ def init_db():
         # ✅ Migrar columnas de demo/tenant sheets (seguro de re-ejecutar)
         migrar_columnas_demo_tenant()
 
+        # ✅ Migrar columnas de Entrega / storage multi-proveedor (seguro de re-ejecutar)
+        migrar_columnas_entrega()
+
         # ✅ Migrar tabla cola de radicación (seguro de re-ejecutar)
         migrar_cola_radicacion()
 
+        # ✅ Migrar columnas de verificación mensual de EPS (CoreSoft) (seguro de re-ejecutar)
+        migrar_columnas_eps_tracking()
+
         # ✅ Migrar columnas de Browserbase en empresa_bot_config (seguro de re-ejecutar)
         migrar_columnas_browserbase()
+
+        # ✅ Seed de reglas de calificación IA + índice vectorial (seguro de re-ejecutar)
+        migrar_reglas_validacion_ia()
+
+        # ✅ Centro de Costos — precarga inventario de servicios/APIs pagos (seguro de re-ejecutar)
+        # Import diferido: evita import circular (el módulo importa modelos desde app.database)
+        try:
+            from app.services.servicios_pago import seed_servicios_pago_iniciales
+            seed_servicios_pago_iniciales()
+        except Exception as e:
+            print(f"❌ Error precargando Centro de Costos: {e}")
 
         # Verificar conexión
         db = SessionLocal()
@@ -1165,6 +1454,121 @@ def migrar_columnas_browserbase():
         return False
 
 
+def migrar_reglas_validacion_ia():
+    """
+    Sincroniza reglas_validacion_ia con data/reglas_validacion.json (upsert por
+    código) + índice vectorial para búsqueda semántica.
+    Seguro de re-ejecutar: cada regla del JSON se inserta si no existe, o se
+    actualiza SOLO si su fila en BD todavía tiene origen='seed_json' (nunca
+    pisa reglas editadas a mano/por chat, que quedan con otro origen). Si el
+    texto cambia, se limpia el embedding para que se regenere con el texto
+    nuevo. Los embeddings nuevos quedan en NULL — los llena por separado
+    app/embeddings_service.py (requiere llamar a la API de Gemini, no se hace
+    en el arranque para no bloquear ni gastar tokens en cada deploy).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Sincronizando reglas_validacion_ia con reglas_validacion.json...")
+
+        import json as _json
+        ruta_json = os.path.join(os.path.dirname(__file__), "data", "reglas_validacion.json")
+        try:
+            with open(ruta_json, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+        except FileNotFoundError:
+            print(f"   ⚠️  No se encontró {ruta_json}, se omite sincronización")
+            data = None
+        except Exception as e:
+            print(f"   ⚠️  Error leyendo {ruta_json}: {e}")
+            data = None
+
+        if data is not None:
+            insertadas = 0
+            actualizadas = 0
+            omitidas_editadas = 0
+            for r in data.get("reglas", []):
+                decision_raw = (r.get("decision") or "REVISAR").upper()
+                decision = {
+                    "RECHAZAR": DecisionValidacion.RECHAZAR,
+                    "ACEPTAR": DecisionValidacion.ACEPTAR,
+                    "DEVOLVER": DecisionValidacion.REVISAR,
+                }.get(decision_raw, DecisionValidacion.REVISAR)
+                nombre = r.get("nombre", r["id"])
+                descripcion = r.get("descripcion", "")
+                tipo = r.get("tipo")
+                motivo_rechazo_template = r.get("motivo_rechazo")
+
+                existente = db.query(ReglaValidacionIA).filter(
+                    ReglaValidacionIA.codigo == r["id"]
+                ).first()
+
+                if existente is None:
+                    db.add(ReglaValidacionIA(
+                        codigo=r["id"],
+                        company_id=None,  # regla global
+                        nombre=nombre,
+                        descripcion=descripcion,
+                        decision=decision,
+                        tipo=tipo,
+                        tipos_incapacidad=[],
+                        motivo_rechazo_template=motivo_rechazo_template,
+                        activa=True,
+                        version=1,
+                        creada_por="sistema",
+                        origen="seed_json",
+                    ))
+                    insertadas += 1
+                elif existente.origen == "seed_json":
+                    cambio = (
+                        existente.nombre != nombre
+                        or existente.descripcion != descripcion
+                        or existente.decision != decision
+                        or existente.tipo != tipo
+                        or existente.motivo_rechazo_template != motivo_rechazo_template
+                    )
+                    if cambio:
+                        existente.nombre = nombre
+                        existente.descripcion = descripcion
+                        existente.decision = decision
+                        existente.tipo = tipo
+                        existente.motivo_rechazo_template = motivo_rechazo_template
+                        existente.embedding = None  # texto cambió: forzar re-embed
+                        existente.version = (existente.version or 1) + 1
+                        actualizadas += 1
+                else:
+                    # Editada a mano/por chat (origen != 'seed_json'): no se toca.
+                    omitidas_editadas += 1
+
+            try:
+                db.commit()
+                print(f"   ✅ Sync reglas: {insertadas} nuevas, {actualizadas} actualizadas, {omitidas_editadas} editadas (sin tocar)")
+            except Exception as e:
+                db.rollback()
+                print(f"   ⚠️  Error sincronizando reglas: {e}")
+
+        # Índice vectorial (HNSW, coseno) — solo si pgvector está disponible.
+        # No es crítico: sin índice, la búsqueda funciona igual (scan secuencial),
+        # solo más lenta a partir de miles de filas.
+        if PGVECTOR_DISPONIBLE:
+            for tabla in ("reglas_validacion_ia", "precedentes_validacion"):
+                try:
+                    db.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS idx_{tabla}_embedding_hnsw "
+                        f"ON {tabla} USING hnsw (embedding vector_cosine_ops)"
+                    ))
+                    db.commit()
+                    print(f"   ✅ Índice HNSW en {tabla}.embedding listo")
+                except Exception as e:
+                    db.rollback()
+                    print(f"   ⚠️  Índice vectorial en {tabla} omitido: {e}")
+
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración de reglas_validacion_ia: {e}")
+        return False
+
+
 def migrar_columnas_radicacion():
     """
     Agrega columnas nuevas a radicacion_skills y radicacion_sesiones si no existen.
@@ -1242,6 +1646,87 @@ def migrar_columnas_demo_tenant():
         return False
 
 
+def migrar_columnas_entrega():
+    """
+    Fase 0 del sistema multi-proveedor de almacenamiento (ver app/entrega_manager.py).
+    Agrega a tenant_configs las columnas de Entrega: la copia compartida con el
+    cliente, separada del histórico. Seguro de re-ejecutar (IF NOT EXISTS en PostgreSQL).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando columnas de Entrega (storage multi-proveedor)...")
+
+        columnas = [
+            ("tenant_configs", "storage_provider",      "VARCHAR(20) DEFAULT 'google'"),
+            ("tenant_configs", "entrega_status",        "VARCHAR(20) DEFAULT 'pendiente'"),
+            ("tenant_configs", "entrega_folder_id",     "VARCHAR(200)"),
+            ("tenant_configs", "entrega_compartido_en", "TIMESTAMP"),
+            ("tenant_configs", "entrega_error",         "TEXT"),
+        ]
+        for tabla, col, tipo in columnas:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT"))
+                else:
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en {tabla} agregada")
+            except Exception as e:
+                msg = str(e).lower()
+                if "duplicate column" in msg or "already exists" in msg:
+                    print(f"   ℹ️  Columna '{col}' en {tabla} ya existe")
+                else:
+                    print(f"   ⚠️  {tabla}.{col}: {e}")
+
+        db.commit()
+        print("✅ Migración de Entrega completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración de Entrega: {e}")
+        return False
+
+
+def migrar_columnas_eps_tracking():
+    """
+    Agrega a employees las columnas de verificación mensual de EPS (CoreSoft/ADRES-BDUA).
+    Ver app/coresoft_client.py y app/tasks/scheduler_tasks.py (tarea_actualizar_eps_mensual).
+    Seguro de re-ejecutar (IF NOT EXISTS en PostgreSQL).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando columnas de verificación de EPS (employees)...")
+
+        columnas = [
+            ("employees", "eps_anterior",         "VARCHAR(100)"),
+            ("employees", "eps_actualizado_en",   "TIMESTAMP"),
+            ("employees", "eps_regimen",          "VARCHAR(50)"),
+            ("employees", "eps_estado",           "VARCHAR(50)"),
+            ("employees", "eps_tipo_afiliado",    "VARCHAR(50)"),
+            ("employees", "eps_fecha_afiliacion", "DATE"),
+        ]
+        for tabla, col, tipo in columnas:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT"))
+                else:
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en {tabla} agregada")
+            except Exception as e:
+                msg = str(e).lower()
+                if "duplicate column" in msg or "already exists" in msg:
+                    print(f"   ℹ️  Columna '{col}' en {tabla} ya existe")
+                else:
+                    print(f"   ⚠️  {tabla}.{col}: {e}")
+
+        db.commit()
+        print("✅ Migración de verificación de EPS completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración de verificación de EPS: {e}")
+        return False
+
+
 def migrar_cola_radicacion():
     """
     Crea/asegura la tabla radicacion_cola y sus columnas.
@@ -1257,6 +1742,10 @@ def migrar_cola_radicacion():
             ("radicacion_cola", "fallo_motivo",      "TEXT"),
             ("radicacion_cola", "pdf_drive_url",     "VARCHAR(500)"),
             ("radicacion_cola", "datos_manuales",    "JSONB DEFAULT '{}'"),
+            # Radicación manual (bot falló o hubo error y alguien radicó por fuera del sistema)
+            ("radicacion_cola", "resuelto_manualmente", "BOOLEAN DEFAULT FALSE"),
+            ("radicacion_cola", "resuelto_por",         "VARCHAR(200)"),
+            ("radicacion_cola", "resuelto_en",          "TIMESTAMP"),
         ]
         for tabla, col, tipo in columnas_extra:
             try:

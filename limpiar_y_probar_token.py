@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
 Script para limpiar token de WhatsApp y probar
+Requiere variable de entorno WHATSAPP_BUSINESS_API_TOKEN (nunca hardcodear el token aquí)
 """
 
+import os
 import requests
 import json
 
@@ -11,7 +13,11 @@ print("🔧 LIMPIEZA Y PRUEBA DEL TOKEN")
 print("="*90 + "\n")
 
 # Token tal como lo copiaste (con saltos de línea)
-TOKEN_ORIGINAL = """EAALZBZAAxkIMgBRZAvDX9lnZBC8qSPZByIpwCSA9IHdg7UfGmsoNW8XXHLwJ2E0GOAtQNZBaRttOnXVR9UkCxV0MzDIsKb1bZAmIF3IusxoAfgy90eWwZBnE5ZAZAhRGyllaDl6r50zYb0ZBLqlHrvCt3k06hmGSRtZBnupgs69k4snqR3zTRGApfiJTZAwwjpBjcXpu5JwZDZD"""
+TOKEN_ORIGINAL = os.environ.get("WHATSAPP_BUSINESS_API_TOKEN", "")
+
+if not TOKEN_ORIGINAL:
+    print("❌ Falta la variable de entorno WHATSAPP_BUSINESS_API_TOKEN")
+    exit(1)
 
 # Limpiar espacios y saltos de línea
 TOKEN_LIMPIO = TOKEN_ORIGINAL.strip().replace("\n", "").replace(" ", "")
@@ -37,10 +43,10 @@ print()
 print("🧪 PROBANDO CON TOKEN LIMPIO:")
 print("-" * 90)
 
-PHONE_ID = "1065658909966623"
-TO_NUMBER = "573208757593"
+PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "1065658909966623")
+TO_NUMBER = os.environ.get("WHATSAPP_TEST_NUMBER", "573208757593")
 API_VERSION = "v19.0"
-API_BASE_URL = f"https://graph.instagram.com/{API_VERSION}"
+API_BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
 # Paso 1: Validar autenticación
 url_about = f"{API_BASE_URL}/{PHONE_ID}/about"
@@ -87,17 +93,12 @@ try:
             print()
             print("📋 PRÓXIMOS PASOS:")
             print()
-            print("1. Verifica el mensaje en tu celular (+573208757593)")
+            print(f"1. Verifica el mensaje en tu celular (+{TO_NUMBER})")
             print()
-            print("2. Actualiza el token en Railway:")
-            print(f"   Variable: WHATSAPP_BUSINESS_API_TOKEN")
-            print(f"   Valor: {TOKEN_LIMPIO}")
+            print("2. Confirma que WHATSAPP_BUSINESS_API_TOKEN en Railway tiene este mismo valor limpio")
+            print("   (sin espacios ni saltos de línea)")
             print()
-            print("3. O copia este token limpio directamente:")
-            print()
-            print(f"   {TOKEN_LIMPIO}")
-            print()
-            print("4. Redeploy Railway y prueba un formulario")
+            print("3. Redeploy Railway y prueba un formulario")
             print()
         else:
             print(f"   ❌ Status {response_msg.status_code} - ERROR en envío")

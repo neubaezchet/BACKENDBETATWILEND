@@ -47,7 +47,7 @@ def test_whatsapp_business_api():
     print("2️⃣ Verificando conectividad con Meta Graph API...")
     
     api_version = "v19.0"
-    base_url = f"https://graph.instagram.com/{api_version}"
+    base_url = f"https://graph.facebook.com/{api_version}"
     
     # Test 1: Verificar info de la cuenta
     try:

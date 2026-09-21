@@ -6,6 +6,7 @@ python-dotenv==1.0.0
 # Base de datos
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
+pgvector==0.3.6
 
 # Excel y Data - VERSIONES COMPATIBLES CON PYTHON 3.11
 pandas==2.2.0

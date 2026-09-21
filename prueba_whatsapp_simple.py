@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
 Script simple para probar WhatsApp Business API y enviar mensaje
+Requiere variables de entorno: WHATSAPP_BUSINESS_API_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_TEST_NUMBER
 """
 
+import os
 import requests
 import json
 from datetime import datetime
@@ -11,12 +13,16 @@ print("\n" + "="*90)
 print("🧪 PRUEBA WHATSAPP BUSINESS API")
 print("="*90 + "\n")
 
-# Variables
-TOKEN = "EAALZBZAAxkIMgBRZAvDX9lnZBC8qSPZByIpwCSA9IHdg7UfGmsoNW8XXHLwJ2E0GOAtQNZBaRttOnXVR9UkCxV0MzDIsKb1bZAmIF3IusxoAfgy90eWwZBnE5ZAZAhRGyllaDl6r50zYb0ZBLqlHrvCt3k06hmGSRtZBnupgs69k4snqR3zTRGApfiJTZAwwjpBjcXpu5JwZDZD"
-PHONE_ID = "1065658909966623"
-TO_NUMBER = "573208757593"  # Número del usuario
+# Variables (nunca hardcodear tokens/secretos en el código)
+TOKEN = os.environ.get("WHATSAPP_BUSINESS_API_TOKEN")
+PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
+TO_NUMBER = os.environ.get("WHATSAPP_TEST_NUMBER", "573208757593")
 API_VERSION = "v19.0"
-API_BASE_URL = f"https://graph.instagram.com/{API_VERSION}"
+API_BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
+
+if not TOKEN or not PHONE_ID:
+    print("❌ Faltan variables de entorno: WHATSAPP_BUSINESS_API_TOKEN y/o WHATSAPP_PHONE_NUMBER_ID")
+    exit(1)
 
 print("📋 CONFIGURACIÓN:")
 print("-" * 90)
@@ -149,10 +155,9 @@ print(f"  ✅ Mensaje enviado exitosamente a +{TO_NUMBER}")
 print()
 print("🎯 PRÓXIMOS PASOS:")
 print("  1. Verifica que el mensaje llegó a tu celular")
-print("  2. Si llegó: Actualiza este token en Railway")
+print("  2. Si llegó: confirma que este mismo token está en Railway")
 print("     - Variable: WHATSAPP_BUSINESS_API_TOKEN")
-print("     - Valor: " + TOKEN)
-print("  3. Redeploy Railway")
+print("  3. Redeploy Railway (si actualizaste variables)")
 print("  4. Prueba enviando un formulario de incapacidad")
 print()
 print("="*90)

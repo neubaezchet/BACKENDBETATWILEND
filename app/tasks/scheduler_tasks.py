@@ -183,6 +183,38 @@ def tarea_procesar_cola_radicacion():
         logger.error(f"❌ Error en tarea_procesar_cola_radicacion: {e}")
 
 
+def tarea_actualizar_eps_mensual():
+    """
+    Tarea que se ejecuta el ÚLTIMO día de cada mes a las 22:00 (day='last',
+    no día fijo 30/31 — así no se salta febrero ni meses cortos).
+
+    Se ejecuta a fin de mes y no a inicio para capturar los cambios de EPS
+    procesados por BDUA durante todo el mes en curso, en vez de arrancar el
+    nuevo ciclo con datos de hasta 30 días de antigüedad.
+
+    Verifica la EPS de TODOS los empleados activos (todas las empresas) contra
+    CoreSoft/BDUA. La lógica completa (fail-safe, tope de créditos por ciclo,
+    límite de consultas/min) vive en app/services/eps_verificacion.py, que
+    también usa el primer barrido al activar una empresa nueva.
+    """
+    logger.info("🔄 Iniciando verificación mensual de EPS (CoreSoft/BDUA)...")
+    from app.services.eps_verificacion import verificar_eps_empleados
+    verificar_eps_empleados()
+
+
+def tarea_verificar_servicios_pago():
+    """
+    Tarea diaria (08:00) — revisa el Centro de Costos: renovaciones próximas,
+    cobros vencidos sin confirmar, y crédito bajo en servicios medidos
+    (hoy: CoreSoft). Envía alerta por correo (y WhatsApp cuando esté
+    conectado). La lógica completa, fail-safe, vive en
+    app/services/servicios_pago.py.
+    """
+    logger.info("🔄 Iniciando verificación diaria de servicios de pago (Centro de Costos)...")
+    from app.services.servicios_pago import verificar_alertas_servicios
+    verificar_alertas_servicios()
+
+
 def iniciar_scheduler():
     """
     Inicia el scheduler con todas las tareas programadas
@@ -260,6 +292,26 @@ def iniciar_scheduler():
                 replace_existing=True,
             )
             logger.info("✅ Tarea registrada: Dispatcher Browserbase (cada 1 min)")
+
+            # Tarea 7: Verificación mensual de EPS (CoreSoft/BDUA) — último día del mes, 22:00
+            scheduler.add_job(
+                tarea_actualizar_eps_mensual,
+                CronTrigger(day='last', hour=22, minute=0),
+                id='actualizar_eps_mensual',
+                name='Verificación mensual de EPS (CoreSoft/BDUA)',
+                replace_existing=True,
+            )
+            logger.info("✅ Tarea registrada: Verificación mensual de EPS (último día del mes, 22:00)")
+
+            # Tarea 8: Centro de Costos — alertas de renovación/vencimiento/crédito bajo (diario, 08:00)
+            scheduler.add_job(
+                tarea_verificar_servicios_pago,
+                CronTrigger(hour=8, minute=0),
+                id='verificar_servicios_pago',
+                name='Centro de Costos — alertas de servicios de pago',
+                replace_existing=True,
+            )
+            logger.info("✅ Tarea registrada: Centro de Costos — alertas de servicios de pago (diario, 08:00)")
 
             scheduler.start()
             logger.info("=" * 60)

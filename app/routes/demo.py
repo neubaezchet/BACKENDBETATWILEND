@@ -1215,6 +1215,11 @@ async def activar_empresa_desde_demo(
                 )
         except Exception as _e:
             logger.warning(f"⚠️ Autocuración de aprovisionamiento al activar falló: {_e}")
+
+    # ✅ Primer barrido de EPS (CoreSoft/BDUA) — no bloquea la respuesta
+    from app.services.eps_verificacion import primer_barrido_empresa
+    background_tasks.add_task(primer_barrido_empresa, company.id)
+
     email_destino = company.contacto_email or lead.contacto_email
     if email_destino:
         background_tasks.add_task(

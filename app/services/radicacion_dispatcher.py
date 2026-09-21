@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.database import (
     SessionLocal, RadicacionCola, RadicacionSesion, RadicacionSkill, EmpresaBotConfig,
+    ResultadoValidacion, DecisionValidacion,
 )
 from app.services import browserbase_service as bb
 from app.services.browserbase_service import BrowserbaseError
@@ -27,6 +28,13 @@ logger = logging.getLogger(__name__)
 # Máximo de runs lanzados por ciclo (control de costos y de carga)
 MAX_RUNS_POR_CICLO = 3
 _MAX_INTENTOS = 12
+
+# Si el calificador IA aún no evaluó el caso, se espera a que termine antes de
+# radicar (fail-closed: un caso sin datos básicos no debe llegar a la EPS).
+# Pasado este tiempo sin veredicto (ej. Gemini caído), se radica de todas formas
+# para no perder el plazo — es una falla de la IA, no evidencia de que el caso
+# esté incompleto.
+_ESPERA_MAX_VEREDICTO_IA_MIN = 30
 
 # Resultado estándar que exige el agente
 RESULT_SCHEMA_RADICACION = {
@@ -357,6 +365,35 @@ async def despachar_pendientes(db: Session) -> dict:
 
     lanzados, errores = [], []
     for item in items:
+        # ✅ Gate del semáforo IA: un caso RECHAZAR (le faltan datos básicos —
+        # diagnóstico, días, datos del médico, fecha) no se radica solo.
+        # Necesita ojo humano primero. Ver EstadoCaso/RadicacionCola.bloqueado_revision.
+        resultado_ia = (
+            db.query(ResultadoValidacion)
+            .filter(ResultadoValidacion.caso_id == item.case_id)
+            .first()
+            if item.case_id else None
+        )
+        if resultado_ia and resultado_ia.validado_exitosamente and resultado_ia.decision == DecisionValidacion.RECHAZAR:
+            item.estado = "bloqueado_revision"
+            item.fallo_motivo = (
+                "El calificador IA marcó el caso como RECHAZAR (faltan datos básicos "
+                "para ser una incapacidad válida: diagnóstico, días, datos del médico "
+                "o fecha) — requiere revisión humana antes de radicar."
+            )
+            _agregar_historial(item, item.fallo_motivo, ahora)
+            logger.info(f"[Dispatcher] Item #{item.id}: bloqueado — semáforo rojo, requiere revisión humana")
+            continue
+        if not resultado_ia or not resultado_ia.validado_exitosamente:
+            limite_espera = (item.creado_en or ahora) + timedelta(minutes=_ESPERA_MAX_VEREDICTO_IA_MIN)
+            if ahora < limite_espera:
+                logger.info(f"[Dispatcher] Item #{item.id}: esperando veredicto del calificador IA — se reintenta en el próximo ciclo")
+                continue
+            logger.warning(
+                f"[Dispatcher] Item #{item.id}: sin veredicto IA tras {_ESPERA_MAX_VEREDICTO_IA_MIN} min "
+                "(la IA falló, no el caso) — se radica sin bloqueo para no perder el plazo ante la EPS"
+            )
+
         bot = _buscar_bot(db, item.empresa, item.eps_key)
         if not bot:
             item.estado = "fallo_temporal"

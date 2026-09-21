@@ -66,7 +66,7 @@ if not WHATSAPP_PHONE_NUMBER_ID:
 
 # Construir URL según documentación Meta
 WHATSAPP_API_VERSION = "v19.0"
-WHATSAPP_API_BASE_URL = f"https://graph.instagram.com/{WHATSAPP_API_VERSION}"
+WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 url_test = f"{WHATSAPP_API_BASE_URL}/{WHATSAPP_PHONE_NUMBER_ID}"
 
 print(f"URL a probar: {url_test}")

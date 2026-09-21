@@ -10,6 +10,7 @@ import io
 import os
 import tempfile
 import base64
+from pathlib import Path
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import or_, and_, func
@@ -19,11 +20,14 @@ from pydantic import BaseModel
 import pandas as pd
 
 from app.database import (
-    get_db, Case, CaseDocument, CaseEvent, CaseNote, Employee, 
+    get_db, Case, CaseDocument, CaseEvent, CaseNote, Employee,
     Company, SearchHistory, EstadoCaso, EstadoDocumento, TipoIncapacidad,
-    CorreoNotificacion, AlertaEmail, Alerta180Log, get_utc_now
+    CorreoNotificacion, AlertaEmail, Alerta180Log, get_utc_now,
+    ResultadoValidacion, DecisionValidacion, RadicacionCola,
 )
+from app.drive_uploader import upload_inteligente
 from app.checks_disponibles import CHECKS_DISPONIBLES, obtener_checks_por_tipo
+from app.reglas_requisitos import calcular_documentos_requeridos
 from app.email_templates import get_email_template_universal
 from app.drive_manager import CaseFileOrganizer
 from app.email_service import enviar_notificacion  # ✅ Backend nativo
@@ -32,6 +36,61 @@ from app.notification_queue import notification_queue, NotificacionPendiente  # 
 from app.services.prorroga_detector import analizar_historial_empleado  # ✅ Detección de prórrogas por cadenas
 
 router = APIRouter(prefix="/validador", tags=["Portal de Validadores"])
+
+# ✅ Semáforo IA — mapea la decisión del calificador (app/calificador_service.py)
+# a verde/amarillo/rojo para el portal. Es siempre una SUGERENCIA: el humano
+# confirma o cambia el estado real del caso (POST /validador/casos/{serial}/estado).
+_DECISION_A_SEMAFORO = {
+    DecisionValidacion.ACEPTAR: "verde",
+    DecisionValidacion.REVISAR: "amarillo",
+    DecisionValidacion.RECHAZAR: "rojo",
+}
+
+
+def _semaforo_resumen(resultado: Optional["ResultadoValidacion"]) -> dict:
+    """Resumen liviano del semáforo IA para listados (sin datos_extraidos completos)."""
+    if not resultado or not resultado.validado_exitosamente:
+        return {"color": "pendiente", "motivo": None, "decision": None}
+    return {
+        "color": _DECISION_A_SEMAFORO.get(resultado.decision, "pendiente"),
+        "motivo": resultado.motivo,
+        "decision": resultado.decision.value if resultado.decision else None,
+    }
+
+
+def _semaforo_detalle(resultado: Optional["ResultadoValidacion"]) -> dict:
+    """Detalle completo del semáforo IA para /casos/{serial}, con checks traducidos."""
+    if not resultado:
+        return {"color": "pendiente", "evaluado": False}
+
+    checks_fallidos = (resultado.datos_extraidos or {}).get("checks_fallidos") or []
+    checks_legibles = [
+        {"key": ck, **CHECKS_DISPONIBLES[ck]}
+        for ck in checks_fallidos
+        if ck in CHECKS_DISPONIBLES
+    ]
+
+    if not resultado.validado_exitosamente:
+        return {
+            "color": "pendiente",
+            "evaluado": False,
+            "motivo": resultado.motivo or "El calificador IA no pudo completar la evaluación automática.",
+            "error": resultado.error_validacion,
+        }
+
+    return {
+        "color": _DECISION_A_SEMAFORO.get(resultado.decision, "pendiente"),
+        "evaluado": True,
+        "decision": resultado.decision.value if resultado.decision else None,
+        "motivo": resultado.motivo,
+        "reglas_fallidas": resultado.reglas_fallidas or [],
+        "checks_fallidos": checks_legibles,
+        "documentos_requeridos": (resultado.datos_extraidos or {}).get("documentos_requeridos") or [],
+        "documentos_detectados": (resultado.datos_extraidos or {}).get("documentos_detectados") or {},
+        "modelo_ia": resultado.modelo_ia,
+        "version_reglas": resultado.version_reglas,
+        "evaluado_en": resultado.actualizado_en.isoformat() if resultado.actualizado_en else None,
+    }
 
 
 def _parsear_serial_local(serial: str):
@@ -475,6 +534,78 @@ async def listar_empresas(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/empleados")
+async def listar_empleados(
+    request: Request,
+    empresa: Optional[str] = None,
+    q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """
+    Lista empleados activos con su EPS y el detalle de la última verificación
+    mensual (CoreSoft/BDUA): eps_anterior, eps_actualizado_en, eps_regimen,
+    eps_estado, eps_tipo_afiliado, eps_fecha_afiliacion.
+    Usuario tenant → forzado a su propia empresa (empresa_scope).
+    """
+    from app.services.tenant_scope import empresa_scope
+    empresa = empresa_scope(request, db, empresa)
+
+    query = db.query(Employee).filter(Employee.activo == True)  # noqa: E712
+
+    if empresa and empresa != "all" and empresa != "undefined":
+        company = db.query(Company).filter(Company.nombre == empresa).first()
+        if company:
+            query = query.filter(Employee.company_id == company.id)
+        else:
+            query = query.filter(Employee.company_id == -1)  # empresa inexistente → sin resultados
+
+    if q:
+        query = query.filter(
+            or_(
+                Employee.nombre.ilike(f"%{q}%"),
+                Employee.cedula.ilike(f"%{q}%"),
+            )
+        )
+
+    total = query.count()
+    offset = (page - 1) * page_size
+    empleados = query.order_by(Employee.nombre.asc()).offset(offset).limit(page_size).all()
+
+    empresas_map = {}
+    items = []
+    for emp in empleados:
+        if emp.company_id not in empresas_map:
+            comp = db.query(Company).filter(Company.id == emp.company_id).first()
+            empresas_map[emp.company_id] = comp.nombre if comp else None
+
+        items.append({
+            "id": emp.id,
+            "cedula": emp.cedula,
+            "nombre": emp.nombre,
+            "empresa": empresas_map[emp.company_id],
+            "cargo": emp.cargo,
+            "area_trabajo": emp.area_trabajo,
+            "eps": emp.eps,
+            "eps_anterior": emp.eps_anterior,
+            "eps_actualizado_en": emp.eps_actualizado_en.isoformat() if emp.eps_actualizado_en else None,
+            "eps_regimen": emp.eps_regimen,
+            "eps_estado": emp.eps_estado,
+            "eps_tipo_afiliado": emp.eps_tipo_afiliado,
+            "eps_fecha_afiliacion": emp.eps_fecha_afiliacion.isoformat() if emp.eps_fecha_afiliacion else None,
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size if page_size else 1,
+    }
+
+
 @router.get("/casos")
 async def listar_casos(
     request: Request,
@@ -543,7 +674,14 @@ async def listar_casos(
     
     offset = (page - 1) * page_size
     casos = query.order_by(Case.created_at.desc()).offset(offset).limit(page_size).all()
-    
+
+    # ✅ Semáforo IA — una sola query para todos los casos de la página (evita N+1)
+    caso_ids = [c.id for c in casos]
+    resultados_por_caso = {}
+    if caso_ids:
+        resultados = db.query(ResultadoValidacion).filter(ResultadoValidacion.caso_id.in_(caso_ids)).all()
+        resultados_por_caso = {r.caso_id: r for r in resultados}
+
     items = []
     for caso in casos:
         empleado = caso.empleado if caso.empleado else None
@@ -576,6 +714,7 @@ async def listar_casos(
             "recordatorios_count": caso.recordatorios_count or 0,
             "fraude_confirmado": bool(caso.metadata_form.get('fraude_confirmado')) if caso.metadata_form and isinstance(caso.metadata_form, dict) else False,
             "drive_link": caso.drive_link,
+            "semaforo_ia": _semaforo_resumen(resultados_por_caso.get(caso.id)),
         })
     
     return {
@@ -667,7 +806,8 @@ async def detalle_caso(
     documentos = caso.documentos
     eventos = db.query(CaseEvent).filter(CaseEvent.case_id == caso.id).order_by(CaseEvent.created_at.desc()).all()
     notas = db.query(CaseNote).filter(CaseNote.case_id == caso.id).order_by(CaseNote.created_at.desc()).all()
-    
+    resultado_ia = db.query(ResultadoValidacion).filter(ResultadoValidacion.caso_id == caso.id).first()
+
     return {
         "serial": caso.serial,
         "cedula": caso.cedula,
@@ -688,6 +828,7 @@ async def detalle_caso(
         "telefono_form": caso.telefono_form,
         "created_at": caso.created_at.isoformat(),
         "updated_at": caso.updated_at.isoformat(),
+        "semaforo_ia": _semaforo_detalle(resultado_ia),
         "documentos": [
             {
                 "id": doc.id,
@@ -724,22 +865,23 @@ async def detalle_caso(
         ]
     }
 
-@router.post("/casos/{serial}/estado")
-async def cambiar_estado(
-    serial: str,
-    cambio: CambioEstado,
+def _ejecutar_cambio_estado(
+    db: Session,
+    caso: Case,
+    nuevo_estado: str,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    _: bool = Depends(verificar_token_admin)
-):
-    """Cambia el estado de un caso y envía notificaciones via cola"""
-    
-    caso = db.query(Case).filter(Case.serial == serial).first()
-    if not caso:
-        raise HTTPException(status_code=404, detail="Caso no encontrado")
-    
+    motivo: Optional[str] = None,
+    documentos: Optional[List[Dict]] = None,
+    fecha_limite: Optional[str] = None,
+    actor: str = "Validador",
+) -> dict:
+    """
+    Aplica un cambio de estado a un caso: mueve archivos en Drive, encola
+    notificaciones y registra el evento. Compartida por /casos/{serial}/estado
+    y por /casos/{serial}/radicacion-manual para no duplicar esta lógica.
+    """
+    serial = caso.serial
     estado_anterior = caso.estado.value
-    nuevo_estado = cambio.estado
     
     try:
         EstadoCaso(nuevo_estado)
@@ -748,8 +890,8 @@ async def cambiar_estado(
     
     caso.estado = EstadoCaso(nuevo_estado)
     
-    if cambio.documentos:
-        for doc_data in cambio.documentos:
+    if documentos:
+        for doc_data in documentos:
             doc = db.query(CaseDocument).filter(
                 CaseDocument.case_id == caso.id,
                 CaseDocument.doc_tipo == doc_data.get("doc")
@@ -757,15 +899,15 @@ async def cambiar_estado(
             
             if doc:
                 doc.estado_doc = EstadoDocumento(doc_data.get("estado_doc", "PENDIENTE"))
-                doc.observaciones = cambio.motivo
+                doc.observaciones = motivo
     
     registrar_evento(
-        db, caso.id, "cambio_estado", 
-        actor="Validador",
+        db, caso.id, "cambio_estado",
+        actor=actor,
         estado_anterior=estado_anterior,
         estado_nuevo=nuevo_estado,
-        motivo=cambio.motivo,
-        metadata={"fecha_limite": cambio.fecha_limite} if cambio.fecha_limite else None
+        motivo=motivo,
+        metadata={"fecha_limite": fecha_limite} if fecha_limite else None
     )
     
     # ✅ CONTADORES: Rastrear intentos incompletos
@@ -805,7 +947,14 @@ async def cambiar_estado(
                     caso.metadata_form = {}
                 caso.metadata_form['link_completes'] = link_completes
                 print(f"✅ Caso {serial} copiado a Completas")
-            
+
+            # 2️⃣b Espejar a Entrega (copia compartida con el cliente, si aplica)
+            try:
+                from app.entrega_manager import entrega_mgr
+                entrega_mgr.copiar_caso_a_entrega(caso)
+            except Exception as e:
+                print(f"⚠️ Error espejando caso {serial} a Entrega: {e}")
+
             # 3️⃣ ELIMINAR DE INCOMPLETAS — Búsqueda robusta por serial
             print(f"🗑️ [{serial}] Buscando y eliminando de Incompletas...")
             incomplete_mgr = IncompleteFileManager()
@@ -915,7 +1064,7 @@ async def cambiar_estado(
         _empresa = caso.empresa.nombre if caso.empresa else 'N/A'
         _tipo_inc = caso.tipo.value if caso.tipo else 'General'
         _drive_link = caso.drive_link
-        _motivo = cambio.motivo
+        _motivo = motivo
         
         if nuevo_estado == "COMPLETA":
             # ✅ ENCOLAR NOTIFICACIÓN COMPLETA (con WhatsApp especial)
@@ -1022,6 +1171,149 @@ async def cambiar_estado(
         "intentos_incompletos": caso.intentos_incompletos or 0,
         "fecha_ultimo_incompleto": caso.fecha_ultimo_incompleto.isoformat() if caso.fecha_ultimo_incompleto else None
     }
+
+
+@router.post("/casos/{serial}/estado")
+async def cambiar_estado(
+    serial: str,
+    cambio: CambioEstado,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin)
+):
+    """Cambia el estado de un caso y envía notificaciones via cola"""
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+    return _ejecutar_cambio_estado(
+        db, caso, cambio.estado, background_tasks,
+        motivo=cambio.motivo, documentos=cambio.documentos, fecha_limite=cambio.fecha_limite,
+    )
+
+
+@router.post("/casos/{serial}/radicacion-manual")
+async def radicar_manualmente(
+    serial: str,
+    background_tasks: BackgroundTasks,
+    estado: str = Form(...),
+    realizado_por: str = Form(...),
+    radicado: Optional[str] = Form(None),
+    fecha_radicacion: Optional[str] = Form(None),
+    notas: Optional[str] = Form(None),
+    archivo: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin),
+):
+    """
+    Registra una radicación que se hizo por fuera del sistema — el bot falló,
+    hubo un error del portal de la EPS, etc. — para que el caso no pierda
+    trazabilidad. Reemplaza el PDF en Drive si se sube uno nuevo, deja el
+    número de radicado manual (si lo hay) en RadicacionCola, y aplica el
+    cambio de estado que indique el validador reutilizando la misma lógica
+    de notificaciones/movimiento de Drive que un cambio de estado normal.
+
+    Si NO se da `radicado`, el ítem de la cola queda como está (por ejemplo
+    "pendiente") para que el bot lo reintente con el archivo/datos corregidos.
+    """
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+
+    realizado_por = (realizado_por or "").strip()
+    if not realizado_por:
+        raise HTTPException(status_code=400, detail="Falta indicar quién realizó la radicación manual")
+
+    # 1) Si mandaron un archivo nuevo, reemplaza el que está en Drive
+    if archivo is not None:
+        try:
+            tmp_dir = Path(tempfile.gettempdir()) / "radicacion_manual"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = tmp_dir / f"{serial}_{archivo.filename}"
+            tmp_path.write_bytes(await archivo.read())
+
+            client_drive_id = None
+            if caso.company_id:
+                try:
+                    from app.database import TenantConfig
+                    tenant_cfg = db.query(TenantConfig).filter(TenantConfig.company_id == caso.company_id).first()
+                    if tenant_cfg and tenant_cfg.google_workspace_drive_id:
+                        client_drive_id = tenant_cfg.google_workspace_drive_id
+                except Exception:
+                    pass
+
+            nuevo_link = upload_inteligente(
+                file_path=tmp_path,
+                empresa=caso.empresa.nombre if caso.empresa else "OTRA_EMPRESA",
+                cedula=caso.cedula,
+                tipo=caso.tipo.value if caso.tipo else "general",
+                serial=serial,
+                fecha_inicio=caso.fecha_inicio.date() if caso.fecha_inicio else None,
+                fecha_fin=caso.fecha_fin.date() if caso.fecha_fin else None,
+                client_drive_id=client_drive_id,
+            )
+            tmp_path.unlink(missing_ok=True)
+            if nuevo_link:
+                caso.drive_link = nuevo_link
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"No se pudo subir el archivo a Drive: {e}")
+
+    # 2) Deja constancia en la cola de radicación (crea el ítem si no existía)
+    cola_item = (
+        db.query(RadicacionCola)
+        .filter(RadicacionCola.case_id == caso.id)
+        .order_by(RadicacionCola.creado_en.desc())
+        .first()
+    )
+    if not cola_item:
+        cola_item = RadicacionCola(
+            serial_caso=serial,
+            case_id=caso.id,
+            empresa=caso.empresa.nombre if caso.empresa else "N/A",
+            eps_key=(caso.eps or "manual").strip().lower().replace(" ", "_") or "manual",
+            estado="pendiente",
+        )
+        db.add(cola_item)
+
+    cola_item.resuelto_manualmente = True
+    cola_item.resuelto_por = realizado_por
+    cola_item.resuelto_en = get_utc_now()
+    if caso.drive_link:
+        cola_item.pdf_drive_url = caso.drive_link
+    if radicado and radicado.strip():
+        cola_item.radicado = radicado.strip()
+        cola_item.estado = "exitosa"
+    cola_item.observacion = notas or f"Radicado manualmente por {realizado_por}"
+    if fecha_radicacion:
+        datos_manuales = dict(cola_item.datos_manuales or {})
+        datos_manuales["fecha_radicacion_manual"] = fecha_radicacion
+        cola_item.datos_manuales = datos_manuales
+
+    db.commit()
+
+    registrar_evento(
+        db, caso.id, "radicacion_manual",
+        actor=realizado_por,
+        motivo=notas,
+        metadata={
+            "radicado": radicado,
+            "fecha_radicacion": fecha_radicacion,
+            "archivo_reemplazado": archivo is not None,
+        }
+    )
+
+    # 3) Aplica el cambio de estado que dejó el validador (reutiliza Drive+notificaciones)
+    resultado = _ejecutar_cambio_estado(
+        db, caso, estado, background_tasks,
+        motivo=notas or "Radicación manual registrada",
+        actor=realizado_por,
+    )
+    resultado["radicacion_manual"] = {
+        "radicado": cola_item.radicado,
+        "resuelto_por": cola_item.resuelto_por,
+        "resuelto_en": cola_item.resuelto_en.isoformat() if cola_item.resuelto_en else None,
+        "archivo_reemplazado": archivo is not None,
+    }
+    return resultado
 
 
 # ==================== COLA DE NOTIFICACIONES ENDPOINTS ====================
@@ -1279,74 +1571,21 @@ async def obtener_requisitos_documentos(
     dias: Optional[int] = None,
     vehiculo_fantasma: Optional[bool] = None,
     madre_trabaja: Optional[bool] = None,
+    semanas_gestacion_indicadas: Optional[bool] = None,
     es_prorroga: bool = False,
     db: Session = Depends(get_db)
 ):
-    """Motor de reglas dinámico: calcula documentos requeridos según contexto"""
-    
-    documentos_requeridos = []
-    mensajes = []
-    
-    if tipo == "enfermedad_general":
-        documentos_requeridos.append({"doc": "incapacidad_medica", "requerido": True, "aplica": True})
-        
-        if dias and dias >= 3:
-            documentos_requeridos.append({"doc": "epicrisis_o_resumen_clinico", "requerido": True, "aplica": True})
-            mensajes.append("Enfermedad general ≥3 días requiere epicrisis o resumen clínico")
-        else:
-            mensajes.append("1-2 días: solo incapacidad médica (salvo validación manual)")
-    
-    elif tipo == "enfermedad_laboral":
-        documentos_requeridos.append({"doc": "incapacidad_medica", "requerido": True, "aplica": True})
-        
-        if dias and dias >= 3:
-            documentos_requeridos.append({"doc": "epicrisis_o_resumen_clinico", "requerido": True, "aplica": True})
-            mensajes.append("Enfermedad laboral ≥3 días requiere epicrisis o resumen clínico")
-    
-    elif tipo == "accidente_transito":
-        documentos_requeridos.append({"doc": "incapacidad_medica", "requerido": True, "aplica": True})
-        documentos_requeridos.append({"doc": "epicrisis_o_resumen_clinico", "requerido": True, "aplica": True})
-        documentos_requeridos.append({"doc": "furips", "requerido": True, "aplica": True})
-        
-        if vehiculo_fantasma:
-            documentos_requeridos.append({"doc": "soat", "requerido": False, "aplica": False})
-            mensajes.append("Vehículo fantasma: no se requiere SOAT")
-        else:
-            documentos_requeridos.append({"doc": "soat", "requerido": True, "aplica": True})
-            mensajes.append("Vehículo identificado: SOAT obligatorio")
-    
-    elif tipo == "especial":
-        documentos_requeridos.append({"doc": "incapacidad_medica", "requerido": True, "aplica": True})
-        documentos_requeridos.append({"doc": "epicrisis_o_resumen_clinico", "requerido": True, "aplica": True})
-    
-    elif tipo == "maternidad":
-        documentos_requeridos.extend([
-            {"doc": "licencia_o_incapacidad", "requerido": True, "aplica": True},
-            {"doc": "epicrisis_o_resumen_clinico", "requerido": True, "aplica": True},
-            {"doc": "nacido_vivo", "requerido": True, "aplica": True},
-            {"doc": "registro_civil", "requerido": True, "aplica": True}
-        ])
-        mensajes.append("Maternidad: 4 documentos básicos obligatorios")
-    
-    elif tipo == "paternidad":
-        documentos_requeridos.extend([
-            {"doc": "epicrisis_o_resumen_clinico", "requerido": True, "aplica": True},
-            {"doc": "cedula_padre", "requerido": True, "aplica": True},
-            {"doc": "nacido_vivo", "requerido": True, "aplica": True},
-            {"doc": "registro_civil", "requerido": True, "aplica": True}
-        ])
-        
-        if madre_trabaja:
-            documentos_requeridos.append({"doc": "licencia_maternidad", "requerido": True, "aplica": True})
-            mensajes.append("Madre trabaja: licencia de maternidad obligatoria")
-        else:
-            documentos_requeridos.append({"doc": "licencia_maternidad", "requerido": False, "aplica": False})
-            mensajes.append("Madre no trabaja: licencia de maternidad no requerida")
-    
-    return {
-        "documentos": documentos_requeridos,
-        "mensajes": mensajes
-    }
+    """Motor de reglas dinámico: calcula documentos requeridos según contexto.
+    Delega en reglas_requisitos.calcular_documentos_requeridos (fuente única
+    compartida con calificador_service.py) para que nunca diverjan."""
+    return calcular_documentos_requeridos(
+        tipo=tipo,
+        dias=dias,
+        vehiculo_fantasma=vehiculo_fantasma,
+        madre_trabaja=madre_trabaja,
+        semanas_gestacion_indicadas=semanas_gestacion_indicadas,
+        es_prorroga=es_prorroga,
+    )
 
 @router.post("/busqueda-relacional")
 async def busqueda_relacional(
@@ -2985,6 +3224,13 @@ async def validar_caso_con_checks(
             except Exception as e:
                 print(f"⚠️ Error copiando a Completes: {e}")
 
+            # 2️⃣b Espejar a Entrega (copia compartida con el cliente, si aplica)
+            try:
+                from app.entrega_manager import entrega_mgr
+                entrega_mgr.copiar_caso_a_entrega(caso)
+            except Exception as e:
+                print(f"⚠️ Error espejando caso {serial} a Entrega: {e}")
+
             # 3️⃣ ELIMINAR DE INCOMPLETAS — Búsqueda robusta por serial
             print(f"🗑️ [{serial}] Buscando y eliminando de Incompletas...")
             eliminados_validar = incomplete_mgr_validar.eliminar_de_incompletas_por_serial(serial)
@@ -4288,7 +4534,14 @@ async def aprobar_reenvio(
                 print(f"   ✅ Archivo copiado a Historico: {link_historico}")
         except Exception as e:
             print(f"   ⚠️ Error copiando a Historico: {e}")
-        
+
+        # 4c. Espejar a Entrega (copia compartida con el cliente, si aplica)
+        try:
+            from app.entrega_manager import entrega_mgr
+            entrega_mgr.copiar_caso_a_entrega(caso)
+        except Exception as e:
+            print(f"   ⚠️ Error espejando caso {serial} a Entrega: {e}")
+
         # 5. Registrar evento
         registrar_evento(
             db, caso.id,

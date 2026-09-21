@@ -34,15 +34,15 @@
     {
       "id": "R04",
       "nombre": "Presencia y validez del resumen de atención",
-      "descripcion": "El soporte debe incluir obligatoriamente un resumen de atención, epicrisis, historia clínica o evolución médica. Este documento debe estar completo y contener la firma del médico.",
+      "descripcion": "El soporte debe incluir obligatoriamente un resumen de atención, epicrisis, historia clínica o evolución médica, con descripción de la atención prestada. El médico tratante debe quedar identificado con AL MENOS UNO de estos datos: nombre legible, o número de cédula/registro médico. No se exige firma manuscrita si ya hay un dato de identificación del médico en el documento.",
       "condiciones_minimas": [
         "Descripción del procedimiento o atención realizada.",
-        "Firma, sello o nombre legible del médico tratante.",
+        "Al menos un dato de identificación del médico tratante: nombre, o cédula/registro médico (no es obligatorio que estén los dos, ni la firma, si ya hay uno de estos datos).",
         "Coherencia entre el diagnóstico del resumen y el de la incapacidad."
       ],
       "decision": "DEVOLVER",
       "tipo": "completitud",
-      "motivo_rechazo": "El soporte adjunto no contiene un resumen de atención válido. Se requiere epicrisis, historia clínica o evolución médica que describa la atención prestada y esté firmada por el médico tratante."
+      "motivo_rechazo": "El soporte adjunto no contiene un resumen de atención válido, o no identifica al médico tratante. Se requiere epicrisis, historia clínica o evolución médica que describa la atención prestada e identifique al médico por al menos su nombre o su número de cédula/registro médico."
     },
     {
       "id": "R05",
@@ -55,13 +55,12 @@
     {
       "id": "R06",
       "nombre": "Identificación correcta de la incapacidad",
-      "descripcion": "La incapacidad debe ser un documento independiente con los campos mínimos requeridos.",
+      "descripcion": "La incapacidad debe ser un documento independiente con los campos mínimos requeridos. La fecha de fin puede omitirse si están la fecha de inicio y el número de días (se puede calcular). El dato del médico exige mínimo uno (nombre o cédula/registro médico), igual que en R04.",
       "campos_minimos": [
-        "Fecha de inicio de la incapacidad.",
-        "Fecha de fin de la incapacidad.",
+        "Fecha de inicio de la incapacidad (la fecha de fin puede omitirse si están la fecha de inicio y el número de días).",
         "Número de días.",
         "Número de identificación del paciente.",
-        "Nombre del médico que expide.",
+        "Al menos un dato del médico que expide: nombre, o cédula/registro médico.",
         "Centro de atención o entidad que emite.",
         "Diagnóstico CIE-10."
       ],
@@ -100,18 +99,80 @@
     {
       "id": "R10",
       "nombre": "Concordancia del origen de la incapacidad",
-      "descripcion": "El origen indicado en la incapacidad debe coincidir con el registrado en el resumen de atención.",
+      "descripcion": "El origen indicado en la incapacidad (Común, Laboral, Accidente de Tránsito, Maternidad, Paternidad) debe coincidir con el que se puede inferir del resumen de atención. Caso especial: cuando el origen registrado es 'Laboral', el resumen de atención o epicrisis es OBLIGATORIO SIEMPRE, sin importar los días de incapacidad (incluso si son 1 o 2 días) — porque 'enfermedad laboral' (origen ocupacional) es distinta de 'accidente de trabajo', y solo el resumen de atención permite confirmar cuál de las dos aplica realmente, o si en realidad se trata de una enfermedad general marcada por error como laboral. Para 'Accidente de Tránsito' el resumen/epicrisis sigue el mismo umbral que 'Común': solo es obligatorio desde 3 días de incapacidad en adelante; en 1-2 días no se exige (salvo validación manual), pero el FURIPS sí es obligatorio siempre (ver R11).",
+      "excepciones": [
+        "Origen 'Laboral' sin resumen de atención/epicrisis adjunto: no se puede aceptar bajo ninguna circunstancia, sin importar la duración de la incapacidad (ni siquiera 1-2 días).",
+        "Origen 'Accidente de Tránsito' de 1-2 días: el resumen/epicrisis no es obligatorio, pero el FURIPS sigue siéndolo."
+      ],
       "decision": "DEVOLVER",
       "tipo": "coherencia",
-      "motivo_rechazo": "El origen registrado en la incapacidad ({origen_incapacidad}) no corresponde al indicado en el resumen de atención ({origen_resumen})."
+      "motivo_rechazo": "El origen registrado en la incapacidad ({origen_incapacidad}) no corresponde al indicado en el resumen de atención ({origen_resumen}), o no se adjuntó el resumen de atención/epicrisis obligatorio para confirmar un origen laboral (obligatorio sin importar los días) o de accidente de tránsito de 3 días o más."
     },
     {
       "id": "R11",
       "nombre": "Validación de accidente de tránsito - FURIPS y SOAT",
-      "descripcion": "Cuando el origen sea accidente de tránsito, se debe validar el formulario FURIPS y el soporte SOAT.",
+      "descripcion": "Cuando el origen sea accidente de tránsito, se debe validar el formulario FURIPS (2 páginas). El FURIPS debe indicar si el vehículo causante fue identificado/asegurado o si fue un vehículo fantasma / se dio a la fuga. Si el vehículo fue identificado y asegurado, se exige ADEMÁS el soporte SOAT. Como SOAT es válido CUALQUIERA de estos dos formatos: (1) la póliza SOAT oficial de la aseguradora, con número de póliza, placa del vehículo y vigencia (fecha desde/hasta); o (2) una consulta/reporte del RUNT que en la misma página muestre la placa del vehículo y el estado del SOAT (vigente o no vigente) — no hace falta la póliza completa si el RUNT ya certifica placa y vigencia. En ambos casos, la placa que aparece en el soporte SOAT debe ser EXACTAMENTE la misma placa que reporta el FURIPS para el vehículo causante; si las placas no coinciden, la regla falla aunque ambos documentos estén presentes y el SOAT esté vigente. Si el FURIPS indica vehículo fantasma o fuga, el SOAT NO se exige, porque el SOAT no cubre estos casos al no haber vehículo asegurado identificable.",
+      "formatos_soat_validos": [
+        {
+          "formato": "Póliza SOAT oficial de la aseguradora",
+          "descripcion": "El documento de la póliza SOAT emitido por la aseguradora (ej. Seguros Mundial), con número de póliza, placa del vehículo, vigencia (fecha desde/hasta) y datos del tomador.",
+          "campo_clave": "placa"
+        },
+        {
+          "formato": "Consulta RUNT",
+          "descripcion": "Una consulta/reporte del RUNT que en la misma página muestre la placa del vehículo y el estado del SOAT (vigente o no vigente). No hace falta la póliza completa si el RUNT ya certifica placa + vigencia.",
+          "campo_clave": "placa"
+        }
+      ],
+      "excepciones": [
+        "Vehículo fantasma o fuga reportado en el FURIPS: no se exige SOAT."
+      ],
+      "validacion_cruzada": "La placa que aparece en el soporte SOAT (cualquiera de los dos formatos válidos) debe ser exactamente la misma placa que reporta el FURIPS para el vehículo causante. Si las placas no coinciden, la regla falla aunque ambos documentos estén presentes y vigentes.",
       "decision": "RECHAZAR",
       "tipo": "especializada",
-      "motivo_rechazo": "Para accidentes de tránsito se requieren FURIPS (2 páginas) y soporte SOAT válido con placa concordante."
+      "motivo_rechazo": "Para accidentes de tránsito se requiere el formulario FURIPS completo (2 páginas). Si el FURIPS reporta un vehículo identificado y asegurado, también se requiere el soporte SOAT (póliza oficial o consulta RUNT con placa y estado de vigencia) con placa concordante con la del FURIPS; si reporta vehículo fantasma o fuga, el SOAT no aplica."
+    },
+    {
+      "id": "R12",
+      "nombre": "Resumen de atención en licencia de paternidad",
+      "descripcion": "Para licencia de paternidad se exige resumen de atención, EXCEPTO si la incapacidad/licencia adjunta ya indica explícitamente las semanas de gestación del parto. Si las semanas de gestación están indicadas en el soporte, el resumen de atención no es obligatorio. Si no están indicadas, el resumen de atención sí es obligatorio.",
+      "excepciones": [
+        "Semanas de gestación indicadas en el soporte de la incapacidad: no se exige resumen de atención."
+      ],
+      "decision": "DEVOLVER",
+      "tipo": "completitud",
+      "motivo_rechazo": "La licencia de paternidad no indica las semanas de gestación del parto, por lo que se requiere adjuntar el resumen de atención."
+    },
+    {
+      "id": "R13",
+      "nombre": "Formato oficial transcrito de EPS/ARL — documento autosuficiente",
+      "descripcion": "Cuando la incapacidad fue emitida directamente por el sistema oficial de la EPS o ARL (certificado/formato transcrito por el asegurador, distinto de la incapacidad manuscrita de la IPS), el documento ya contiene impresos todos los datos necesarios: médico tratante, diagnóstico CIE-10, fechas, días, origen. En estos casos NO se exige ningún soporte adicional (resumen de atención, epicrisis, FURIPS, SOAT, etc.), sin importar los días de incapacidad ni el tipo/origen (común, laboral, tránsito, maternidad, paternidad). Esta regla se evalúa PRIMERO y, si aplica, anula los requisitos de R04, R06 (dato de resumen), R08, R10 (resumen por origen), R11 (FURIPS/SOAT) y R12.",
+      "prioridad": "alta — evaluar antes que las demás reglas de completitud",
+      "formatos_reconocidos": [
+        {
+          "entidad": "SURA (EPS Suramericana S.A.)",
+          "marcadores_ocr": ["EPS SURAMERICANA S.A.", "CERTIFICADO DE INCAPACIDAD / LICENCIA"]
+        },
+        {
+          "entidad": "Compensar EPS",
+          "marcadores_ocr": ["COMPENSAR EPS", "INCAPACIDAD MÉDICA O LICENCIA"]
+        },
+        {
+          "entidad": "Nueva EPS",
+          "marcadores_ocr": ["NUEVA EPS", "CERTIFICADO DE INCAPACIDAD O LICENCIA", "TRANSCRITA"]
+        },
+        {
+          "entidad": "AXA Colpatria (ARL)",
+          "marcadores_ocr": ["INCAPACIDAD ARL", "AXACOLPATRIA", "AXA COLPATRIA"]
+        }
+      ],
+      "excepciones": [
+        "Si el documento no coincide con ninguno de estos formatos oficiales reconocidos (por ejemplo, es la incapacidad manuscrita típica de una IPS/clínica), las reglas normales (R04, R06, R08, R10, R11, R12) siguen aplicando sin cambios."
+      ],
+      "decision": "ACEPTAR",
+      "tipo": "excepcion_formato",
+      "motivo_rechazo": "",
+      "motivo_aceptacion": "El soporte corresponde a un certificado oficial transcrito por {entidad_detectada}, que ya contiene todos los datos requeridos. No se exigen soportes adicionales."
     }
   ]
 }

@@ -929,6 +929,7 @@ async def save_onboarding_step(
 @router.post("/{company_id}/onboarding/complete")
 async def complete_onboarding(
     company_id: int,
+    background_tasks: BackgroundTasks,
     user: AdminUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1029,6 +1030,10 @@ async def complete_onboarding(
         f"tenant_admin={username} — por {user.username}"
     )
 
+    # ✅ Primer barrido de EPS (CoreSoft/BDUA) — no bloquea la respuesta
+    from app.services.eps_verificacion import primer_barrido_empresa
+    background_tasks.add_task(primer_barrido_empresa, company_id)
+
     return {
         "ok": True,
         "mensaje": f"Empresa '{company.nombre}' activada. Guarda estas credenciales.",
@@ -1124,6 +1129,57 @@ async def verificar_drive(
             sub_empresas=config.sub_empresas or [],
         )
 
+    return resultado
+
+
+# ═══════════════════════════════════════════════════════════
+# ENDPOINT: POST /tenants/{company_id}/entrega/activar
+# ═══════════════════════════════════════════════════════════
+
+class EntregaActivarBody(BaseModel):
+    correo_cliente: Optional[str] = None
+
+
+@router.post("/{company_id}/entrega/activar")
+async def activar_entrega(
+    company_id: int,
+    body: EntregaActivarBody,
+    user: AdminUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Activa la carpeta Entrega para la empresa: crea (o reutiliza)
+    Entrega/{Empresa} en el Drive de Neurobaeza y la comparte como editor
+    con el correo indicado (o con TenantConfig.correo_drive / Company
+    contacto_email si no se pasa uno).
+
+    Reemplaza al flujo viejo de "pega el ID de tu carpeta de Drive": aquí el
+    cliente no necesita tener nada propio, solo un correo. El histórico
+    (Incapacidades/Completas/Incompletas) no se toca — Entrega es una copia
+    aparte. Fase 0 — solo Google Drive (ver app/entrega_manager.py).
+    """
+    company = _get_or_404(db, company_id)
+    config = _get_or_create_config(db, company_id)
+
+    correo = (body.correo_cliente or config.correo_drive or company.contacto_email or "").strip()
+    if not correo:
+        raise HTTPException(status_code=422, detail="Falta el correo del cliente para compartir la carpeta")
+
+    from app.entrega_manager import entrega_mgr
+    resultado = entrega_mgr.activar_para_empresa(company.nombre, correo)
+
+    if resultado["ok"]:
+        config.storage_provider = config.storage_provider or "google"
+        config.entrega_status = "ok"
+        config.entrega_folder_id = resultado["folder_id"]
+        config.correo_drive = correo
+        config.entrega_compartido_en = datetime.utcnow()
+        config.entrega_error = None
+    else:
+        config.entrega_status = "error"
+        config.entrega_error = resultado["error"]
+
+    db.commit()
     return resultado
 
 

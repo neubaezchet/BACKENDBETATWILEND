@@ -42,6 +42,8 @@ from app.routes.tenants import router as tenants_router, public_router as tenant
 from app.routes.radicacion import router as radicacion_router
 from app.routes.demo import demo_router, leads_router  # ✅ Demo/Leads
 from app.routes.browserbase import router as browserbase_router  # ✅ Browserbase Agents (navegador cloud)
+from app.routes.servicios_pago import router as servicios_pago_router  # ✅ Centro de Costos
+from app.routes.whatsapp_webhook import router as whatsapp_webhook_router  # ✅ Bot conversacional de WhatsApp
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ✅ Cola resiliente persistente (Drive)
@@ -223,6 +225,12 @@ app.include_router(ocr_router)
 
 # ⭐ Browserbase — Agentes de navegador autónomos en la nube
 app.include_router(browserbase_router)
+
+# ⭐ Centro de Costos — inventario y alertas de servicios/APIs pagos
+app.include_router(servicios_pago_router)
+
+# ⭐ Bot conversacional de WhatsApp — webhook entrante (Meta Graph API)
+app.include_router(whatsapp_webhook_router)
 
 app.include_router(validador_router)
 
@@ -1845,6 +1853,23 @@ async def subir_incapacidad(
                     print(f"ℹ️ Regla maternidad sin correlación: {resultado_maternidad['explicacion']}")
             except Exception as e:
                 print(f"⚠️ Error verificando prórroga maternidad (bg): {e}")
+            try:
+                from app.calificador_service import evaluar_caso
+                resultado_ia = evaluar_caso(caso_bg.id, db_bg)
+                if resultado_ia.get("exito"):
+                    print(f"🤖 Calificador IA: caso {caso_bg.serial} → {resultado_ia.get('decision')}")
+                else:
+                    print(f"⚠️ Calificador IA no pudo evaluar el caso {caso_bg.serial}: {resultado_ia.get('error')}")
+            except Exception as e:
+                print(f"⚠️ Error en calificador IA (bg): {e}")
+
+            # 3️⃣ Espejar a Entrega (copia compartida con el cliente, si la
+            # empresa la tiene activada). Nunca toca el histórico.
+            try:
+                from app.entrega_manager import entrega_mgr
+                entrega_mgr.copiar_caso_a_entrega(caso_bg)
+            except Exception as e:
+                print(f"⚠️ Error espejando a Entrega (bg): {e}")
         finally:
             db_bg.close()
 
