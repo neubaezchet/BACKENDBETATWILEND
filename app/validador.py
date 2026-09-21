@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 import requests
 import io
 import os
+import re
 import tempfile
 import base64
 from pathlib import Path
@@ -1191,45 +1192,50 @@ async def cambiar_estado(
     )
 
 
-@router.post("/casos/{serial}/radicacion-manual")
-async def radicar_manualmente(
-    serial: str,
+async def _radicar_manual_core(
+    db: Session,
+    caso: Case,
+    estado: str,
+    realizado_por: str,
     background_tasks: BackgroundTasks,
-    estado: str = Form(...),
-    realizado_por: str = Form(...),
-    radicado: Optional[str] = Form(None),
-    fecha_radicacion: Optional[str] = Form(None),
-    notas: Optional[str] = Form(None),
-    archivo: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
-    _: bool = Depends(verificar_token_admin),
-):
+    radicado: Optional[str] = None,
+    fecha_radicacion: Optional[str] = None,
+    notas: Optional[str] = None,
+    archivo_bytes: Optional[bytes] = None,
+    archivo_filename: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Registra una radicación que se hizo por fuera del sistema — el bot falló,
-    hubo un error del portal de la EPS, etc. — para que el caso no pierda
-    trazabilidad. Reemplaza el PDF en Drive si se sube uno nuevo, deja el
-    número de radicado manual (si lo hay) en RadicacionCola, y aplica el
-    cambio de estado que indique el validador reutilizando la misma lógica
-    de notificaciones/movimiento de Drive que un cambio de estado normal.
+    Núcleo de la radicación manual — usado tanto por el endpoint individual
+    como por el masivo. Registra una radicación que se hizo por fuera del
+    sistema (el bot falló, error del portal de la EPS, etc.) para que el caso
+    no pierda trazabilidad. Reemplaza el PDF en Drive si se sube uno nuevo,
+    deja el número de radicado manual (si lo hay) en RadicacionCola, y aplica
+    el cambio de estado reutilizando la misma lógica de notificaciones/
+    movimiento de Drive que un cambio de estado normal.
 
     Si NO se da `radicado`, el ítem de la cola queda como está (por ejemplo
     "pendiente") para que el bot lo reintente con el archivo/datos corregidos.
-    """
-    caso = db.query(Case).filter(Case.serial == serial).first()
-    if not caso:
-        raise HTTPException(status_code=404, detail="Caso no encontrado")
 
+    No lanza HTTPException: devuelve {"ok": False, "error": ...} en caso de
+    falla para que el llamador (individual o masivo) decida cómo reportarlo
+    sin que una fila mala tumbe todo un lote.
+    """
     realizado_por = (realizado_por or "").strip()
     if not realizado_por:
-        raise HTTPException(status_code=400, detail="Falta indicar quién realizó la radicación manual")
+        return {"ok": False, "error": "Falta indicar quién realizó la radicación manual"}
+
+    try:
+        EstadoCaso(estado)
+    except ValueError:
+        return {"ok": False, "error": f"Estado inválido: {estado}"}
 
     # 1) Si mandaron un archivo nuevo, reemplaza el que está en Drive
-    if archivo is not None:
+    if archivo_bytes is not None:
         try:
             tmp_dir = Path(tempfile.gettempdir()) / "radicacion_manual"
             tmp_dir.mkdir(parents=True, exist_ok=True)
-            tmp_path = tmp_dir / f"{serial}_{archivo.filename}"
-            tmp_path.write_bytes(await archivo.read())
+            tmp_path = tmp_dir / f"{caso.serial}_{archivo_filename or 'archivo.pdf'}"
+            tmp_path.write_bytes(archivo_bytes)
 
             client_drive_id = None
             if caso.company_id:
@@ -1246,7 +1252,7 @@ async def radicar_manualmente(
                 empresa=caso.empresa.nombre if caso.empresa else "OTRA_EMPRESA",
                 cedula=caso.cedula,
                 tipo=caso.tipo.value if caso.tipo else "general",
-                serial=serial,
+                serial=caso.serial,
                 fecha_inicio=caso.fecha_inicio.date() if caso.fecha_inicio else None,
                 fecha_fin=caso.fecha_fin.date() if caso.fecha_fin else None,
                 client_drive_id=client_drive_id,
@@ -1255,7 +1261,7 @@ async def radicar_manualmente(
             if nuevo_link:
                 caso.drive_link = nuevo_link
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"No se pudo subir el archivo a Drive: {e}")
+            return {"ok": False, "error": f"No se pudo subir el archivo a Drive: {e}"}
 
     # 2) Deja constancia en la cola de radicación (crea el ítem si no existía)
     cola_item = (
@@ -1266,7 +1272,7 @@ async def radicar_manualmente(
     )
     if not cola_item:
         cola_item = RadicacionCola(
-            serial_caso=serial,
+            serial_caso=caso.serial,
             case_id=caso.id,
             empresa=caso.empresa.nombre if caso.empresa else "N/A",
             eps_key=(caso.eps or "manual").strip().lower().replace(" ", "_") or "manual",
@@ -1297,7 +1303,7 @@ async def radicar_manualmente(
         metadata={
             "radicado": radicado,
             "fecha_radicacion": fecha_radicacion,
-            "archivo_reemplazado": archivo is not None,
+            "archivo_reemplazado": archivo_bytes is not None,
         }
     )
 
@@ -1307,13 +1313,244 @@ async def radicar_manualmente(
         motivo=notas or "Radicación manual registrada",
         actor=realizado_por,
     )
+    resultado["ok"] = True
     resultado["radicacion_manual"] = {
         "radicado": cola_item.radicado,
         "resuelto_por": cola_item.resuelto_por,
         "resuelto_en": cola_item.resuelto_en.isoformat() if cola_item.resuelto_en else None,
-        "archivo_reemplazado": archivo is not None,
+        "archivo_reemplazado": archivo_bytes is not None,
     }
     return resultado
+
+
+@router.post("/casos/{serial}/radicacion-manual")
+async def radicar_manualmente(
+    serial: str,
+    background_tasks: BackgroundTasks,
+    estado: str = Form(...),
+    realizado_por: str = Form(...),
+    radicado: Optional[str] = Form(None),
+    fecha_radicacion: Optional[str] = Form(None),
+    notas: Optional[str] = Form(None),
+    archivo: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin),
+):
+    """Registra la radicación manual de UN caso puntual. Ver _radicar_manual_core."""
+    caso = db.query(Case).filter(Case.serial == serial).first()
+    if not caso:
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
+
+    archivo_bytes = await archivo.read() if archivo is not None else None
+    resultado = await _radicar_manual_core(
+        db, caso, estado, realizado_por, background_tasks,
+        radicado=radicado, fecha_radicacion=fecha_radicacion, notas=notas,
+        archivo_bytes=archivo_bytes, archivo_filename=archivo.filename if archivo else None,
+    )
+    if not resultado.get("ok"):
+        raise HTTPException(status_code=400, detail=resultado.get("error", "Error desconocido"))
+    return resultado
+
+
+# ==================== RADICACIÓN MANUAL MASIVA ====================
+# Para lotes de 10, 100+ casos: plantilla Excel con cédula + fecha_inicio +
+# estado/radicado, más los PDFs correspondientes nombrados "CEDULA DD MM YYYY..."
+# (misma convención que ya usa Drive, ver drive_uploader.py). El sistema
+# empareja cada archivo con su Case por cédula + fecha_inicio parseadas del
+# nombre del archivo.
+
+_RE_NOMBRE_ARCHIVO = re.compile(
+    r"(?P<cedula>\d{6,12})[\s_\-]+(?P<f1>\d{1,2}[\s_\-]\d{1,2}[\s_\-]\d{4}|\d{4}[\s_\-]\d{1,2}[\s_\-]\d{1,2})"
+)
+
+def _parsear_cedula_fecha_de_nombre(nombre_archivo: str) -> Optional[tuple]:
+    """
+    Extrae (cedula, fecha_inicio) del nombre de un archivo subido a mano,
+    aceptando la convención "CEDULA DD MM YYYY..." (la que ya usa Drive) y
+    variantes con guion/guion bajo o fecha en formato YYYY-MM-DD.
+    Devuelve (cedula: str, fecha: date) o None si no pudo parsear.
+    """
+    if not nombre_archivo:
+        return None
+    match = _RE_NOMBRE_ARCHIVO.search(Path(nombre_archivo).stem)
+    if not match:
+        return None
+    cedula = match.group("cedula")
+    partes = re.split(r"[\s_\-]+", match.group("f1"))
+    try:
+        if len(partes[0]) == 4:  # YYYY MM DD
+            anio, mes, dia = partes
+        else:  # DD MM YYYY
+            dia, mes, anio = partes
+        fecha = datetime(int(anio), int(mes), int(dia)).date()
+    except (ValueError, IndexError):
+        return None
+    return cedula, fecha
+
+
+def _parsear_fecha_excel(valor) -> Optional[str]:
+    """Normaliza una celda de fecha de Excel/CSV a 'YYYY-MM-DD', o None si está vacía/inválida."""
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return None
+    try:
+        return pd.to_datetime(valor).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+@router.get("/radicacion-manual/plantilla")
+async def descargar_plantilla_radicacion_manual(
+    _: bool = Depends(verificar_token_admin),
+):
+    """
+    Descarga la plantilla Excel para registrar radicaciones manuales masivas.
+    Columnas: cedula, fecha_inicio, estado, radicado, fecha_radicacion,
+    realizado_por, notas. El nombre de cada PDF que se suba junto con la
+    plantilla debe empezar con "CEDULA DD MM YYYY" para que el sistema lo
+    pueda emparejar con la fila correspondiente.
+    """
+    columnas = ["cedula", "fecha_inicio", "estado", "radicado", "fecha_radicacion", "realizado_por", "notas"]
+    fila_ejemplo = {
+        "cedula": "1085043374",
+        "fecha_inicio": "2026-09-01",
+        "estado": "COMPLETA",
+        "radicado": "RAD-123456",
+        "fecha_radicacion": "2026-09-20",
+        "realizado_por": "Nombre de quien radicó",
+        "notas": "Radicado manual por caída del portal de la EPS",
+    }
+    df = pd.DataFrame([fila_ejemplo], columns=columnas)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="radicacion_manual")
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=plantilla_radicacion_manual.xlsx"},
+    )
+
+
+@router.post("/radicacion-manual/masiva")
+async def radicar_manualmente_masiva(
+    background_tasks: BackgroundTasks,
+    plantilla: UploadFile = File(...),
+    archivos: List[UploadFile] = File(default=[]),
+    realizado_por_defecto: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin),
+):
+    """
+    Procesa un lote de radicaciones manuales: una plantilla Excel (ver
+    /radicacion-manual/plantilla) más, opcionalmente, los PDFs corregidos
+    nombrados "CEDULA DD MM YYYY..." para emparejar con cada fila.
+
+    Cada fila se procesa de forma independiente — si una falla (caso no
+    encontrado, datos inválidos, error de Drive) no detiene el resto del
+    lote; el detalle de cada fila queda en la respuesta para trazabilidad,
+    dado que esto puede tratarse de información crítica.
+    """
+    contents = await plantilla.read()
+    try:
+        if plantilla.filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(io.BytesIO(contents))
+        elif plantilla.filename.endswith('.csv'):
+            df = pd.read_csv(io.BytesIO(contents))
+        else:
+            raise HTTPException(status_code=400, detail="Formato no soportado. Use .xlsx, .xls o .csv")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error leyendo la plantilla: {e}")
+
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    columnas_requeridas = {"cedula", "fecha_inicio", "estado"}
+    faltantes = columnas_requeridas - set(df.columns)
+    if faltantes:
+        raise HTTPException(status_code=400, detail=f"Faltan columnas obligatorias en la plantilla: {', '.join(sorted(faltantes))}")
+
+    # Indexa los archivos subidos por (cedula, fecha_inicio) parseando el nombre
+    archivos_por_clave: Dict[tuple, UploadFile] = {}
+    archivos_sin_parsear = []
+    for archivo in archivos:
+        clave = _parsear_cedula_fecha_de_nombre(archivo.filename)
+        if clave:
+            archivos_por_clave[clave] = archivo
+        else:
+            archivos_sin_parsear.append(archivo.filename)
+
+    resultados = []
+    claves_usadas = set()
+    for idx, row in df.iterrows():
+        fila_num = idx + 2  # +1 por header, +1 porque iterrows es 0-indexado
+        cedula = str(row.get("cedula", "")).strip()
+        if cedula.endswith(".0"):  # Excel suele leer cédulas numéricas como float
+            cedula = cedula[:-2]
+        fecha_inicio_str = _parsear_fecha_excel(row.get("fecha_inicio"))
+        estado = str(row.get("estado", "")).strip().upper()
+
+        if not cedula or not fecha_inicio_str or not estado:
+            resultados.append({
+                "fila": fila_num, "cedula": cedula or None, "ok": False,
+                "error": "Faltan cedula, fecha_inicio o estado en la fila",
+            })
+            continue
+
+        fecha_inicio_dt = datetime.strptime(fecha_inicio_str, "%Y-%m-%d")
+        caso = (
+            db.query(Case)
+            .filter(Case.cedula == cedula, func.date(Case.fecha_inicio) == fecha_inicio_dt.date())
+            .order_by(Case.id.desc())
+            .first()
+        )
+        if not caso:
+            resultados.append({
+                "fila": fila_num, "cedula": cedula, "fecha_inicio": fecha_inicio_str, "ok": False,
+                "error": "No se encontró un caso con esa cédula y fecha_inicio",
+            })
+            continue
+
+        clave = (cedula, fecha_inicio_dt.date())
+        archivo_match = archivos_por_clave.get(clave)
+        if archivo_match:
+            claves_usadas.add(clave)
+        archivo_bytes = await archivo_match.read() if archivo_match else None
+
+        realizado_por = str(row.get("realizado_por") or realizado_por_defecto or "").strip()
+        radicado = row.get("radicado")
+        radicado = str(radicado).strip() if radicado is not None and not pd.isna(radicado) else None
+        notas = row.get("notas")
+        notas = str(notas).strip() if notas is not None and not pd.isna(notas) else None
+        fecha_radicacion = _parsear_fecha_excel(row.get("fecha_radicacion"))
+
+        resultado = await _radicar_manual_core(
+            db, caso, estado, realizado_por, background_tasks,
+            radicado=radicado, fecha_radicacion=fecha_radicacion, notas=notas,
+            archivo_bytes=archivo_bytes, archivo_filename=archivo_match.filename if archivo_match else None,
+        )
+        resultados.append({
+            "fila": fila_num,
+            "cedula": cedula,
+            "serial": caso.serial,
+            "fecha_inicio": fecha_inicio_str,
+            "archivo_emparejado": archivo_match.filename if archivo_match else None,
+            "ok": resultado.get("ok", False),
+            "error": resultado.get("error"),
+        })
+
+    exitosos = sum(1 for r in resultados if r["ok"])
+    archivos_no_usados = [
+        a.filename for clave, a in archivos_por_clave.items() if clave not in claves_usadas
+    ]
+    return {
+        "total_filas": len(resultados),
+        "exitosos": exitosos,
+        "fallidos": len(resultados) - exitosos,
+        "archivos_sin_emparejar_con_ninguna_fila": archivos_sin_parsear + archivos_no_usados,
+        "detalle": resultados,
+    }
 
 
 # ==================== COLA DE NOTIFICACIONES ENDPOINTS ====================
