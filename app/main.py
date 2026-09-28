@@ -122,6 +122,67 @@ def _estructurar_plano_con_gemini(metadata: dict, texto_ocr: str) -> None:
         print(f"[Gemini Plano] Error: {resultado.get('error')}")
 
 
+def _completar_fechas_desde_plano(metadata: dict, fecha_inicio, fecha_fin, dias):
+    """
+    Rellena con el documento lo que el colaborador dejó vacío en el formulario.
+
+    Regla de negocio: un soporte que trae todo lo básico pero solo la fecha de
+    inicio ("Fecha desde ...") es válido y no se devuelve como incompleto. Pero
+    la fecha de fin sí se necesita aguas abajo — nombre del archivo en Drive,
+    detección de duplicados, cruce de recobro contra lo que pagó la EPS — así que
+    se toma del documento, y si el documento tampoco la trae, se calcula con los
+    días (inicio + días - 1). Eso ya lo resolvió gemini_plano_service.
+
+    Nunca sobrescribe lo que el colaborador escribió: su declaración manda. Solo
+    llena huecos, y deja constancia del origen en metadata.
+
+    Devuelve (fecha_inicio, fecha_fin, dias).
+    """
+    try:
+        plano = (metadata.get("plano_incapacidad") or {}).get("plano") or {}
+        if not plano:
+            return fecha_inicio, fecha_fin, dias
+
+        def _a_date(valor):
+            try:
+                texto = str(valor or "").strip()[:10]
+                return date.fromisoformat(texto) if len(texto) == 10 else None
+            except (ValueError, TypeError):
+                return None
+
+        if not fecha_inicio:
+            candidata = _a_date(plano.get("fecha_inicio"))
+            if candidata:
+                fecha_inicio = candidata
+                metadata["fecha_inicio_origen"] = "documento"
+                print(f"📅 fecha_inicio tomada del documento: {fecha_inicio}")
+
+        if not fecha_fin:
+            candidata = _a_date(plano.get("fecha_fin"))
+            if candidata and (not fecha_inicio or candidata >= fecha_inicio):
+                fecha_fin = candidata
+                metadata["fecha_fin_origen"] = (
+                    "documento_calculada" if plano.get("fecha_fin_calculada") else "documento"
+                )
+                print(f"📅 fecha_fin tomada del documento ({metadata['fecha_fin_origen']}): {fecha_fin}")
+
+        if not dias:
+            try:
+                candidato = int(plano.get("dias_incapacidad") or 0)
+            except (TypeError, ValueError):
+                candidato = 0
+            if candidato > 0:
+                dias = candidato
+                metadata["dias_incapacidad"] = dias
+                metadata["dias_origen"] = "documento"
+
+        return fecha_inicio, fecha_fin, dias
+    except Exception as e:
+        # Fail-safe: esto es una mejora, no puede tumbar una recepción.
+        print(f"⚠️ No se pudieron completar las fechas desde el plano: {e}")
+        return fecha_inicio, fecha_fin, dias
+
+
 def _ocr_respuesta_api(resultado: dict) -> dict:
     """Payload ligero para el frontend (sin volcar todo el texto)."""
     texto = (resultado.get("texto") or "")
@@ -1713,6 +1774,13 @@ async def subir_incapacidad(
         # Estructurar plano con Gemini 3 Flash si Mistral devolvió texto
         if resultado_ocr.get("exito") and resultado_ocr.get("texto"):
             _estructurar_plano_con_gemini(metadata_form, resultado_ocr["texto"])
+
+            # El documento completa lo que el formulario dejó vacío (típicamente
+            # la fecha de fin, que muchos soportes no traen como campo aparte).
+            # Va antes de subir a Drive porque el nombre del archivo la usa.
+            fecha_inicio, fecha_fin, daysOfIncapacity = _completar_fechas_desde_plano(
+                metadata_form, fecha_inicio, fecha_fin, daysOfIncapacity
+            )
 
         # Obtener carpeta Drive del cliente si tiene onboarding completo
         # (empresa del empleado; o la del slug del link si el empleado no se encontró)
