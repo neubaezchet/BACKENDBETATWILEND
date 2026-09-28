@@ -74,9 +74,19 @@ WHATSAPP_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID")  # Alias alternativo
 WHATSAPP_API_TOKEN = WHATSAPP_BUSINESS_API_TOKEN or os.environ.get("WHATSAPP_API_TOKEN")
 WHATSAPP_PHONE_ID_FINAL = WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_PHONE_ID
 
-# Versión de la API de Meta (Graph API)
-WHATSAPP_API_VERSION = "v19.0"
+# Versión de la API de Meta (Graph API). Configurable en Railway para poder
+# subir (o volver atrás) sin deploy: Meta retira cada versión a los ~2 años y
+# una versión vieja ignora en silencio los campos nuevos — v19.0 es de enero
+# de 2024 y ya no soporta cosas que este bot usa (typing_indicator).
+WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v26.0")
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
+
+# ID de la cuenta de WhatsApp Business (WABA). No es secreto, pero va en
+# entorno como el resto: lo necesita el diagnóstico para preguntarle a Meta si
+# la app quedó suscrita a los webhooks de esta cuenta.
+WHATSAPP_WABA_ID = os.environ.get("WHATSAPP_WABA_ID") or os.environ.get(
+    "WHATSAPP_BUSINESS_ACCOUNT_ID"
+)
 
 # ✅ VALIDACIÓN: WhatsApp Business está configurada
 _WHATSAPP_BUSINESS_AVAILABLE = bool(WHATSAPP_API_TOKEN and WHATSAPP_PHONE_ID_FINAL)

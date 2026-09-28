@@ -313,6 +313,29 @@ def iniciar_scheduler():
             )
             logger.info("✅ Tarea registrada: Centro de Costos — alertas de servicios de pago (diario, 08:00)")
 
+            # Tarea 9: Recobro — descarga diaria de los reportes de la EPS.
+            # Una vez al día: los reportes no cambian por minuto y cada run cuesta.
+            from app.services.recobro_service import ciclo_recobro_sync, ingestar_pendientes_sync
+            scheduler.add_job(
+                ciclo_recobro_sync,
+                CronTrigger(hour=5, minute=30),
+                id='recobro_descarga_diaria',
+                name='Recobro — pedir reportes nuevos a las EPS',
+                replace_existing=True,
+            )
+            logger.info("✅ Tarea registrada: Recobro — descarga de reportes (diario, 05:30)")
+
+            # Tarea 10: Recobro — ingesta de los archivos ya descargados.
+            # Aparte del ciclo diario para que un reporte listo no espere 24 h.
+            scheduler.add_job(
+                ingestar_pendientes_sync,
+                IntervalTrigger(minutes=10),
+                id='recobro_ingesta',
+                name='Recobro — ingestar reportes descargados',
+                replace_existing=True,
+            )
+            logger.info("✅ Tarea registrada: Recobro — ingesta de reportes (cada 10 min)")
+
             scheduler.start()
             logger.info("=" * 60)
             logger.info("✅ SCHEDULER INICIADO CORRECTAMENTE")

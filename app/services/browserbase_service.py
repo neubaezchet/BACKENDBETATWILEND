@@ -149,6 +149,33 @@ async def stop_run(run_id: str) -> dict:
 
 
 # ──────────────────────────────────────────────
+#  DESCARGAS (archivos que el agente bajó del portal)
+#  Los reportes de recobro llegan como Excel/CSV. El agente solo hace clic en
+#  "Generar archivo"; el archivo real lo baja y lo parsea el backend, porque
+#  cifras de dinero transcritas por un modelo no son auditables.
+# ──────────────────────────────────────────────
+
+async def list_downloads(session_id: str, limit: int = 50) -> dict:
+    """Lista los archivos descargados durante una sesión de navegador."""
+    return await _request("GET", "/v1/downloads",
+                          params={"sessionId": session_id, "limit": limit})
+
+
+async def get_download_bytes(download_id: str, timeout: float = 120.0) -> bytes:
+    """
+    Descarga el contenido binario de un archivo (Accept: application/octet-stream).
+    Timeout amplio: un reporte de varios meses puede pesar.
+    """
+    headers = {**_headers(False), "Accept": "application/octet-stream"}
+    async with httpx.AsyncClient(base_url=BROWSERBASE_API_URL, timeout=timeout) as client:
+        resp = await client.get(f"/v1/downloads/{download_id}", headers=headers)
+    if resp.status_code >= 400:
+        logger.error(f"❌ Browserbase GET /v1/downloads/{download_id} → {resp.status_code}")
+        raise BrowserbaseError(resp.status_code, resp.text)
+    return resp.content
+
+
+# ──────────────────────────────────────────────
 #  CONTEXTS (persistencia de sesión/credenciales)
 #  Un context guarda cookies, tokens y localStorage entre sesiones.
 #  Best practice Browserbase: un context por sitio + login.

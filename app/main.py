@@ -40,10 +40,12 @@ from app.routes.admin import router as admin_router
 from app.routes.ocr import router as ocr_router
 from app.routes.tenants import router as tenants_router, public_router as tenants_public_router
 from app.routes.radicacion import router as radicacion_router
+from app.routes.recobro import router as recobro_router  # ✅ Cruce radicado vs pagado por la EPS
 from app.routes.demo import demo_router, leads_router  # ✅ Demo/Leads
 from app.routes.browserbase import router as browserbase_router  # ✅ Browserbase Agents (navegador cloud)
 from app.routes.servicios_pago import router as servicios_pago_router  # ✅ Centro de Costos
 from app.routes.whatsapp_webhook import router as whatsapp_webhook_router  # ✅ Bot conversacional de WhatsApp
+from app.routes.whatsapp_admin import router as whatsapp_admin_router  # ✅ Diagnóstico del canal de WhatsApp
 from app.tasks.scheduler_tasks import iniciar_scheduler, detener_scheduler
 
 # ✅ Cola resiliente persistente (Drive)
@@ -220,6 +222,9 @@ app.include_router(leads_router)  # ✅ Gestión de leads (admin)
 # ⭐ Radicación — Skills, Sesiones, Manifests, Monitoreo
 app.include_router(radicacion_router)
 
+# ⭐ Recobro — cruce de lo radicado contra lo que la EPS pagó/rechazó
+app.include_router(recobro_router)
+
 # ⭐ OCR con Mistral - Extracción de texto de documentos
 app.include_router(ocr_router)
 
@@ -231,6 +236,7 @@ app.include_router(servicios_pago_router)
 
 # ⭐ Bot conversacional de WhatsApp — webhook entrante (Meta Graph API)
 app.include_router(whatsapp_webhook_router)
+app.include_router(whatsapp_admin_router)
 
 app.include_router(validador_router)
 

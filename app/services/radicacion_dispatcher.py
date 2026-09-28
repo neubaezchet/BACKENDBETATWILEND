@@ -44,6 +44,7 @@ RESULT_SCHEMA_RADICACION = {
         "numero_radicado": {"type": "string"},
         "fecha_radicacion": {"type": "string"},
         "estado_portal": {"type": "string", "description": "Estado textual que mostró el portal (ej. 'Radicación Exitosa', 'Rechazada', 'En validación')"},
+        "modo_usado": {"type": "string", "description": "Modo con el que se radicó realmente: 'manual' o 'numero' (el agente puede caer a manual si el número no existe en el portal)"},
         "observacion": {"type": "string", "description": "Observación completa del portal tras radicar (éxito o rechazo)"},
         "motivo_rechazo": {"type": "string", "description": "SOLO si el portal RECHAZÓ la radicación: motivo textual exacto (duplicada, datos inválidos, peso excedido...)"},
         "peso_maximo_pdf_mb": {"type": "number", "description": "SOLO si el portal mostró o exigió un límite de peso del PDF en MB (ej. rechazo por archivo muy pesado)"},
@@ -119,26 +120,43 @@ def encolar_caso(db: Session, caso) -> Optional[int]:
         if not empresa_nombre or not caso.drive_link:
             return None
 
-        # Prioridad de EPS: 1) la que indica la incapacidad (OCR/Gemini)  2) la de la BD del empleado.
-        # (El documento manda: es la EPS donde el médico emitió la incapacidad.)
+        # La EPS a la que se radica la manda CoreSoft (ADRES/BDUA), que es el
+        # registro oficial de afiliación. El texto impreso en el soporte queda
+        # como último recurso: la IPS suele copiar una EPS vieja, y radicar en la
+        # EPS equivocada es un rechazo garantizado.
+        # Ojo: el plano vive en metadata_form["plano_incapacidad"]["plano"]; leer
+        # metadata_form["plano"] dejaba eps_ocr siempre vacío.
+        from app.calificador_service import _extraer_plano
+        from app.services.eps_verificacion import resolver_eps_para_radicacion
+
         meta_pre = caso.metadata_form or {}
-        eps_ocr = ((meta_pre.get("plano") or {}).get("eps") or "").strip()
-        eps_bd = (caso.eps or "").strip()
+        eps_ocr = (_extraer_plano(meta_pre).get("eps") or "").strip()
+        eps_oficial, fuente_oficial = resolver_eps_para_radicacion(
+            db, getattr(caso, "empleado", None), eps_ocr
+        )
 
         bot = None
         eps_usada, fuente_eps = None, None
-        if eps_ocr:
-            bot = _mapear_eps_a_bot(db, empresa_nombre, eps_ocr)
+        # Se intentan en orden y se descartan las repetidas: si CoreSoft y el
+        # documento dicen lo mismo no se consulta el mapeo dos veces.
+        candidatas = []
+        for eps, fuente in ((eps_oficial, fuente_oficial),
+                            ((caso.eps or "").strip(), "base_datos"),
+                            (eps_ocr, "documento")):
+            if eps and not any(eps.lower() == c[0].lower() for c in candidatas):
+                candidatas.append((eps, fuente))
+
+        for eps, fuente in candidatas:
+            bot = _mapear_eps_a_bot(db, empresa_nombre, eps)
             if bot:
-                eps_usada, fuente_eps = eps_ocr, "ocr"
-        if not bot and eps_bd:
-            bot = _mapear_eps_a_bot(db, empresa_nombre, eps_bd)
-            if bot:
-                eps_usada, fuente_eps = eps_bd, "base_datos"
+                eps_usada, fuente_eps = eps, fuente
+                break
+
         if not bot:
+            intentadas = ", ".join(f"{f}:'{e}'" for e, f in candidatas) or "ninguna"
             logger.info(
-                f"[Encolar] Caso {caso.serial}: sin bot para EPS "
-                f"(OCR: '{eps_ocr or '—'}' / BD: '{eps_bd or '—'}') en '{empresa_nombre}' — flujo manual"
+                f"[Encolar] Caso {caso.serial}: sin bot para EPS ({intentadas}) "
+                f"en '{empresa_nombre}' — flujo manual"
             )
             return None
         logger.info(f"[Encolar] Caso {caso.serial}: EPS '{eps_usada}' (fuente: {fuente_eps}) → bot '{bot.bot_nombre}'")
@@ -152,17 +170,29 @@ def encolar_caso(db: Session, caso) -> Optional[int]:
             return existente.id
 
         meta = caso.metadata_form or {}
-        plano = meta.get("plano") or {}
+        # Gemini guarda el plano en meta["plano_incapacidad"]["plano"], no en
+        # meta["plano"]: leerlo mal dejaba este dict siempre vacío y todos los
+        # respaldos de abajo (diagnóstico, CIE-10, días, nro. de incapacidad)
+        # inertes. Se reusa el extractor del calificador para no repetir la forma.
+        plano = _extraer_plano(meta)
         datos_ocr = {
             "cedula": caso.cedula,
-            "tipo_doc_trabajador": plano.get("tipo_doc") or "CC",
-            "fecha_inicio": (meta.get("fecha_inicio_incapacidad") or "")[:10],
+            # Los nombres de la izquierda de cada `or` son los que devuelve
+            # Gemini (ver PROMPT_TEMPLATE en gemini_plano_service); los otros
+            # quedan por compatibilidad con planos guardados antes.
+            "tipo_doc_trabajador": plano.get("tipo_documento") or plano.get("tipo_doc") or "CC",
+            "fecha_inicio": (meta.get("fecha_inicio_incapacidad") or plano.get("fecha_inicio") or "")[:10],
             "dias": meta.get("dias_incapacidad") or plano.get("dias_incapacidad") or plano.get("dias") or "",
             "motivo": (caso.tipo.value if hasattr(caso.tipo, "value") else str(caso.tipo or "")),
             "diagnostico": caso.diagnostico or plano.get("diagnostico") or "",
-            "cie10": caso.codigo_cie10 or plano.get("cie10") or "",
+            "cie10": caso.codigo_cie10 or plano.get("codigo_cie10") or plano.get("cie10") or "",
             "eps_detectada": eps_usada,
             "eps_fuente": fuente_eps,
+            # Si el certificado ya viene transcrito por la IPS trae su número:
+            # habilita el modo de radicación por búsqueda (ver _construir_task_y_variables).
+            "numero_incapacidad": (
+                caso.numero_incapacidad or plano.get("numero_incapacidad") or ""
+            ),
         }
 
         item = RadicacionCola(
@@ -275,8 +305,10 @@ def _url_descarga_drive(url: str) -> str:
 def _construir_task_y_variables(item: RadicacionCola, bot: EmpresaBotConfig) -> tuple:
     """
     Arma la instrucción corta del run y las variables (datos y credenciales).
-    El paso a paso vive en el system prompt del agente reutilizable (AGENTES_POR_BOT).
+    El paso a paso vive en el system prompt del agente reutilizable (app/agentes/).
     """
+    from app.agentes import motivo_para
+
     datos = {**(item.datos_ocr or {}), **(item.datos_manuales or {})}
 
     # Soportes: PDF de la incapacidad + soporte fijo del bot (ej. certificado bancario)
@@ -297,13 +329,24 @@ def _construir_task_y_variables(item: RadicacionCola, bot: EmpresaBotConfig) -> 
                 "description": f"Credencial '{key}' del portal — usar solo en el login oficial",
             }
 
+    # Algunos portales (Compensar) permiten radicar buscando el número de la
+    # incapacidad que la IPS ya transcribió: el portal precarga los datos y hay
+    # menos campos que digitar mal. Solo aplica si tenemos ese número; si no,
+    # o si el portal no lo encuentra, el agente cae al formulario manual.
+    numero_incapacidad = str(
+        datos.get("numero_incapacidad") or datos.get("num_incapacidad") or ""
+    ).strip()
+    modo_radicacion = "numero" if numero_incapacidad else "manual"
+
     # Datos del caso
     mapa_datos = {
         "cedula": datos.get("cedula") or datos.get("documento") or "",
         "tipo_doc_trabajador": datos.get("tipo_doc_trabajador") or datos.get("tipo_doc") or "CC",
-        "motivo": datos.get("motivo") or item.tipo_incapacidad.replace("_", " ").title(),
+        "motivo": datos.get("motivo_portal") or motivo_para(item.eps_key, item.tipo_incapacidad),
         "fecha_inicio": datos.get("fecha_inicio") or "",
         "dias": str(datos.get("dias") or ""),
+        "numero_incapacidad": numero_incapacidad,
+        "modo_radicacion": modo_radicacion,
         "soportes": json.dumps(soportes, ensure_ascii=False),
     }
     for key, value in mapa_datos.items():
@@ -312,6 +355,7 @@ def _construir_task_y_variables(item: RadicacionCola, bot: EmpresaBotConfig) -> 
     task = (
         f"Radica la incapacidad del trabajador con documento %cedula% "
         f"(motivo: %motivo%, fecha inicio: %fecha_inicio%, días: %dias%) "
+        f"usando el modo de radicación %modo_radicacion% y "
         f"siguiendo exactamente los pasos de tus instrucciones. "
         f"Soportes a adjuntar (JSON): %soportes%"
     )
@@ -497,6 +541,7 @@ async def sincronizar_activas(db: Session) -> dict:
         observacion = resultado.get("observacion") or mensaje
         motivo_rechazo = resultado.get("motivo_rechazo") or ""
         peso_maximo = resultado.get("peso_maximo_pdf_mb")
+        modo_usado = resultado.get("modo_usado") or ""
 
         # 1. Actualizar sesión (monitoreo)
         sesion.estado = "exitosa" if exito else "fallida"
@@ -511,6 +556,8 @@ async def sincronizar_activas(db: Session) -> dict:
         if item:
             obs_completa = " · ".join(x for x in [estado_portal, observacion] if x)
             item.observacion = obs_completa or mensaje
+            if modo_usado:
+                item.datos_manuales = {**(item.datos_manuales or {}), "modo_usado": modo_usado}
             if exito:
                 item.estado = "exitosa"
                 item.radicado = radicado

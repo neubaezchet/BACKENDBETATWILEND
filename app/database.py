@@ -132,6 +132,11 @@ class Employee(Base):
     # eps_anterior solo se llena cuando la verificación detecta un cambio real.
     eps_anterior = Column(String(100), nullable=True)
     eps_actualizado_en = Column(DateTime, nullable=True)
+    # Se sella en CADA verificación exitosa, cambie o no la EPS: sin esto no hay
+    # manera de saber si el dato está fresco (eps_actualizado_en solo se llena
+    # cuando hubo cambio, así que un empleado nunca verificado y uno verificado
+    # ayer sin novedad se veían idénticos).
+    eps_verificado_en = Column(DateTime, nullable=True)
     # Datos informativos de BDUA, se refrescan en cada verificación (cambie o no la EPS)
     eps_regimen = Column(String(50), nullable=True)
     eps_estado = Column(String(50), nullable=True)
@@ -218,6 +223,15 @@ class Case(Base):
     traslapo_con_serial = Column(String(50), nullable=True)
     kactus_sync_at = Column(DateTime, nullable=True)  # Cuándo se sincronizó este caso con Kactus
     
+    # ✅ PAGO RECONOCIDO POR LA EPS (viene del recobro — ver app/services/recobro_service.py)
+    # Si la EPS ya pagó la incapacidad, deja de tener sentido seguir pidiéndole
+    # soportes al colaborador: el dinero ya entró. Esta marca cierra el ciclo de
+    # recordatorios aunque al caso le faltara un soporte mínimo.
+    pago_eps_reconocido = Column(Boolean, default=False, index=True)
+    pago_eps_en = Column(DateTime, nullable=True)
+    pago_eps_valor = Column(Float, nullable=True)
+    pago_eps_radicado = Column(String(100), nullable=True)
+
     # ✅ COLUMNAS PROCESADO - Tracking para Excel exports
     procesado = Column(Boolean, default=False)  # True = caso ya procesado/eliminado en flujo manual
     fecha_procesado = Column(DateTime, nullable=True)  # Cuándo se marcó como procesado
@@ -1051,6 +1065,118 @@ class RadicacionCola(Base):
     )
 
 
+class RecobroFila(Base):
+    """
+    Libro mayor del recobro: una fila por incapacidad tal como la reporta el
+    portal de la EPS. Es la contraparte de radicacion_cola (lo que NOSOTROS
+    radicamos) contra lo que la EPS RECONOCE y PAGA.
+
+    Por qué existe una tabla y no se consulta el portal cada vez: bajar el
+    reporte cuesta un run de navegador y minutos de espera. Bajándolo una vez
+    por rango y acumulándolo aquí, el histórico de una persona (o de la empresa
+    entera, o de tres años atrás) se responde con un SELECT, gratis e
+    instantáneo. El bot escribe una vez; la base responde infinitas veces.
+
+    Idempotencia: `clave_natural` identifica la fila en el portal. Un reporte
+    re-descargado (rangos que se solapan, un reintento) actualiza la fila en vez
+    de duplicarla, así que volver a bajar un mes ya bajado nunca ensucia datos.
+
+    `origen` distingue los dos reportes de Compensar, que no traen las mismas
+    columnas:
+      radicadas → listado de incapacidades radicadas y su estado
+      pagadas   → "Incapacidades pagadas": lo que la EPS efectivamente giró
+    """
+    __tablename__ = 'recobro_filas'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    empresa = Column(String(200), nullable=False, index=True)
+    eps_key = Column(String(100), nullable=False, index=True)
+    origen  = Column(String(30), nullable=False, default='radicadas')  # radicadas | pagadas
+
+    # Identidad de la fila dentro del portal (radicado, o nro. incapacidad + cédula
+    # si el reporte no trae radicado). Ver recobro_service._clave_natural.
+    clave_natural = Column(String(200), nullable=False, index=True)
+
+    # Datos de la incapacidad según el portal
+    radicado            = Column(String(200), nullable=True, index=True)
+    numero_incapacidad  = Column(String(100), nullable=True, index=True)
+    cedula              = Column(String(50),  nullable=True, index=True)
+    nombre_trabajador   = Column(String(300), nullable=True)
+    fecha_inicio        = Column(Date, nullable=True)
+    fecha_fin           = Column(Date, nullable=True)
+    dias                = Column(Integer, nullable=True)
+    diagnostico         = Column(String(300), nullable=True)
+    motivo              = Column(String(200), nullable=True)
+
+    # Resultado económico
+    estado_portal  = Column(String(200), nullable=True, index=True)  # texto crudo: "Pagada", "Rechazada"…
+    motivo_rechazo = Column(Text, nullable=True)
+    valor_reconocido = Column(Float, nullable=True)
+    valor_pagado     = Column(Float, nullable=True)
+    fecha_pago       = Column(Date, nullable=True)
+
+    # Trazabilidad: fila cruda completa del reporte. Las EPS agregan y quitan
+    # columnas sin avisar; guardarla entera evita tener que volver a bajar el
+    # reporte cuando mañana necesitemos un dato que hoy no mapeamos.
+    datos_crudos = Column(JSONB, default=dict)
+
+    # Enlace con nuestro lado (lo llena el cruce; puede quedar vacío si la EPS
+    # reporta una incapacidad que nosotros no radicamos)
+    case_id = Column(Integer, ForeignKey('cases.id', ondelete='SET NULL'), nullable=True)
+    cola_id = Column(Integer, nullable=True, index=True)
+
+    # Rango del reporte que trajo esta fila (para saber qué se ha cubierto)
+    periodo_desde = Column(Date, nullable=True)
+    periodo_hasta = Column(Date, nullable=True)
+
+    creado_en      = Column(DateTime, default=get_utc_now, index=True)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+    __table_args__ = (
+        # Idempotencia real a nivel de BD: dos runs simultáneos del mismo reporte
+        # no pueden crear la fila dos veces.
+        UniqueConstraint('empresa', 'eps_key', 'origen', 'clave_natural',
+                         name='uq_recobro_fila_natural'),
+        Index('idx_recobro_empresa_eps', 'empresa', 'eps_key', 'origen'),
+        Index('idx_recobro_cedula_fecha', 'cedula', 'fecha_inicio'),
+    )
+
+
+class RecobroSync(Base):
+    """
+    Hasta qué fecha está descargado el reporte de cada empresa/EPS/origen.
+
+    Es lo que permite bajar solo lo nuevo: el siguiente run pide desde
+    `cubierto_hasta` menos unos días de solape (las EPS actualizan el estado de
+    una incapacidad semanas después de radicarla) en vez de mes por mes desde el
+    principio. Como la ingesta es idempotente, el solape no duplica nada.
+    """
+    __tablename__ = 'recobro_sync'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    empresa = Column(String(200), nullable=False, index=True)
+    eps_key = Column(String(100), nullable=False, index=True)
+    origen  = Column(String(30), nullable=False, default='radicadas')
+
+    cubierto_desde = Column(Date, nullable=True)   # fecha más antigua ya descargada
+    cubierto_hasta = Column(Date, nullable=True)   # fecha más reciente ya descargada
+
+    ultimo_run_id  = Column(String(100), nullable=True)
+    ultimo_estado  = Column(String(50), default='pendiente')  # pendiente|en_curso|ok|error
+    ultimo_error   = Column(Text, nullable=True)
+    filas_totales  = Column(Integer, default=0)
+    ultimo_sync_en = Column(DateTime, nullable=True)
+
+    creado_en      = Column(DateTime, default=get_utc_now)
+    actualizado_en = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
+
+    __table_args__ = (
+        UniqueConstraint('empresa', 'eps_key', 'origen', name='uq_recobro_sync'),
+    )
+
+
 class WhatsAppConversacion(Base):
     """
     Estado del bot conversacional de WhatsApp, una fila por número de teléfono.
@@ -1199,6 +1325,9 @@ def init_db():
 
         # ✅ Migrar tabla cola de radicación (seguro de re-ejecutar)
         migrar_cola_radicacion()
+
+        # ✅ Migrar tablas de recobro (cruce radicado vs pagado) (seguro de re-ejecutar)
+        migrar_recobro()
 
         # ✅ Migrar columnas de verificación mensual de EPS (CoreSoft) (seguro de re-ejecutar)
         migrar_columnas_eps_tracking()
@@ -1688,21 +1817,28 @@ def migrar_columnas_entrega():
 
 def migrar_columnas_eps_tracking():
     """
-    Agrega a employees las columnas de verificación mensual de EPS (CoreSoft/ADRES-BDUA).
+    Agrega a employees las columnas de verificación mensual de EPS (CoreSoft/ADRES-BDUA)
+    y a cases las del pago reconocido por la EPS (recobro → fin de recordatorios).
     Ver app/coresoft_client.py y app/tasks/scheduler_tasks.py (tarea_actualizar_eps_mensual).
     Seguro de re-ejecutar (IF NOT EXISTS en PostgreSQL).
     """
     try:
         db = SessionLocal()
-        print("🔄 Migrando columnas de verificación de EPS (employees)...")
+        print("🔄 Migrando columnas de verificación de EPS y pago EPS...")
 
         columnas = [
             ("employees", "eps_anterior",         "VARCHAR(100)"),
             ("employees", "eps_actualizado_en",   "TIMESTAMP"),
+            ("employees", "eps_verificado_en",    "TIMESTAMP"),
             ("employees", "eps_regimen",          "VARCHAR(50)"),
             ("employees", "eps_estado",           "VARCHAR(50)"),
             ("employees", "eps_tipo_afiliado",    "VARCHAR(50)"),
             ("employees", "eps_fecha_afiliacion", "DATE"),
+            # Pago reconocido por la EPS → cierra el ciclo de recordatorios
+            ("cases",     "pago_eps_reconocido",  "BOOLEAN DEFAULT FALSE"),
+            ("cases",     "pago_eps_en",          "TIMESTAMP"),
+            ("cases",     "pago_eps_valor",       "DOUBLE PRECISION"),
+            ("cases",     "pago_eps_radicado",    "VARCHAR(100)"),
         ]
         for tabla, col, tipo in columnas:
             try:
@@ -1767,6 +1903,59 @@ def migrar_cola_radicacion():
         return True
     except Exception as e:
         print(f"❌ Error en migración cola radicación: {e}")
+        return False
+
+
+def migrar_recobro():
+    """
+    Crea/asegura las tablas del recobro (recobro_filas, recobro_sync).
+    Las tablas las crea create_all; aquí se aseguran los índices y la
+    restricción de unicidad que dan la idempotencia de la ingesta.
+    Seguro de re-ejecutar (IF NOT EXISTS).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando tablas de recobro...")
+
+        # create_all ya corrió en init_db; si la tabla aún no existe (BD vieja
+        # que no reinició), la creamos solo a ella y salimos sin tocar índices.
+        Base.metadata.create_all(
+            bind=engine, checkfirst=True,
+            tables=[RecobroFila.__table__, RecobroSync.__table__],
+        )
+
+        if not database_url.startswith("sqlite"):
+            indices = [
+                ("uq_recobro_fila_natural",
+                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_recobro_fila_natural "
+                 "ON recobro_filas(empresa, eps_key, origen, clave_natural)"),
+                ("idx_recobro_empresa_eps",
+                 "CREATE INDEX IF NOT EXISTS idx_recobro_empresa_eps "
+                 "ON recobro_filas(empresa, eps_key, origen)"),
+                ("idx_recobro_cedula_fecha",
+                 "CREATE INDEX IF NOT EXISTS idx_recobro_cedula_fecha "
+                 "ON recobro_filas(cedula, fecha_inicio)"),
+                ("uq_recobro_sync",
+                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_recobro_sync "
+                 "ON recobro_sync(empresa, eps_key, origen)"),
+            ]
+            for nombre, sql in indices:
+                try:
+                    db.execute(text(sql))
+                    print(f"   ✅ Índice '{nombre}' asegurado")
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "already exists" in msg or "duplicate" in msg:
+                        print(f"   ℹ️  Índice '{nombre}' ya existe")
+                    else:
+                        print(f"   ⚠️  {nombre}: {e}")
+
+        db.commit()
+        print("✅ Migración de recobro completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración de recobro: {e}")
         return False
 
 

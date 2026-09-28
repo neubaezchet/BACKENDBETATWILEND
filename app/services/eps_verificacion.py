@@ -23,6 +23,105 @@ from app.coresoft_client import consultar_eps, consultar_creditos, CORESOFT_CONS
 
 logger = logging.getLogger(__name__)
 
+# Cuántos días vale una verificación antes de considerarla vieja. El cron corre
+# una vez al mes, así que 35 días cubre el ciclo completo sin volver a gastar
+# créditos por un dato que acabamos de confirmar.
+DIAS_FRESCURA_EPS = 35
+
+
+def _aplicar_resultado(empleado, resultado: dict) -> bool:
+    """
+    Escribe en el empleado lo que devolvió CoreSoft. Devuelve True si la EPS
+    cambió. Única función que toca estas columnas: la usan el barrido mensual y
+    la consulta en vivo previa a radicar, para que no se separen con el tiempo.
+    """
+    eps_nueva = (resultado.get("eps") or "").strip()
+    eps_actual = (empleado.eps or "").strip()
+    cambio = bool(eps_nueva) and eps_nueva != eps_actual
+
+    if cambio:
+        empleado.eps_anterior = empleado.eps
+        empleado.eps = eps_nueva
+        empleado.eps_actualizado_en = datetime.utcnow()
+        logger.info(
+            f"   🔄 {empleado.cedula} ({empleado.nombre}): "
+            f"'{empleado.eps_anterior}' → '{eps_nueva}'"
+        )
+
+    # Sello de frescura: se pone siempre que CoreSoft respondió, cambie o no.
+    empleado.eps_verificado_en = datetime.utcnow()
+
+    # Datos informativos: se refrescan siempre, cambie o no la EPS
+    empleado.eps_regimen = (resultado.get("regimen") or "").strip() or None
+    empleado.eps_estado = (resultado.get("estado") or "").strip() or None
+    empleado.eps_tipo_afiliado = (resultado.get("tipo_afiliado") or "").strip() or None
+    fecha_str = resultado.get("fecha_afiliacion")
+    if fecha_str:
+        try:
+            empleado.eps_fecha_afiliacion = datetime.strptime(fecha_str, "%d/%m/%Y").date()
+        except Exception:
+            pass
+
+    return cambio
+
+
+def eps_esta_fresca(empleado) -> bool:
+    """True si CoreSoft confirmó la EPS de este empleado hace poco."""
+    sello = getattr(empleado, "eps_verificado_en", None)
+    if not sello:
+        return False
+    return (datetime.utcnow() - sello).days <= DIAS_FRESCURA_EPS
+
+
+def resolver_eps_para_radicacion(db, empleado, eps_documento: str = "") -> tuple:
+    """
+    Resuelve a qué EPS hay que radicar. Devuelve (eps, fuente).
+
+    El campo EPS lo manda CoreSoft (ADRES/BDUA), que es el registro oficial de
+    afiliación — no el texto impreso en el soporte, que puede venir de una IPS
+    que copió una EPS vieja, ni la EPS de nuestra BD, que envejece.
+
+    Orden:
+      1. `coresoft`        — verificación fresca en BD (≤ DIAS_FRESCURA_EPS días).
+      2. `coresoft_vivo`   — consulta en vivo (1 sola, 2 créditos) si está vieja
+                             o nunca se hizo; se persiste para no repetirla.
+      3. `base_datos`      — si CoreSoft no responde, lo que ya había.
+      4. `documento`       — último recurso: lo que dice el soporte.
+
+    Fail-safe: nunca lanza excepción. Si CoreSoft está caído la radicación
+    sigue con el dato viejo en vez de detenerse.
+    """
+    eps_documento = (eps_documento or "").strip()
+
+    if empleado is None:
+        return (eps_documento, "documento") if eps_documento else ("", "sin_dato")
+
+    if eps_esta_fresca(empleado) and (empleado.eps or "").strip():
+        return empleado.eps.strip(), "coresoft"
+
+    try:
+        resultado = consultar_eps(empleado.cedula)
+        if resultado and resultado.get("afiliado") and resultado.get("eps"):
+            _aplicar_resultado(empleado, resultado)
+            db.commit()
+            return (empleado.eps or "").strip(), "coresoft_vivo"
+        if resultado is not None:
+            # Respondió pero la persona no aparece afiliada: dato válido y
+            # accionable (probablemente retirado o en otro régimen).
+            empleado.eps_verificado_en = datetime.utcnow()
+            db.commit()
+            logger.info(f"ℹ️ CoreSoft: {empleado.cedula} sin afiliación activa en BDUA")
+    except Exception as e:
+        logger.warning(f"⚠️ No se pudo resolver EPS con CoreSoft para {empleado.cedula}: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    if (empleado.eps or "").strip():
+        return empleado.eps.strip(), "base_datos"
+    return (eps_documento, "documento") if eps_documento else ("", "sin_dato")
+
 
 def verificar_eps_empleados(company_id: Optional[int] = None) -> dict:
     """
@@ -78,30 +177,10 @@ def verificar_eps_empleados(company_id: Optional[int] = None) -> dict:
                 if resultado is None:
                     resumen["fallidos"] += 1
                 elif resultado.get("afiliado") and resultado.get("eps"):
-                    eps_nueva = (resultado["eps"] or "").strip()
-                    eps_actual = (empleado.eps or "").strip()
-                    if eps_nueva and eps_nueva != eps_actual:
-                        empleado.eps_anterior = empleado.eps
-                        empleado.eps = eps_nueva
-                        empleado.eps_actualizado_en = datetime.utcnow()
+                    if _aplicar_resultado(empleado, resultado):
                         resumen["actualizados"] += 1
-                        logger.info(
-                            f"   🔄 {empleado.cedula} ({empleado.nombre}): "
-                            f"'{empleado.eps_anterior}' → '{eps_nueva}'"
-                        )
                     else:
                         resumen["sin_cambio"] += 1
-
-                    # Datos informativos: se refrescan siempre, cambie o no la EPS
-                    empleado.eps_regimen = (resultado.get("regimen") or "").strip() or None
-                    empleado.eps_estado = (resultado.get("estado") or "").strip() or None
-                    empleado.eps_tipo_afiliado = (resultado.get("tipo_afiliado") or "").strip() or None
-                    fecha_str = resultado.get("fecha_afiliacion")
-                    if fecha_str:
-                        try:
-                            empleado.eps_fecha_afiliacion = datetime.strptime(fecha_str, "%d/%m/%Y").date()
-                        except Exception:
-                            pass
                 else:
                     resumen["sin_cambio"] += 1
             except Exception as e:

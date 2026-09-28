@@ -135,6 +135,14 @@ def verificar_casos_pendientes():
                     print(f"   ⏭️ {caso.serial}: Empleado {empleado.nombre} ya no está activo, omitiendo recordatorios")
                     continue
 
+                # ✅ LA EPS YA PAGÓ → no se le pide nada más al colaborador.
+                # El recobro marca esto (app/services/recobro_service.cerrar_casos_por_pago)
+                # y normalmente ya movió el caso a COMPLETA; esta guarda cubre el
+                # caso de que alguien lo vuelva a marcar incompleto después.
+                if getattr(caso, "pago_eps_reconocido", False):
+                    print(f"   ⏭️ {caso.serial}: la EPS ya reconoció el pago, sin recordatorios")
+                    continue
+
                 dias_sin_respuesta = (ahora - caso.updated_at).days
                 count = caso.recordatorios_count or 0
 
