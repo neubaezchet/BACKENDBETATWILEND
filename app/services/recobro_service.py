@@ -47,6 +47,7 @@ from app.database import (
 )
 from app.services import browserbase_service as bb
 from app.services.browserbase_service import BrowserbaseError
+from app.services.motivos import clasificar_negacion
 
 logger = logging.getLogger(__name__)
 
@@ -921,12 +922,23 @@ def cruce(db: Session, empresa: str, eps_key: Optional[str] = None,
     """
     Lo radicado contra lo pagado. Clasifica cada incapacidad en:
 
-      pagada         → la EPS la pagó (aparece en el reporte de pagadas)
-      rechazada      → la EPS la rechazó, con el motivo textual del portal
-      en_tramite     → radicada y reconocida, todavía sin pago
-      sin_respuesta  → la radicamos y la EPS no la reporta (la que hay que reclamar)
-      no_radicada    → la EPS la tiene pero no salió de nuestro sistema
-                       (alguien radicó por fuera, o se nos perdió el registro)
+      pagada          → la EPS pagó todo lo que había reconocido
+      pagada_parcial  → pagó menos de lo reconocido: queda un saldo que DEBE
+      en_tramite      → radicada y reconocida, todavía sin pago
+      negada_apelable → negada por un motivo que se puede controvertir
+      negada_en_firme → negada por un motivo que no se va a revertir: se castiga
+      sin_respuesta   → la radicamos y la EPS no la reporta (la que hay que reclamar)
+      no_radicada     → la EPS la tiene pero no salió de nuestro sistema
+                        (alguien radicó por fuera, o se nos perdió el registro)
+
+    Una negación en texto libre no se puede sumar ni decidir, así que el motivo
+    del portal pasa por `motivos.clasificar_negacion()` y queda con código
+    (`motivo_codigo`). Eso es lo que permite decir "la EPS le negó $X por
+    períodos descubiertos" en vez de "hay 40 rechazos", y separar lo que vale la
+    pena apelar de lo que solo hay que castigar para dejar de perseguirlo.
+
+    `totales["rechazada"]` se conserva como la suma de las dos negadas: había
+    consumidores contando por esa llave.
     """
     q_cola = db.query(RadicacionCola).filter(
         RadicacionCola.empresa == empresa,
@@ -949,21 +961,50 @@ def cruce(db: Session, empresa: str, eps_key: Optional[str] = None,
     radicadas = {_clave_cruce(f): f for f in filas if f.origen == "radicadas"}
 
     resultado, vistas = [], set()
-    totales = {"pagada": 0, "rechazada": 0, "en_tramite": 0, "sin_respuesta": 0, "no_radicada": 0}
-    valor_pagado = valor_pendiente = 0.0
+    totales = {"pagada": 0, "pagada_parcial": 0, "en_tramite": 0, "negada_apelable": 0,
+               "negada_en_firme": 0, "sin_respuesta": 0, "no_radicada": 0}
+    valor_pagado = valor_pendiente = valor_debido = 0.0
+    valor_apelable = valor_castigado = 0.0
+    por_motivo: Dict[str, Dict[str, Any]] = {}
 
     for item in q_cola.order_by(RadicacionCola.creado_en.desc()).limit(limite).offset(offset).all():
         clave = f"rad:{(item.radicado or '').strip()}" if item.radicado else f"cola:{item.id}"
         vistas.add(clave)
         fila_pago = pagadas.get(clave)
         fila_rad = radicadas.get(clave)
+        motivo_codigo = accion = saldo = None
 
         if fila_pago:
-            situacion, motivo = "pagada", None
-            valor_pagado += fila_pago.valor_pagado or 0.0
+            pagado = fila_pago.valor_pagado or 0.0
+            valor_pagado += pagado
+            # Lo reconocido manda sobre lo girado: si la EPS reconoció más de lo
+            # que pagó, esa diferencia es cartera viva y hay que reclamarla. Sin
+            # esto una incapacidad pagada a medias se veía igual que una pagada
+            # completa y el saldo se perdía en silencio.
+            reconocido = (fila_rad.valor_reconocido if fila_rad else None) or 0.0
+            if reconocido - pagado > _TOLERANCIA_PESOS:
+                situacion, motivo = "pagada_parcial", "La EPS reconoció más de lo que giró"
+                saldo = round(reconocido - pagado, 2)
+                valor_debido += saldo
+            else:
+                situacion, motivo = "pagada", None
         elif fila_rad and _es_rechazo(fila_rad.estado_portal):
-            situacion, motivo = "rechazada", (fila_rad.motivo_rechazo or fila_rad.estado_portal)
-            valor_pendiente += fila_rad.valor_reconocido or 0.0
+            motivo = fila_rad.motivo_rechazo or fila_rad.estado_portal
+            neg = clasificar_negacion(motivo)
+            motivo_codigo, accion = neg.get("codigo"), neg.get("accion")
+            en_firme = neg.get("apelable") is False
+            situacion = "negada_en_firme" if en_firme else "negada_apelable"
+            pendiente = fila_rad.valor_reconocido or 0.0
+            if en_firme:
+                valor_castigado += pendiente
+            else:
+                valor_apelable += pendiente
+            registro = por_motivo.setdefault(
+                motivo_codigo, {"codigo": motivo_codigo, "nombre": neg.get("nombre"),
+                                "apelable": neg.get("apelable"), "accion": neg.get("accion"),
+                                "casos": 0, "valor": 0.0})
+            registro["casos"] += 1
+            registro["valor"] += pendiente
         elif fila_rad:
             situacion, motivo = "en_tramite", fila_rad.estado_portal
             valor_pendiente += fila_rad.valor_reconocido or 0.0
@@ -977,9 +1018,11 @@ def cruce(db: Session, empresa: str, eps_key: Optional[str] = None,
             "tipo_incapacidad": item.tipo_incapacidad,
             "radicado_en": item.procesado_en.isoformat() if item.procesado_en else None,
             "situacion": situacion, "motivo": motivo,
+            "motivo_codigo": motivo_codigo, "accion": accion,
             "estado_portal": (fila_pago or fila_rad).estado_portal if (fila_pago or fila_rad) else None,
             "valor_pagado": fila_pago.valor_pagado if fila_pago else None,
             "valor_reconocido": (fila_rad.valor_reconocido if fila_rad else None),
+            "saldo_debido": saldo,
             "fecha_pago": fila_pago.fecha_pago.isoformat() if fila_pago and fila_pago.fecha_pago else None,
         })
 
@@ -997,10 +1040,15 @@ def cruce(db: Session, empresa: str, eps_key: Optional[str] = None,
             "radicado_en": fila.fecha_inicio.isoformat() if fila.fecha_inicio else None,
             "situacion": "no_radicada",
             "motivo": "La EPS la reporta pero no salió de este sistema",
+            # Mismas llaves que los ítems de arriba: la tabla del admin itera una
+            # sola lista y un ítem con menos campos la rompe.
+            "motivo_codigo": None, "accion": None, "saldo_debido": None,
             "estado_portal": fila.estado_portal,
             "valor_pagado": fila.valor_pagado, "valor_reconocido": fila.valor_reconocido,
             "fecha_pago": fila.fecha_pago.isoformat() if fila.fecha_pago else None,
         })
+
+    totales["rechazada"] = totales["negada_apelable"] + totales["negada_en_firme"]
 
     return {
         "empresa": empresa, "eps": eps_key,
@@ -1009,6 +1057,15 @@ def cruce(db: Session, empresa: str, eps_key: Optional[str] = None,
         "totales": totales,
         "valor_pagado": round(valor_pagado, 2),
         "valor_pendiente": round(valor_pendiente, 2),
+        # Las tres cifras que pide una empresa: cuánto le deben de lo ya
+        # reconocido, cuánto hay negado con pelea posible y cuánto hay que dar
+        # por perdido para dejar de gastar analistas persiguiéndolo.
+        "valor_debido": round(valor_debido, 2),
+        "valor_negado_apelable": round(valor_apelable, 2),
+        "valor_castigado": round(valor_castigado, 2),
+        "negaciones": sorted(
+            [{**m, "valor": round(m["valor"], 2)} for m in por_motivo.values()],
+            key=lambda m: m["valor"], reverse=True),
         "items": resultado,
         "cobertura": _cobertura(db, empresa, eps_key),
     }
@@ -1024,6 +1081,11 @@ def _clave_cruce(fila: RecobroFila) -> str:
 
 
 _PALABRAS_RECHAZO = ("rechaz", "devuel", "negad", "anulad", "no aprob", "glosa")
+
+# Los portales redondean distinto a como liquidamos nosotros. Una diferencia de
+# unos pesos no es una deuda: es ruido contable, y marcarla como saldo llenaría
+# el reporte de falsos positivos.
+_TOLERANCIA_PESOS = 100.0
 
 
 def _es_rechazo(estado_portal: Optional[str]) -> bool:

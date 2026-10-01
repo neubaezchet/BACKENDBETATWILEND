@@ -522,5 +522,10 @@ def procesar_mensaje_entrante(db: Session, telefono: str, message_id: str, mensa
         _reset(sesion)
 
     sesion.ultimo_message_id = message_id
+    # Abre la ventana de 24h de Meta: mientras esté abierta, los avisos salen
+    # como texto libre (gratis); después hay que mandar plantilla facturada.
+    # Se marca fuera del try/except a propósito: el mensaje llegó igual, aunque
+    # el handler haya fallado. Ver app/services/whatsapp_envio.py.
+    sesion.ultimo_entrante_en = ahora
     db.add(sesion)
     db.commit()

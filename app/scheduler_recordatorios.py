@@ -109,9 +109,13 @@ def verificar_casos_pendientes():
         
         ahora = datetime.now()
 
-        # Todos los casos incompletos/ilegibles activos
+        # Todos los casos incompletos/ilegibles activos (excluye los marcados
+        # es_historico=True: registros manuales dejados solo para trazabilidad,
+        # que no deben entrar a recordatorios aunque queden en un estado
+        # pendiente — ver _crear_caso_manual en validador.py)
         casos_pendientes = db.query(Case).filter(
             Case.estado.in_([EstadoCaso.INCOMPLETA, EstadoCaso.ILEGIBLE, EstadoCaso.INCOMPLETA_ILEGIBLE]),
+            Case.es_historico == False,
         ).all()
 
         print(f"📊 Casos en estado incompleta/ilegible: {len(casos_pendientes)}")

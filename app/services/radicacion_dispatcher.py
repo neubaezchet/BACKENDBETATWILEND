@@ -17,7 +17,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.database import (
-    SessionLocal, RadicacionCola, RadicacionSesion, RadicacionSkill, EmpresaBotConfig,
+    SessionLocal, Case, RadicacionCola, RadicacionSesion, RadicacionSkill, EmpresaBotConfig,
     ResultadoValidacion, DecisionValidacion,
 )
 from app.services import browserbase_service as bb
@@ -108,6 +108,92 @@ def _mapear_eps_a_bot(db: Session, empresa: str, eps_texto: str) -> Optional[Emp
     return None
 
 
+def _aplicar_traslape_si_corresponde(db: Session, caso: Case) -> bool:
+    """
+    Antes de radicar, revisa si esta incapacidad se traslapa en fechas con una
+    de la MISMA persona que ya quedó radicada (RadicacionCola.radicado no nulo,
+    por bot o manual). Si hay traslape, recorta el inicio para no pedirle a la
+    EPS días que ya cubrió otra radicación — igual que el ejemplo: si ya hay
+    radicada 01/02–05/02 y esta es 04/02–08/02, se radica desde 06/02.
+
+    Reusa exactamente las mismas columnas que ya llena la detección contra
+    Kactus (dias_traslapo / fecha_inicio_kactus / traslapo_con_serial en
+    sync_excel.py:_detectar_traslapos_globales) — la única diferencia es de
+    dónde sale la fecha "real": allá es el Excel de Kactus, aquí es otra
+    incapacidad ya radicada. Así el resto del sistema (reportes, cadena de
+    180 días) que ya lee esas columnas no necesita enterarse de nada nuevo.
+
+    Devuelve False si la incapacidad queda totalmente cubierta por una ya
+    radicada — en ese caso no debe encolarse, la persona ya está incapacitada
+    para esas fechas. True en cualquier otro caso (con o sin recorte).
+    """
+    if not caso.fecha_inicio or not caso.fecha_fin or caso.dias_traslapo:
+        return True  # sin fechas que comparar, o ya tiene un ajuste que no se pisa
+
+    ids_radicados = {
+        r.case_id for r in
+        db.query(RadicacionCola).filter(
+            RadicacionCola.case_id.isnot(None), RadicacionCola.radicado.isnot(None),
+        ).all()
+    }
+    if not ids_radicados:
+        return True
+
+    anteriores = (
+        db.query(Case)
+        .filter(
+            Case.cedula == caso.cedula,
+            Case.id.in_(ids_radicados),
+            Case.id != caso.id,
+            Case.fecha_fin.isnot(None),
+        )
+        .order_by(Case.fecha_fin.desc())
+        .all()
+    )
+    for anterior in anteriores:
+        if anterior.fecha_fin.date() < caso.fecha_inicio.date():
+            continue  # no se traslapa con esta
+
+        dias_overlap = (anterior.fecha_fin.date() - caso.fecha_inicio.date()).days + 1
+        nueva_fecha_inicio = caso.fecha_inicio + timedelta(days=dias_overlap)
+
+        if nueva_fecha_inicio.date() > caso.fecha_fin.date():
+            logger.warning(
+                f"[Traslape] Caso {caso.serial}: totalmente cubierto por {anterior.serial} "
+                f"(ya radicada {anterior.fecha_inicio.date() if anterior.fecha_inicio else '?'}–"
+                f"{anterior.fecha_fin.date()}) — no se radica"
+            )
+            try:
+                from app.validador import registrar_evento
+                registrar_evento(db, caso.id, "traslape_totalmente_cubierto",
+                                  metadata={"cubierto_por_serial": anterior.serial})
+            except Exception:
+                pass
+            return False
+
+        caso.dias_traslapo = dias_overlap
+        caso.traslapo_con_serial = anterior.serial
+        caso.fecha_inicio_kactus = nueva_fecha_inicio
+        logger.info(
+            f"[Traslape] Caso {caso.serial}: recortado {dias_overlap} día(s) por traslape "
+            f"con {anterior.serial} — radica desde {nueva_fecha_inicio.date()}"
+        )
+        try:
+            from app.validador import registrar_evento
+            registrar_evento(
+                db, caso.id, "traslape_recortado_al_radicar",
+                metadata={
+                    "dias_recortados": dias_overlap, "traslape_con_serial": anterior.serial,
+                    "fecha_inicio_original": caso.fecha_inicio.isoformat(),
+                    "fecha_inicio_ajustada": nueva_fecha_inicio.isoformat(),
+                },
+            )
+        except Exception:
+            db.commit()  # si registrar_evento falla, igual se guarda el recorte
+        break
+    return True
+
+
 def encolar_caso(db: Session, caso) -> Optional[int]:
     """
     Encola automáticamente la radicación de un caso recién creado desde repogemin.
@@ -169,20 +255,36 @@ def encolar_caso(db: Session, caso) -> Optional[int]:
         if existente:
             return existente.id
 
+        # Traslape con una incapacidad de la misma persona ya radicada: la EPS
+        # rechaza días que ya cubrió otra radicación. Si queda totalmente
+        # cubierta, no se radica nada.
+        if not _aplicar_traslape_si_corresponde(db, caso):
+            return None
+
         meta = caso.metadata_form or {}
         # Gemini guarda el plano en meta["plano_incapacidad"]["plano"], no en
         # meta["plano"]: leerlo mal dejaba este dict siempre vacío y todos los
         # respaldos de abajo (diagnóstico, CIE-10, días, nro. de incapacidad)
         # inertes. Se reusa el extractor del calificador para no repetir la forma.
         plano = _extraer_plano(meta)
+        # Si _aplicar_traslape_si_corresponde() recortó esta incapacidad (o ya
+        # venía recortada por Kactus), fecha_inicio_kactus/dias_traslapo tienen
+        # la fecha y los días reales a radicar — nunca los originales del OCR.
+        if caso.fecha_inicio_kactus:
+            fecha_inicio_radicar = caso.fecha_inicio_kactus.strftime("%Y-%m-%d")
+        else:
+            fecha_inicio_radicar = (meta.get("fecha_inicio_incapacidad") or plano.get("fecha_inicio") or "")[:10]
+        dias_radicar = meta.get("dias_incapacidad") or plano.get("dias_incapacidad") or plano.get("dias") or ""
+        if caso.dias_traslapo and caso.dias_incapacidad:
+            dias_radicar = max(caso.dias_incapacidad - caso.dias_traslapo, 0)
         datos_ocr = {
             "cedula": caso.cedula,
             # Los nombres de la izquierda de cada `or` son los que devuelve
             # Gemini (ver PROMPT_TEMPLATE en gemini_plano_service); los otros
             # quedan por compatibilidad con planos guardados antes.
             "tipo_doc_trabajador": plano.get("tipo_documento") or plano.get("tipo_doc") or "CC",
-            "fecha_inicio": (meta.get("fecha_inicio_incapacidad") or plano.get("fecha_inicio") or "")[:10],
-            "dias": meta.get("dias_incapacidad") or plano.get("dias_incapacidad") or plano.get("dias") or "",
+            "fecha_inicio": fecha_inicio_radicar,
+            "dias": dias_radicar,
             "motivo": (caso.tipo.value if hasattr(caso.tipo, "value") else str(caso.tipo or "")),
             "diagnostico": caso.diagnostico or plano.get("diagnostico") or "",
             "cie10": caso.codigo_cie10 or plano.get("codigo_cie10") or plano.get("cie10") or "",

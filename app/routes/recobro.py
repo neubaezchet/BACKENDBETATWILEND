@@ -53,8 +53,15 @@ async def obtener_cruce(
     db: Session = Depends(get_db),
 ):
     """
-    Cada incapacidad radicada con su situación real ante la EPS:
-    pagada / rechazada / en_tramite / sin_respuesta / no_radicada.
+    Cada incapacidad radicada con su situación real ante la EPS: pagada /
+    pagada_parcial / en_tramite / negada_apelable / negada_en_firme /
+    sin_respuesta / no_radicada.
+
+    Las negaciones vienen con `motivo_codigo` del catálogo (NEG-xx) y con la
+    acción sugerida, y `negaciones` las agrupa por motivo con su valor: eso es
+    lo que responde "la EPS pagó tanto, negó tanto y debe tanto". `valor_debido`
+    es el saldo de lo reconocido y no girado; `valor_castigado`, lo que no se va
+    a recuperar y no vale la pena seguir persiguiendo.
 
     `cobertura` dice hasta qué fecha están descargados los reportes: sin eso,
     un "sin_respuesta" podría ser solo un reporte que no se ha bajado.

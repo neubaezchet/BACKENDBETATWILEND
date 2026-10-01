@@ -58,13 +58,16 @@ def ejecutar_revision_alertas(db: Session, empresa: str = "all") -> dict:
                 continue
             
             for alerta in analisis["alertas_180"]:
-                # Verificar si ya se envió esta alerta recientemente
-                ya_enviada = _alerta_reciente(db, cedula, alerta["tipo"])
-                
-                if ya_enviada:
+                # La clave incluye la cadena: una persona puede tener dos o tres
+                # cadenas abiertas por patologías distintas y cada una llega a
+                # sus hitos por su cuenta. Deduplicar solo por tipo silenciaba la
+                # segunda cadena — justo la que nadie estaba mirando.
+                clave = _clave_alerta(alerta)
+
+                if _alerta_reciente(db, cedula, clave):
                     alertas_omitidas.append({
                         "cedula": cedula,
-                        "tipo": alerta["tipo"],
+                        "tipo": clave,
                         "motivo": f"Ya enviada en los últimos {PERIODO_NO_REPETIR} días"
                     })
                     continue
@@ -116,10 +119,23 @@ def ejecutar_revision_alertas(db: Session, empresa: str = "all") -> dict:
 # FUNCIONES AUXILIARES
 # ═══════════════════════════════════════════════════════════
 
+def _clave_alerta(alerta: dict) -> str:
+    """
+    Identidad de una alerta para no repetirla: el hito y la cadena a la que
+    pertenece. Cabe en `Alerta180Log.tipo_alerta` (String(50)).
+    """
+    tipo = alerta.get("tipo", "ALERTA")
+    cadena = alerta.get("cadena_id")
+    return f"{tipo}#c{cadena}"[:50] if cadena is not None else tipo[:50]
+
+
 def _alerta_reciente(db: Session, cedula: str, tipo_alerta: str) -> bool:
     """Verifica si ya se envió esta misma alerta recientemente"""
-    limite = datetime.now() - timedelta(days=PERIODO_NO_REPETIR)
-    
+    # get_utc_now, no datetime.now(): `created_at` se guarda en UTC y en Colombia
+    # la hora local va 5 h atrás, así que comparar contra la local movía la
+    # ventana de 7 días y podía reenviar una alerta antes de tiempo.
+    limite = get_utc_now() - timedelta(days=PERIODO_NO_REPETIR)
+
     existente = db.query(Alerta180Log).filter(
         Alerta180Log.cedula == cedula,
         Alerta180Log.tipo_alerta == tipo_alerta,
@@ -171,14 +187,14 @@ def _enviar_alerta_email(
 ) -> dict:
     """Envía el email de alerta vía servicio nativo y registra en el log"""
     
-    tipo = alerta.get("tipo", "ALERTA_TEMPRANA")
+    tipo = _clave_alerta(alerta)
     dias = alerta.get("dias_acumulados", 0)
     codigos = alerta.get("codigos_involucrados", [])
     codigos_str = ", ".join(codigos) if codigos else "N/A"
-    
+
     # Generar HTML del email
     html = _generar_html_alerta(nombre, cedula, alerta)
-    subject = _generar_subject(tipo, nombre, dias)
+    subject = _generar_subject(alerta, nombre)
     
     # ✅ FIX: Obtener CC empresa del directorio para incluir en alertas 180
     cc_empresa = None
@@ -258,16 +274,39 @@ def _enviar_alerta_email(
 # TEMPLATES HTML DE ALERTA
 # ═══════════════════════════════════════════════════════════
 
-def _generar_subject(tipo: str, nombre: str, dias: int) -> str:
-    """Genera el asunto del correo según el tipo de alerta"""
-    if tipo == "LIMITE_180_SUPERADO":
-        return f"⛔ URGENTE: {nombre} SUPERÓ 180 días de incapacidad ({dias}d) — Acción inmediata requerida"
-    elif tipo == "ALERTA_CRITICA":
-        return f"🔴 ALERTA CRÍTICA: {nombre} cerca del límite 180 días ({dias}d) — {180 - dias}d restantes"
-    elif tipo == "PRORROGA_CORTADA":
+def _generar_subject(alerta: dict, nombre: str) -> str:
+    """
+    El asunto dice el hito, el origen y quién paga. Antes todos los asuntos
+    hablaban de "180 días" aunque la alerta fuera del día 120 o del 540, y en
+    una cadena laboral eso mandaba a mirar al fondo de pensiones, que no tiene
+    nada que ver.
+    """
+    tipo = alerta.get("tipo", "ALERTA")
+    dias = alerta.get("dias_acumulados", 0)
+    etiqueta = alerta.get("etiqueta", "")
+    marca = f" [{etiqueta}]" if etiqueta else ""
+
+    # El diagnóstico va en el asunto: una persona con dos cadenas abiertas
+    # recibe dos alertas del día 150 el mismo día, y sin el diagnóstico son
+    # indistinguibles en la bandeja.
+    dx = (alerta.get("diagnostico_base") or "").strip()
+    dx_marca = f" — {dx[:40]}" if dx else ""
+
+    if tipo == "PRORROGA_CORTADA":
         return f"⚠️ PRÓRROGA CORTADA: {nombre} lleva 30+ días sin incapacidad — Verificar cadena de prórroga"
-    else:
-        return f"🟡 AVISO: {nombre} se acerca a 150 días de incapacidad ({dias}d) — Monitorear"
+    if tipo == "ORIGEN_AMBIGUO":
+        return (f"⚠️ ORIGEN SIN CONFIRMAR: {nombre} ({dias}d){dx_marca} "
+                f"— Definir si se radica a EPS/AFP o a ARL")
+
+    hito_dia = alerta.get("hito_dia")
+    responsable = alerta.get("responsable_actual", "")
+    if alerta.get("hito_alcanzado"):
+        icono = "⛔" if alerta.get("severidad") == "critica" else "🔴"
+        return (f"{icono} {nombre}{marca} alcanzó el día {hito_dia} ({dias}d acumulados)"
+                f"{dx_marca} — Paga {responsable}")
+    restantes = alerta.get("dias_restantes")
+    return (f"🟡 {nombre}{marca}: faltan {restantes}d para el día {hito_dia} "
+            f"({dias}d acumulados){dx_marca} — Monitorear")
 
 
 def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
@@ -302,14 +341,107 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
             for code in codigos
         )
     
-    barra_progreso = min(dias / 180 * 100, 100)
+    # La escala de la barra depende del origen: 540 días en enfermedad general
+    # (donde el pagador cambia en el 181 y otra vez en el 541) y 360 en origen
+    # laboral, donde paga la ARL y no hay traslado al fondo de pensiones.
+    escala = alerta.get("escala_dias") or 180
+    etiqueta = alerta.get("etiqueta") or "Incapacidad prolongada"
+    responsable = alerta.get("responsable_actual")
+    hito_dia = alerta.get("hito_dia")
+    barra_progreso = min(dias / escala * 100, 100)
     barra_color = c["bg"]
+
+    marca_hito = ""
+    if hito_dia:
+        marca_hito = (f'<div style="position:absolute;left:{min(hito_dia / escala * 100, 100)}%;'
+                      f'top:0;bottom:0;width:2px;background:#111827;"></div>')
+
+    # Qué cadena es: el diagnóstico base y el número de cadena. Sin esto, dos
+    # correos de la misma persona el mismo día no se pueden distinguir.
+    diagnostico = (alerta.get("diagnostico_base") or "").strip()
+    cadena_id = alerta.get("cadena_id")
+    dx_html = ""
+    if diagnostico or cadena_id:
+        detalle = diagnostico or "Sin diagnóstico en el soporte"
+        sufijo = f' <span style="color:#9CA3AF;font-size:11px;">(cadena #{cadena_id})</span>' if cadena_id else ""
+        dx_html = f"""
+        <tr>
+            <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Patología de esta cadena:</td>
+            <td style="padding:8px 12px;font-size:13px;">{detalle}{sufijo}</td>
+        </tr>"""
+
+    responsable_html = ""
+    if responsable:
+        responsable_html = f"""
+        <tr style="background:#F9FAFB;">
+            <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Responsable del pago hoy:</td>
+            <td style="padding:8px 12px;font-weight:bold;font-size:15px;color:{c['text']};">{responsable}</td>
+        </tr>
+        <tr>
+            <td colspan="2" style="padding:0 12px 8px;color:#6B7280;font-size:11px;">{alerta.get('nota_responsable') or ''}</td>
+        </tr>"""
+
+    casos_especiales = alerta.get("casos_especiales") or []
+    casos_html = ""
+    if casos_especiales:
+        items = "".join(f"<li>{c_}</li>" for c_ in casos_especiales)
+        casos_html = f"""
+        <div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:12px;margin-bottom:20px;">
+            <p style="margin:0 0 6px;font-size:12px;color:#92400E;font-weight:bold;">
+                Para que la EPS siga pagando hay que acreditar UNO de estos casos:
+            </p>
+            <ol style="margin:0;padding-left:18px;color:#92400E;font-size:12px;line-height:1.7;">{items}</ol>
+        </div>"""
     
+    # Las acciones dependen del hito: cada hito tiene una gestión distinta y ante
+    # una entidad distinta. Radicar ante quien no debe pagar es perder el tiempo.
+    acciones = {
+        "HIT-120": [
+            "<strong>Exigir a la EPS el concepto de rehabilitación</strong> — es su obligación emitirlo antes del día 120",
+            "Dejar la solicitud por escrito con número de radicado: es la prueba si la EPS incumple",
+        ],
+        "HIT-150": [
+            "<strong>Verificar que la EPS ya envió el concepto a la AFP</strong> (fecha límite: día 150)",
+            "Si no lo envió, <strong>la EPS sigue pagando después del día 180</strong> — guardar la evidencia del incumplimiento",
+        ],
+        "HIT-180": [
+            "<strong>Radicar ante la AFP</strong> el subsidio a partir del día 181",
+            "Si la EPS no envió el concepto de rehabilitación antes del día 150, <strong>seguir cobrando a la EPS</strong>, no a la AFP",
+            "Confirmar que la AFP recibió el concepto y abrió el trámite",
+        ],
+        "HIT-540": [
+            "<strong>Preparar el cierre del subsidio de la AFP</strong> (termina en el día 540)",
+            "Verificar el estado de la calificación de pérdida de capacidad laboral (PCL)",
+        ],
+        "HIT-541": [
+            "<strong>Acreditar ante la EPS uno de los casos especiales</strong> para que reanude el pago",
+            "Sin uno de esos casos acreditados, no hay pagador: el caso debe resolverse por calificación de PCL",
+        ],
+        "HIT-LAB-180": [
+            "<strong>Solicitar a la ARL la prórroga del subsidio</strong> (hasta 180 días más)",
+            "<strong>No radicar ante EPS ni AFP</strong>: en origen laboral paga la ARL desde el día 1",
+        ],
+        "HIT-LAB-360": [
+            "<strong>Iniciar la calificación de PCL</strong> ante la ARL / Junta de Calificación",
+            "Reunir la historia clínica completa y el concepto del médico tratante",
+        ],
+        "ORIGEN_AMBIGUO": [
+            "<strong>Confirmar el origen de la incapacidad</strong> (laboral o enfermedad general): de eso depende quién paga y ante quién se radica",
+            "Revisar el dictamen de origen de la ARL o de la Junta si ya existe",
+        ],
+        "PRORROGA_CORTADA": [
+            f"<strong>Solicitar al empleado los certificados de incapacidad faltantes</strong> que puedan llenar el hueco de {dias_hueco} días",
+            "<strong>Investigar por qué se interrumpió la cadena de prórroga</strong> — ¿El empleado fue dado de alta? ¿Cambió de EPS? ¿Certificado sin radicar?",
+        ],
+    }.get(tipo, [])
+
+    acciones_html = "".join(f"<li>{a}</li>" for a in acciones)
+
     restantes_html = ""
     if dias_restantes is not None:
         restantes_html = f"""
         <tr>
-            <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Días restantes para 180:</td>
+            <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Días restantes para el día {hito_dia or escala}:</td>
             <td style="padding:8px 12px;font-weight:bold;color:{c['text']};font-size:16px;">{dias_restantes} días</td>
         </tr>"""
     elif dias_excedidos is not None:
@@ -336,7 +468,7 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:650px;margin:0 auto;background:#ffffff;">
         <!-- Header -->
         <div style="background:{c['bg']};padding:20px 30px;border-radius:12px 12px 0 0;">
-            <h1 style="color:white;margin:0;font-size:20px;">{c['icon']} Alerta de Incapacidad — Ley 776/2002</h1>
+            <h1 style="color:white;margin:0;font-size:20px;">{c['icon']} Alerta de Incapacidad — {etiqueta}</h1>
             <p style="color:rgba(255,255,255,0.9);margin:5px 0 0;font-size:13px;">Sistema Automático de Detección CIE-10 — IncaNeurobaeza</p>
         </div>
         
@@ -347,17 +479,18 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
                 <p style="margin:0;color:{c['text']};font-weight:bold;font-size:14px;">{mensaje}</p>
             </div>
             
-            <!-- Barra de progreso 180 días -->
+            <!-- Barra de progreso de la cadena -->
             <div style="margin-bottom:20px;">
                 <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-                    <span style="font-size:11px;color:#6B7280;">Progreso hacia 180 días</span>
-                    <span style="font-size:11px;font-weight:bold;color:{c['text']};">{dias}/180 días</span>
+                    <span style="font-size:11px;color:#6B7280;">{etiqueta} — progreso de esta cadena</span>
+                    <span style="font-size:11px;font-weight:bold;color:{c['text']};">{dias}/{escala} días</span>
                 </div>
-                <div style="background:#E5E7EB;border-radius:10px;height:14px;overflow:hidden;">
+                <div style="position:relative;background:#E5E7EB;border-radius:10px;height:14px;overflow:hidden;">
                     <div style="background:{barra_color};height:100%;border-radius:10px;width:{barra_progreso}%;transition:width 0.5s;"></div>
+                    {marca_hito}
                 </div>
             </div>
-            
+
             <!-- Datos del empleado -->
             <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
                 <tr style="background:#F9FAFB;">
@@ -368,10 +501,12 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
                     <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Cédula:</td>
                     <td style="padding:8px 12px;font-family:monospace;">{cedula}</td>
                 </tr>
+                {dx_html}
                 <tr style="background:#F9FAFB;">
                     <td style="padding:8px 12px;color:#6B7280;font-size:13px;">Días acumulados:</td>
                     <td style="padding:8px 12px;font-weight:bold;color:{c['text']};font-size:18px;">{dias} días</td>
                 </tr>
+                {responsable_html}
                 {restantes_html}
                 {hueco_html}
                 <tr{'  style="background:#F9FAFB;"' if dias_restantes is None and dias_excedidos is None and not hueco_html else ''}>
@@ -387,15 +522,14 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
                     <strong>📋 Marco Legal:</strong> {normativa}
                 </p>
             </div>''' if normativa else ''}
-            
+
+            {casos_html}
+
             <!-- Acciones recomendadas -->
             <div style="background:#F9FAFB;border-radius:8px;padding:15px;margin-bottom:20px;">
                 <h3 style="margin:0 0 8px;font-size:13px;color:#374151;">📌 Acciones recomendadas:</h3>
                 <ul style="margin:0;padding-left:18px;color:#4B5563;font-size:12px;line-height:1.8;">
-                    {'<li><strong>Iniciar trámite ante Fondo de Pensiones</strong> para continuidad de pago al 50%</li>' if tipo == 'LIMITE_180_SUPERADO' else ''}
-                    {'<li><strong>Preparar documentación</strong> para eventual traslado a Fondo de Pensiones</li>' if tipo == 'ALERTA_CRITICA' else ''}
-                    {'<li><strong>Solicitar al empleado los certificados de incapacidad faltantes</strong> que puedan llenar el hueco de ' + str(dias_hueco) + ' días</li>' if tipo == 'PRORROGA_CORTADA' else ''}
-                    {'<li><strong>Investigar por qué se interrumpió la cadena de prórroga</strong> — ¿El empleado fue dado de alta? ¿Cambió de EPS? ¿Certificado sin radicar?</li>' if tipo == 'PRORROGA_CORTADA' else ''}
+                    {acciones_html}
                     <li>Revisar el historial completo del empleado en el dashboard de IncaNeurobaeza</li>
                     <li>Verificar que las prórrogas estén debidamente soportadas con CIE-10</li>
                     <li>Coordinar con el médico tratante la evolución del caso</li>
@@ -408,7 +542,7 @@ def _generar_html_alerta(nombre: str, cedula: str, alerta: dict) -> str:
         <div style="background:#F3F4F6;padding:15px 30px;border-radius:0 0 12px 12px;border:1px solid #E5E7EB;border-top:none;">
             <p style="margin:0;font-size:10px;color:#9CA3AF;text-align:center;">
                 Este correo fue generado automáticamente por el Sistema de Incapacidades IncaNeurobaeza.<br>
-                Motor CIE-10 2026 — Detección automática de prórrogas — Ley 776/2002<br>
+                Motor CIE-10 2026 — Detección automática de prórrogas y de hitos de pago<br>
                 <em>Para configurar destinatarios, acceda al Dashboard → Alertas 180 Días</em>
             </p>
         </div>

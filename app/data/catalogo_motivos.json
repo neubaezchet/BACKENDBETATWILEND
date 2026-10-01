@@ -1,0 +1,501 @@
+{
+  "version": "1.0",
+  "nombre": "Catálogo de motivos — recepción, riesgo, negación y cartera",
+  "descripcion": "Vocabulario único y desmenuzado del ciclo de una incapacidad. Cada motivo tiene código estable, qué ve el validador, qué se le dice a la empresa, en qué artículo se apoya y qué hacer. Los códigos NO se reescriben ni se reciclan: un motivo que deja de usarse se marca vigente=false, porque hay casos viejos citándolo.",
+  "grupos": {
+    "MIN": "Contenido mínimo del certificado. NO se radica: se le pide al colaborador un soporte que sí cumpla.",
+    "RIE": "SÍ se radica. Cumple lo mínimo, pero tiene una posible causal de negación que hay que dejar anotada desde el día uno.",
+    "NEG": "Lo que la EPS efectivamente respondió. Se normaliza el texto libre del portal a un código para poder decidir apelar o castigar.",
+    "CAR": "Situación de cartera de esa incapacidad: qué pagaron, qué deben, qué se castiga.",
+    "HIT": "Hitos de tiempo acumulado que obligan a actuar antes de una fecha."
+  },
+  "motivos": [
+    {
+      "codigo": "MIN-01",
+      "grupo": "MIN",
+      "nombre": "Sin diagnóstico",
+      "validador": "No trae código de diagnóstico CIE",
+      "mensaje": "El soporte no tiene el código de diagnóstico (CIE). Sin ese dato la EPS no puede tramitar la incapacidad. Pídale al médico o a la IPS el certificado con el diagnóstico impreso.",
+      "articulo": "2.2.3.3.2",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-02",
+      "grupo": "MIN",
+      "nombre": "Sin médico identificable",
+      "validador": "No se identifica al médico u odontólogo que expide (ni nombre, ni documento, ni firma)",
+      "mensaje": "El soporte no identifica al médico u odontólogo que lo expide. Debe traer nombres y apellidos, número de identificación y firma.",
+      "articulo": "2.2.3.3.2",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-03",
+      "grupo": "MIN",
+      "nombre": "Sin fecha de inicio",
+      "validador": "No hay fecha de inicio de la incapacidad",
+      "mensaje": "El soporte no indica desde qué día empieza la incapacidad.",
+      "articulo": "2.2.3.3.2",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-04",
+      "grupo": "MIN",
+      "nombre": "Período indeterminable",
+      "validador": "Hay fecha de inicio pero no hay fecha de terminación ni número de días: no se puede establecer el período",
+      "mensaje": "El soporte no permite saber cuántos días cubre la incapacidad: no trae fecha de terminación ni número de días.",
+      "articulo": "2.2.3.3.2",
+      "radica": false,
+      "nota_interna": "Si trae inicio + días, NO aplica: la fecha fin se calcula (inicio + días − 1). Solo aplica cuando faltan las dos."
+    },
+    {
+      "codigo": "MIN-05",
+      "grupo": "MIN",
+      "nombre": "Paciente no identificado o no coincide",
+      "validador": "Falta el documento del afiliado, o el número no corresponde al colaborador que envió el soporte",
+      "mensaje": "El documento de identidad que aparece en el soporte no corresponde al del colaborador, o no está legible.",
+      "articulo": "2.2.3.3.2",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-06",
+      "grupo": "MIN",
+      "nombre": "Prestador no identificado",
+      "validador": "No aparece quién atendió: ni razón social, ni NIT, ni código REPS",
+      "mensaje": "El soporte no identifica a la IPS o prestador que atendió al paciente.",
+      "articulo": "2.2.3.3.2",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-07",
+      "grupo": "MIN",
+      "nombre": "Ilegible o alterado",
+      "validador": "Documento ilegible, cortado, con tachones o enmendaduras",
+      "mensaje": "El soporte no se puede leer con claridad o presenta tachones/enmendaduras. Envíe una foto completa, enfocada y sin cortes, o el original en PDF.",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-08",
+      "grupo": "MIN",
+      "nombre": "No es un certificado de incapacidad",
+      "validador": "El archivo es otra cosa: orden médica, fórmula, certificado de asistencia, constancia de hospitalización",
+      "mensaje": "El documento enviado no es un certificado de incapacidad. Una constancia de hospitalización o un certificado de asistencia no genera reconocimiento de prestaciones económicas.",
+      "articulo": "2.2.3.3.4",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-09",
+      "grupo": "MIN",
+      "nombre": "Duplicado",
+      "validador": "Esta incapacidad ya fue recibida y radicada antes",
+      "mensaje": "Esta incapacidad ya había sido enviada y está en trámite. No es necesario volver a enviarla.",
+      "radica": false
+    },
+    {
+      "codigo": "MIN-10",
+      "grupo": "MIN",
+      "nombre": "Varias incapacidades en un archivo",
+      "validador": "El archivo contiene dos o más incapacidades distintas",
+      "mensaje": "El archivo contiene más de una incapacidad. Envíe cada una en un formulario independiente.",
+      "radica": false
+    },
+
+    {
+      "codigo": "RIE-01",
+      "grupo": "RIE",
+      "nombre": "Retroactiva en atención ambulatoria",
+      "validador": "La fecha de inicio es anterior a la de expedición y la atención fue ambulatoria: la norma no permite retroactividad en ambulatorio",
+      "mensaje": "En trámite con la EPS. Tiene posible causal de negación por retroactividad: la incapacidad empieza antes de la fecha en que fue expedida y la atención fue ambulatoria.",
+      "articulo": "2.2.3.3.4",
+      "radica": true,
+      "apelable": "solo si en realidad hubo urgencia o internación y el soporte no lo dejó claro"
+    },
+    {
+      "codigo": "RIE-02",
+      "grupo": "RIE",
+      "nombre": "Retroactividad mayor a 30 días",
+      "validador": "Retroactividad superior a 30 días calendario contados desde la expedición",
+      "mensaje": "En trámite con la EPS. Tiene posible causal de negación: la retroactividad supera los 30 días permitidos.",
+      "articulo": "2.2.3.3.4",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-03",
+      "grupo": "RIE",
+      "nombre": "Médico externo sin epicrisis ni resumen",
+      "validador": "El certificado es de un prestador ajeno a la red de la EPS y no viene con epicrisis (internación) ni resumen de atención (ambulatoria)",
+      "mensaje": "En trámite con la EPS. Para que la EPS valide una incapacidad de médico particular se requiere la epicrisis (si hubo hospitalización) o el resumen de la atención (si fue consulta). Puede adjuntarlo para reducir el riesgo de negación.",
+      "articulo": "2.2.3.3.3",
+      "radica": true,
+      "nota_interna": "La EPS NO puede exigir historia clínica completa (Concepto MinSalud 1170012 de 2025). Solo epicrisis o resumen."
+    },
+    {
+      "codigo": "RIE-04",
+      "grupo": "RIE",
+      "nombre": "Médico externo presentado después de 15 días",
+      "validador": "Certificado de prestador no adscrito presentado más de 15 días después de su expedición",
+      "mensaje": "En trámite con la EPS. Tiene posible causal de negación por extemporaneidad en la validación del certificado de médico no adscrito.",
+      "articulo": "2.2.3.3.3",
+      "radica": true,
+      "nota_interna": "Los 15 días aplican SOLO a médico no adscrito. No existe plazo general de 15 días para radicar. El límite real es la prescripción de 3 años (Ley 1438 de 2011, art. 28)."
+    },
+    {
+      "codigo": "RIE-05",
+      "grupo": "RIE",
+      "nombre": "Más de 30 días en un solo certificado",
+      "validador": "Un mismo certificado otorga más de 30 días; la norma obliga a fraccionarlo en prórrogas de hasta 30",
+      "mensaje": "En trámite con la EPS. Tiene posible causal de negación: un solo certificado no puede otorgar más de 30 días.",
+      "articulo": "2.2.3.3.2",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-06",
+      "grupo": "RIE",
+      "nombre": "Prórroga no marcada",
+      "validador": "El sistema la detecta como prórroga (mismo diagnóstico o relacionado, menos de 30 días de interrupción) pero el certificado dice Prórroga: No o no lo indica",
+      "mensaje": "En trámite con la EPS. Se detectó que continúa una incapacidad anterior; el certificado no la marca como prórroga, lo que puede generar glosa.",
+      "articulo": "2.2.3.3.2",
+      "radica": true,
+      "nota_interna": "Parágrafo 1: es prórroga aunque el código CIE sea distinto, si la enfermedad está relacionada y no hay interrupción mayor a 30 días calendario."
+    },
+    {
+      "codigo": "RIE-07",
+      "grupo": "RIE",
+      "nombre": "Inicio prospectivo sin ser prórroga",
+      "validador": "La incapacidad empieza después de la fecha de expedición sin ser una prórroga expedida en control dentro de los 8 días previos",
+      "mensaje": "En trámite con la EPS. Tiene posible causal de negación: la incapacidad empieza en una fecha posterior a su expedición sin corresponder a una prórroga.",
+      "articulo": "2.2.3.3.5",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-08",
+      "grupo": "RIE",
+      "nombre": "Se traslapa con otra incapacidad",
+      "validador": "Las fechas se cruzan con otra incapacidad ya registrada del mismo empleado",
+      "mensaje": "En trámite con la EPS. Las fechas se cruzan con otra incapacidad del mismo período; las incapacidades simultáneas se reconocen como una sola.",
+      "articulo": "2.2.3.3.7",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-09",
+      "grupo": "RIE",
+      "nombre": "Presunto origen laboral",
+      "validador": "El certificado marca origen laboral: la prestación la reconoce la ARL, no la EPS",
+      "mensaje": "En trámite. El soporte indica origen laboral, por lo que corresponde a la ARL y no a la EPS.",
+      "articulo": "2.2.3.3.2",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-10",
+      "grupo": "RIE",
+      "nombre": "Campos del certificado incompletos (glosables)",
+      "validador": "Cumple lo indispensable pero le faltan campos obligatorios del art. 2.2.3.3.2: {campos_faltantes}",
+      "mensaje": "En trámite con la EPS. Al certificado le faltan campos que la norma exige y la EPS puede glosar: {campos_faltantes}.",
+      "articulo": "2.2.3.3.2",
+      "radica": true,
+      "nota_interna": "Campos típicos: código REPS, grupo de servicios, modalidad de la prestación, CIE relacionado, causa que motiva la atención, lugar de expedición."
+    },
+    {
+      "codigo": "RIE-11",
+      "grupo": "RIE",
+      "nombre": "Días atípicos para el diagnóstico",
+      "validador": "Los días otorgados se apartan mucho de los típicos para ese CIE: revisar antes de radicar en volumen",
+      "mensaje": "En trámite con la EPS.",
+      "radica": true,
+      "nota_interna": "Alimentado por dias_tipicos_cie10.json. Umbral aún por definir con el usuario; mientras tanto es informativo y nunca bloquea."
+    },
+    {
+      "codigo": "RIE-12",
+      "grupo": "RIE",
+      "nombre": "Certificado del exterior sin legalizar",
+      "validador": "Certificado expedido en otro país sin apostilla/legalización, sin epicrisis o sin traducción oficial",
+      "mensaje": "En trámite. Un certificado expedido en el exterior debe estar apostillado o legalizado, con epicrisis y traducción oficial al español.",
+      "articulo": "2.2.3.3.6",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-13",
+      "grupo": "RIE",
+      "nombre": "Menos de 4 semanas cotizadas",
+      "validador": "Al inicio de la incapacidad no se acreditan 4 semanas de cotización inmediatamente anteriores",
+      "mensaje": "En trámite con la EPS. Tiene posible causal de negación por no acreditar las 4 semanas de cotización previas.",
+      "articulo": "2.2.3.3.1",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-14",
+      "grupo": "RIE",
+      "nombre": "Licencia de maternidad expedida fuera de término",
+      "validador": "El certificado de licencia de maternidad se expidió después de los 3 días calendario siguientes al nacimiento",
+      "mensaje": "En trámite con la EPS. El certificado de licencia de maternidad se expidió fuera de los 3 días siguientes al nacimiento.",
+      "articulo": "2.2.3.2.5",
+      "radica": true
+    },
+    {
+      "codigo": "RIE-15",
+      "grupo": "RIE",
+      "nombre": "Paternidad fuera de término",
+      "validador": "La licencia de paternidad se disfruta o se soporta fuera de los 30 días siguientes al nacimiento",
+      "mensaje": "En trámite con la EPS. La licencia de paternidad debe disfrutarse dentro de los 30 días siguientes al nacimiento y el registro civil presentarse a más tardar 30 días después.",
+      "articulo": "2.2.3.2.8",
+      "radica": true
+    },
+
+    {
+      "codigo": "NEG-01",
+      "grupo": "NEG",
+      "nombre": "Períodos descubiertos / mora en aportes",
+      "validador": "La EPS no pagó porque el período no estaba cubierto o el aportante estaba en mora",
+      "apelable": false,
+      "accion": "castigar",
+      "articulo": "2.2.3.7.3",
+      "patrones": ["periodo(s)? descubierto", "descubierto", "\\bmora\\b", "sin cotizacion", "no cotiz", "cartera"]
+    },
+    {
+      "codigo": "NEG-02",
+      "grupo": "NEG",
+      "nombre": "No acredita 4 semanas",
+      "validador": "No se acreditaron las 4 semanas de cotización previas al inicio",
+      "apelable": "depende",
+      "accion": "revisar planilla antes de castigar",
+      "articulo": "2.2.3.3.1",
+      "patrones": ["cuatro \\(?4\\)? semanas", "4 semanas", "semanas (minimas|de cotizacion)", "densidad de cotizacion"]
+    },
+    {
+      "codigo": "NEG-03",
+      "grupo": "NEG",
+      "nombre": "Afiliado retirado o suspendido",
+      "validador": "A la fecha de inicio el afiliado no figuraba activo como cotizante",
+      "apelable": "depende",
+      "accion": "verificar novedades de afiliación con la empresa",
+      "articulo": "2.2.3.3.1",
+      "patrones": ["retirad", "suspendid", "no activ", "sin afiliacion", "inactiv", "no figura como cotizante"]
+    },
+    {
+      "codigo": "NEG-04",
+      "grupo": "NEG",
+      "nombre": "Extemporaneidad",
+      "validador": "La EPS alega que se presentó fuera de término",
+      "apelable": true,
+      "accion": "apelar — no existe plazo general de 15 días; el término es la prescripción de 3 años",
+      "articulo": "2.2.3.3.3",
+      "patrones": ["extempora", "fuera de termino", "fuera del termino", "vencid", "termino para radicar"]
+    },
+    {
+      "codigo": "NEG-05",
+      "grupo": "NEG",
+      "nombre": "Retroactividad",
+      "validador": "Negada porque la incapacidad inicia antes de la fecha de expedición",
+      "apelable": "depende",
+      "accion": "apelar si hubo urgencia, internación o alteración de la esfera psíquica; castigar si fue ambulatoria",
+      "articulo": "2.2.3.3.4",
+      "patrones": ["retroactiv", "fecha anterior a la expedicion", "expedida con posterioridad"]
+    },
+    {
+      "codigo": "NEG-06",
+      "grupo": "NEG",
+      "nombre": "Falta epicrisis o resumen de atención",
+      "validador": "Negada por falta del soporte clínico del prestador no adscrito",
+      "apelable": true,
+      "accion": "conseguir epicrisis o resumen y apelar",
+      "articulo": "2.2.3.3.3",
+      "patrones": ["epicrisis", "resumen de (la )?atencion", "soporte clinico", "historia clinica"]
+    },
+    {
+      "codigo": "NEG-07",
+      "grupo": "NEG",
+      "nombre": "Médico no inscrito en ReTHUS",
+      "validador": "La EPS no encontró al profesional en el ReTHUS",
+      "apelable": "depende",
+      "accion": "verificar el registro del médico antes de apelar",
+      "articulo": "2.2.3.3.3",
+      "patrones": ["rethus", "re thus", "talento humano en salud", "profesional no inscrito", "medico no (inscrito|registrado)"]
+    },
+    {
+      "codigo": "NEG-08",
+      "grupo": "NEG",
+      "nombre": "Diagnóstico excluido o estético",
+      "validador": "Negada por corresponder a tratamiento estético o a servicio excluido",
+      "apelable": false,
+      "accion": "castigar",
+      "articulo": "2.2.3.7.3",
+      "patrones": ["estetic", "exclui", "no pbs", "no incluid", "cosmetic"]
+    },
+    {
+      "codigo": "NEG-09",
+      "grupo": "NEG",
+      "nombre": "Corresponde a la ARL",
+      "validador": "La EPS la devuelve por origen laboral",
+      "apelable": false,
+      "accion": "reradicar ante la ARL",
+      "articulo": "2.2.3.3.2",
+      "patrones": ["\\barl\\b", "origen laboral", "riesgos laborales", "accidente de trabajo", "enfermedad laboral"]
+    },
+    {
+      "codigo": "NEG-10",
+      "grupo": "NEG",
+      "nombre": "Ya reconocida o duplicada",
+      "validador": "La EPS dice que esa incapacidad ya fue pagada o está duplicada",
+      "apelable": "depende",
+      "accion": "cruzar contra lo ya pagado antes de reclamar",
+      "patrones": ["ya (fue )?(pagad|reconocid|cancelad)", "duplicad", "doble (cobro|radicacion)", "repetid"]
+    },
+    {
+      "codigo": "NEG-11",
+      "grupo": "NEG",
+      "nombre": "Supera 540 días",
+      "validador": "Negada por superar los 540 días acumulados",
+      "apelable": "depende",
+      "accion": "verificar concepto favorable de rehabilitación; con él, la EPS debe reiniciar el pago desde el día 541",
+      "articulo": "2.2.3.6.1",
+      "patrones": ["540", "quinientos cuarenta", "540 dias"]
+    },
+    {
+      "codigo": "NEG-12",
+      "grupo": "NEG",
+      "nombre": "Abuso del derecho",
+      "validador": "La EPS invoca una causal de abuso del derecho",
+      "apelable": "depende",
+      "accion": "escalar a Talento Humano — puede implicar traslado a autoridades",
+      "articulo": "2.2.3.7.1",
+      "patrones": ["abuso del derecho", "no asistio a (control|valoracion|terapia)", "no sigui[oó] (el )?tratamiento", "fraude"]
+    },
+    {
+      "codigo": "NEG-13",
+      "grupo": "NEG",
+      "nombre": "Datos del certificado incompletos o errados",
+      "validador": "Glosa por campos del certificado: diagnóstico, fechas, firma, REPS, modalidad",
+      "apelable": true,
+      "accion": "corregir con la IPS y volver a radicar",
+      "articulo": "2.2.3.3.2",
+      "patrones": ["ilegible", "sin firma", "sin diagnostico", "datos (incompletos|errados|inconsistentes)", "no cumple requisitos", "certificado incompleto"]
+    },
+    {
+      "codigo": "NEG-99",
+      "grupo": "NEG",
+      "nombre": "Motivo no clasificado",
+      "validador": "La EPS dio un motivo que el catálogo todavía no reconoce — queda el texto literal del portal",
+      "apelable": "depende",
+      "accion": "revisar a mano y, si se repite, agregarle patrón a este catálogo"
+    },
+
+    {
+      "codigo": "CAR-01",
+      "grupo": "CAR",
+      "nombre": "Pagada completa",
+      "validador": "La EPS reconoció y pagó el valor esperado"
+    },
+    {
+      "codigo": "CAR-02",
+      "grupo": "CAR",
+      "nombre": "Pagada parcial — queda saldo",
+      "validador": "Pagó menos de lo reconocido o menos de lo liquidado: queda un saldo por cobrar"
+    },
+    {
+      "codigo": "CAR-03",
+      "grupo": "CAR",
+      "nombre": "En trámite, sin pago",
+      "validador": "Reconocida por la EPS y todavía sin giro"
+    },
+    {
+      "codigo": "CAR-04",
+      "grupo": "CAR",
+      "nombre": "Sin respuesta de la EPS",
+      "validador": "La radicamos y la EPS no la reporta ni como pagada ni como rechazada: hay que reclamarla"
+    },
+    {
+      "codigo": "CAR-05",
+      "grupo": "CAR",
+      "nombre": "Negada — apelable",
+      "validador": "Negada por un motivo que se puede controvertir; entra a la cola de apelaciones"
+    },
+    {
+      "codigo": "CAR-06",
+      "grupo": "CAR",
+      "nombre": "Negada en firme — castigar",
+      "validador": "Negada por un motivo que no se va a revertir. Sale de la cartera por cobrar y se reporta como pérdida para que nadie la siga persiguiendo"
+    },
+    {
+      "codigo": "CAR-07",
+      "grupo": "CAR",
+      "nombre": "No radicada por nosotros",
+      "validador": "La EPS la tiene pero no salió de este sistema: alguien radicó por fuera o se perdió el registro"
+    },
+
+    {
+      "codigo": "HIT-120",
+      "grupo": "HIT",
+      "nombre": "Concepto de rehabilitación",
+      "origen": "comun",
+      "dias": 120,
+      "validador": "Día 120: la EPS está obligada a emitir el concepto de rehabilitación (favorable o desfavorable). Paga la EPS.",
+      "mensaje": "El colaborador llega a 120 días acumulados. A partir de este día la EPS debe emitir el concepto de rehabilitación. Si no lo hace, queda la base para exigirle que siga pagando después del día 180.",
+      "articulo": "2.2.3.5.2"
+    },
+    {
+      "codigo": "HIT-150",
+      "grupo": "HIT",
+      "nombre": "Envío del concepto a la AFP",
+      "origen": "comun",
+      "dias": 150,
+      "validador": "Día 150: fecha límite para que la EPS envíe el concepto de rehabilitación al fondo de pensiones. Si no lo envía, la EPS sigue pagando después del 180 por penalización.",
+      "mensaje": "El colaborador llega a 150 días acumulados. La EPS debe haber enviado el concepto de rehabilitación al fondo de pensiones. Si no lo envió, la EPS debe seguir pagando las incapacidades después del día 180 hasta que lo envíe — conviene pedir constancia del envío ahora.",
+      "articulo": "2.2.3.5.2"
+    },
+    {
+      "codigo": "HIT-180",
+      "grupo": "HIT",
+      "nombre": "Cambio de pagador: EPS → fondo de pensiones",
+      "origen": "comun",
+      "dias": 180,
+      "validador": "Desde el día 181 paga el fondo de pensiones (AFP), no la EPS. Radicar a la EPS después de este día se niega, salvo la penalización por concepto no enviado.",
+      "mensaje": "El colaborador supera los 180 días acumulados. A partir del día 181 el subsidio lo reconoce el fondo de pensiones, no la EPS. Hay que radicar ante la AFP.",
+      "nota_interna": "Excepción: si la EPS no envió el concepto de rehabilitación a la AFP antes del día 150, la EPS debe seguir pagando hasta que lo envíe. Antes de dar por perdida una negación posterior al 180, verificar esa constancia."
+    },
+    {
+      "codigo": "HIT-540",
+      "grupo": "HIT",
+      "nombre": "Fin del subsidio del fondo de pensiones",
+      "origen": "comun",
+      "dias": 540,
+      "validador": "Día 540: se agota el subsidio a cargo de la AFP. Desde el 541 vuelve a pagar la EPS solo si se acredita uno de los cuatro casos especiales.",
+      "mensaje": "El colaborador llega a 540 días acumulados. El fondo de pensiones deja de pagar; la responsabilidad vuelve a la EPS únicamente si se acredita uno de los casos especiales del decreto.",
+      "articulo": "2.2.3.6.1"
+    },
+    {
+      "codigo": "HIT-541",
+      "grupo": "HIT",
+      "nombre": "Casos especiales del día 541 en adelante",
+      "origen": "comun",
+      "dias": 541,
+      "validador": "Superados los 540 días, la EPS reconoce y paga SOLO si se acredita uno de los cuatro casos especiales. Sin uno de ellos, la negación es en firme.",
+      "mensaje": "El colaborador supera los 540 días. Para que la EPS siga pagando hay que acreditar uno de estos cuatro casos.",
+      "articulo": "2.2.3.6.1",
+      "casos_especiales": [
+        "Concepto médico favorable de recuperación: la EPS certifica que el paciente se recupera pero necesita más tiempo.",
+        "Enfermedades concomitantes o nuevas patologías que prolongan la recuperación.",
+        "Pérdida de capacidad laboral calificada por debajo del 50%: no se puede pensionar, así que la EPS sigue pagando.",
+        "Falta de calificación de invalidez por trámites de la EPS o de la AFP, no por causa del trabajador."
+      ]
+    },
+    {
+      "codigo": "HIT-LAB-180",
+      "grupo": "HIT",
+      "nombre": "Prórroga del subsidio de la ARL",
+      "origen": "laboral",
+      "dias": 180,
+      "validador": "Origen laboral: la ARL paga desde el día siguiente al accidente. A los 180 días el subsidio es prorrogable por hasta 180 más. NO hay traslado al fondo de pensiones en el día 181.",
+      "mensaje": "El colaborador llega a 180 días de incapacidad de origen laboral. El subsidio lo sigue reconociendo la ARL, prorrogable hasta por 180 días más. No aplica el paso al fondo de pensiones.",
+      "nota_interna": "Ley 776 de 2002, art. 3. Aplicar el cronograma de origen común a una cadena laboral es el error clásico: cambia quién paga y a quién se radica."
+    },
+    {
+      "codigo": "HIT-LAB-360",
+      "grupo": "HIT",
+      "nombre": "Calificación de PCL en origen laboral",
+      "origen": "laboral",
+      "dias": 360,
+      "validador": "Agotada la prórroga del subsidio de la ARL, debe iniciarse el proceso de calificación de pérdida de capacidad laboral.",
+      "mensaje": "El colaborador agota el subsidio prorrogado de la ARL. Debe iniciarse la calificación de pérdida de capacidad laboral.",
+      "nota_interna": "Ley 776 de 2002, art. 3."
+    }
+  ]
+}

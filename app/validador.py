@@ -27,6 +27,7 @@ from app.database import (
     ResultadoValidacion, DecisionValidacion, RadicacionCola,
 )
 from app.drive_uploader import upload_inteligente
+from app.serial_generator import generar_serial_unico
 from app.checks_disponibles import CHECKS_DISPONIBLES, obtener_checks_por_tipo
 from app.reglas_requisitos import calcular_documentos_requeridos
 from app.email_templates import get_email_template_universal
@@ -1192,6 +1193,207 @@ async def cambiar_estado(
     )
 
 
+def _crear_caso_manual(
+    db: Session,
+    cedula: str,
+    tipo: str,
+    fecha_inicio_str: str,
+    fecha_fin_str: Optional[str],
+    realizado_por: str,
+    empresa_slug: Optional[str] = None,
+    email: Optional[str] = None,
+    telefono: Optional[str] = None,
+    subtipo: Optional[str] = None,
+    diagnostico: Optional[str] = None,
+    codigo_cie10: Optional[str] = None,
+    numero_incapacidad: Optional[str] = None,
+    es_historico: bool = False,
+    archivo_bytes: Optional[bytes] = None,
+    archivo_filename: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Crea un Case desde cero para una incapacidad que NUNCA entró por el
+    formulario/repogemin — alguien la radicó 100% por fuera del sistema.
+    Es "como si llegara del frontend": reutiliza la misma resolución de
+    empleado/empresa (`_company_por_slug`, `sincronizar_empleado_desde_excel`,
+    igual que /subir-incapacidad/), el mismo generador de serial y el mismo
+    `upload_inteligente` — así el caso cuenta en dashboards, reportes y
+    recordatorios exactamente igual que cualquier otro caso real.
+
+    No corre OCR ni el calificador IA: se asume que un humano ya revisó el
+    soporte antes de radicarlo a mano. `codigo_cie10`/`numero_incapacidad`
+    y los `dias_incapacidad` (calculados de fecha_inicio/fecha_fin) quedan
+    en el Case y en metadata_form con las mismas llaves que usa el OCR real
+    (`fecha_inicio_incapacidad`, `dias_incapacidad`) — así, si luego se
+    encola para que el bot la radique (ver `encolar_caso` en
+    radicacion_dispatcher.py), encuentra los mismos datos que encontraría
+    en un caso que sí pasó por OCR.
+
+    `es_historico=True` marca el registro como "solo trazabilidad" (mismo
+    flag que ya usan los históricos de Kactus sin PDF): queda visible en el
+    detalle del caso pero AFUERA de dashboards/reportes en vivo y del barrido
+    de recordatorios — para cuando el humano solo quiere dejar constancia,
+    sin que el sistema empiece a perseguir el caso.
+
+    No lanza HTTPException: devuelve {"ok": False, "error": ...} para que
+    tanto el alta individual como cada fila del lote decidan cómo reportarlo.
+    """
+    # Import diferido: main.py importa este router, así que un import a nivel
+    # de módulo de _company_por_slug crearía un ciclo (main <-> validador).
+    from app.main import _company_por_slug
+    from app.sync_excel import sincronizar_empleado_desde_excel
+
+    cedula = (cedula or "").strip()
+    realizado_por = (realizado_por or "").strip()
+    if not cedula or not realizado_por:
+        return {"ok": False, "error": "Falta cédula o quién realizó el registro manual"}
+
+    try:
+        tipo_enum = TipoIncapacidad(tipo)
+    except ValueError:
+        return {"ok": False, "error": f"Tipo de incapacidad inválido: {tipo}"}
+
+    try:
+        fecha_inicio = datetime.strptime(fecha_inicio_str, "%Y-%m-%d")
+        fecha_fin = datetime.strptime(fecha_fin_str, "%Y-%m-%d") if fecha_fin_str else fecha_inicio
+    except (ValueError, TypeError):
+        return {"ok": False, "error": "fecha_inicio/fecha_fin inválidas (formato esperado YYYY-MM-DD)"}
+
+    company_scope = _company_por_slug(db, empresa_slug)
+
+    q_emp = db.query(Employee).filter(Employee.cedula == cedula)
+    if company_scope:
+        q_emp = q_emp.filter(Employee.company_id == company_scope.id)
+    empleado = q_emp.first()
+    if not empleado:
+        empleado = sincronizar_empleado_desde_excel(cedula, company_id=company_scope.id if company_scope else None)
+    if not empleado:
+        return {"ok": False, "error": f"No se encontró el empleado con cédula {cedula} (ni en BD ni en el Excel de la empresa)"}
+
+    serial = generar_serial_unico(db, cedula, fecha_inicio.date(), fecha_fin.date())
+
+    drive_link = None
+    if archivo_bytes is not None:
+        try:
+            tmp_dir = Path(tempfile.gettempdir()) / "radicacion_manual"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = tmp_dir / f"{serial}_{archivo_filename or 'archivo.pdf'}"
+            tmp_path.write_bytes(archivo_bytes)
+
+            client_drive_id = None
+            if empleado.company_id:
+                try:
+                    from app.database import TenantConfig
+                    tenant_cfg = db.query(TenantConfig).filter(TenantConfig.company_id == empleado.company_id).first()
+                    if tenant_cfg and tenant_cfg.google_workspace_drive_id:
+                        client_drive_id = tenant_cfg.google_workspace_drive_id
+                except Exception:
+                    pass
+
+            drive_link = upload_inteligente(
+                file_path=tmp_path,
+                empresa=empleado.empresa.nombre if empleado.empresa else "OTRA_EMPRESA",
+                cedula=cedula,
+                tipo=tipo_enum.value,
+                serial=serial,
+                fecha_inicio=fecha_inicio.date(),
+                fecha_fin=fecha_fin.date(),
+                client_drive_id=client_drive_id,
+            )
+            tmp_path.unlink(missing_ok=True)
+        except Exception as e:
+            return {"ok": False, "error": f"No se pudo subir el archivo a Drive: {e}"}
+
+    dias_incapacidad = (fecha_fin.date() - fecha_inicio.date()).days + 1
+
+    caso = Case(
+        serial=serial,
+        cedula=cedula,
+        employee_id=empleado.id,
+        company_id=empleado.company_id,
+        tipo=tipo_enum,
+        subtipo=subtipo,
+        estado=EstadoCaso.NUEVO,
+        diagnostico=diagnostico,
+        codigo_cie10=codigo_cie10,
+        numero_incapacidad=numero_incapacidad,
+        dias_incapacidad=dias_incapacidad,
+        eps=empleado.eps,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        drive_link=drive_link,
+        email_form=email or empleado.correo,
+        telefono_form=telefono or empleado.telefono,
+        es_historico=es_historico,
+        metadata_form={
+            "origen": "radicacion_manual",
+            "creado_por": realizado_por,
+            # Mismas llaves que deja el OCR real — así encolar_caso() arma
+            # datos_ocr correctamente si este caso se encola para el bot.
+            "fecha_inicio_incapacidad": fecha_inicio_str,
+            "dias_incapacidad": dias_incapacidad,
+        },
+    )
+    db.add(caso)
+    db.commit()
+    db.refresh(caso)
+
+    registrar_evento(
+        db, caso.id, "creacion_manual",
+        actor=realizado_por,
+        metadata={"es_historico": es_historico, "archivo_cargado": archivo_bytes is not None},
+    )
+
+    return {"ok": True, "caso": caso}
+
+
+def _encolar_para_radicacion_automatica(
+    db: Session,
+    caso: Case,
+    estado: str,
+    realizado_por: str,
+    background_tasks: BackgroundTasks,
+    notas: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Camino "todavía NO está radicado" del alta manual (ver _crear_caso_manual):
+    aplica el estado que dejó el humano (mismas notificaciones/movimiento de
+    Drive que un cambio de estado normal, vía _ejecutar_cambio_estado) y
+    encola el caso para que el BOT lo radique solo — reutilizando
+    `encolar_caso` de radicacion_dispatcher.py, la misma función que usa el
+    intake real (/subir-incapacidad/), para que use los mismos datos
+    (fecha_inicio_incapacidad, dias_incapacidad, diagnóstico, CIE-10, EPS)
+    que dejó la persona al crear el caso.
+
+    No lanza HTTPException: devuelve {"ok": False, "error": ...}.
+    """
+    try:
+        resultado_estado = _ejecutar_cambio_estado(
+            db, caso, estado, background_tasks,
+            motivo=notas or "Alta manual — pendiente de radicación automática",
+            actor=realizado_por,
+        )
+    except HTTPException as e:
+        return {"ok": False, "error": e.detail}
+
+    from app.services.radicacion_dispatcher import encolar_caso
+    cola_id = encolar_caso(db, caso)
+    registrar_evento(
+        db, caso.id, "creacion_manual_encolada_bot",
+        actor=realizado_por,
+        metadata={"cola_id": cola_id},
+    )
+    resultado_estado["ok"] = True
+    resultado_estado["ya_radicado"] = False
+    resultado_estado["cola_id"] = cola_id
+    resultado_estado["mensaje"] = (
+        "Caso creado y encolado para que el bot lo radique automáticamente"
+        if cola_id else
+        "Caso creado, pero no hay un bot configurado para esa EPS/empresa — requiere radicación manual"
+    )
+    return resultado_estado
+
+
 async def _radicar_manual_core(
     db: Session,
     caso: Case,
@@ -1352,6 +1554,93 @@ async def radicar_manualmente(
     return resultado
 
 
+@router.post("/radicacion-manual/nueva")
+async def crear_radicacion_manual_nueva(
+    background_tasks: BackgroundTasks,
+    cedula: str = Form(...),
+    tipo: str = Form(...),
+    fecha_inicio: str = Form(...),
+    fecha_fin: Optional[str] = Form(None),
+    estado: str = Form(...),
+    realizado_por: str = Form(...),
+    empresa: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    telefono: Optional[str] = Form(None),
+    subtipo: Optional[str] = Form(None),
+    diagnostico: Optional[str] = Form(None),
+    codigo_cie10: Optional[str] = Form(None),
+    numero_incapacidad: Optional[str] = Form(None),
+    es_historico: bool = Form(False),
+    ya_radicado: bool = Form(...),
+    radicado: Optional[str] = Form(None),
+    fecha_radicacion: Optional[str] = Form(None),
+    notas: Optional[str] = Form(None),
+    archivo: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    _: bool = Depends(verificar_token_admin),
+):
+    """
+    Da de alta UNA incapacidad que nunca pasó por el formulario/repogemin —
+    alguien la radicó 100% por fuera del sistema. Crea el Case desde cero
+    (ver _crear_caso_manual) para que cuente en dashboards/reportes/
+    recordatorios igual que cualquier caso real.
+
+    `ya_radicado` decide qué pasa después de crear el caso (ignorado si
+    es_historico=True, que siempre gana):
+    - ya_radicado=True: la persona ya la radicó a mano en el portal de la EPS
+      — requiere `radicado`, y se aplica igual que cualquier radicación
+      manual (ver _radicar_manual_core).
+    - ya_radicado=False: todavía NO está radicada — se encola para que el
+      BOT la radique solo con los datos que la persona dejó en este
+      formulario (ver _encolar_para_radicacion_automatica).
+    """
+    archivo_bytes = await archivo.read() if archivo is not None else None
+    creado = _crear_caso_manual(
+        db, cedula, tipo, fecha_inicio, fecha_fin, realizado_por,
+        empresa_slug=empresa, email=email, telefono=telefono,
+        subtipo=subtipo, diagnostico=diagnostico,
+        codigo_cie10=codigo_cie10, numero_incapacidad=numero_incapacidad,
+        es_historico=es_historico,
+        archivo_bytes=archivo_bytes, archivo_filename=archivo.filename if archivo else None,
+    )
+    if not creado.get("ok"):
+        raise HTTPException(status_code=400, detail=creado.get("error", "Error desconocido"))
+    caso = creado["caso"]
+
+    if es_historico:
+        try:
+            caso.estado = EstadoCaso(estado)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Estado inválido: {estado}")
+        db.commit()
+        registrar_evento(db, caso.id, "creacion_manual_historica", actor=realizado_por, motivo=notas)
+        return {
+            "ok": True, "serial": caso.serial, "case_id": caso.id,
+            "es_historico": True, "estado": estado,
+            "mensaje": "Registrado solo para trazabilidad — no genera notificaciones ni recordatorios",
+        }
+
+    if ya_radicado:
+        if not radicado or not radicado.strip():
+            raise HTTPException(status_code=400, detail="Falta el número de radicado (ya_radicado=true lo requiere)")
+        resultado = await _radicar_manual_core(
+            db, caso, estado, realizado_por, background_tasks,
+            radicado=radicado, fecha_radicacion=fecha_radicacion, notas=notas,
+        )
+        if not resultado.get("ok"):
+            raise HTTPException(status_code=400, detail=resultado.get("error", "Error desconocido"))
+        resultado["ya_radicado"] = True
+    else:
+        resultado = _encolar_para_radicacion_automatica(
+            db, caso, estado, realizado_por, background_tasks, notas=notas,
+        )
+        if not resultado.get("ok"):
+            raise HTTPException(status_code=400, detail=resultado.get("error", "Error desconocido"))
+
+    resultado["creado_desde_cero"] = True
+    return resultado
+
+
 # ==================== RADICACIÓN MANUAL MASIVA ====================
 # Para lotes de 10, 100+ casos: plantilla Excel con cédula + fecha_inicio +
 # estado/radicado, más los PDFs correspondientes nombrados "CEDULA DD MM YYYY..."
@@ -1404,12 +1693,31 @@ async def descargar_plantilla_radicacion_manual(
 ):
     """
     Descarga la plantilla Excel para registrar radicaciones manuales masivas.
-    Columnas: cedula, fecha_inicio, estado, radicado, fecha_radicacion,
-    realizado_por, notas. El nombre de cada PDF que se suba junto con la
-    plantilla debe empezar con "CEDULA DD MM YYYY" para que el sistema lo
-    pueda emparejar con la fila correspondiente.
+    Columnas obligatorias: cedula, fecha_inicio, estado.
+    Columnas de radicación (si el caso ya existe en el sistema): radicado,
+    fecha_radicacion, realizado_por, notas.
+    Columnas de alta desde cero (si la incapacidad NUNCA entró al sistema —
+    ni bot ni frontend — y por eso no hay caso existente que encontrar por
+    cédula+fecha_inicio): tipo, fecha_fin, empresa, email, telefono, subtipo,
+    diagnostico, codigo_cie10, numero_incapacidad, es_historico, ya_radicado.
+    Con estos datos el sistema crea el caso como si hubiera llegado por el
+    frontend (cuenta en dashboards/reportes/recordatorios).
+    es_historico=si lo deja solo para trazabilidad, sin notificaciones ni
+    recordatorios (gana sobre ya_radicado). Si no es histórico, ya_radicado
+    indica si la persona YA radicó aparte (si → usar también radicado/
+    fecha_radicacion, igual que un caso existente) o si falta radicar y el
+    bot debe encolarlo automáticamente con los datos de la fila (no/vacío).
+    El nombre de cada PDF que se suba junto con la plantilla debe empezar con
+    "CEDULA DD MM YYYY" para que el sistema lo pueda emparejar con la fila
+    correspondiente.
     """
-    columnas = ["cedula", "fecha_inicio", "estado", "radicado", "fecha_radicacion", "realizado_por", "notas"]
+    columnas = [
+        "cedula", "fecha_inicio", "estado", "radicado", "fecha_radicacion",
+        "realizado_por", "notas",
+        "tipo", "fecha_fin", "empresa", "email", "telefono", "subtipo",
+        "diagnostico", "codigo_cie10", "numero_incapacidad",
+        "es_historico", "ya_radicado",
+    ]
     fila_ejemplo = {
         "cedula": "1085043374",
         "fecha_inicio": "2026-09-01",
@@ -1418,8 +1726,62 @@ async def descargar_plantilla_radicacion_manual(
         "fecha_radicacion": "2026-09-20",
         "realizado_por": "Nombre de quien radicó",
         "notas": "Radicado manual por caída del portal de la EPS",
+        "tipo": "",
+        "fecha_fin": "",
+        "empresa": "",
+        "email": "",
+        "telefono": "",
+        "subtipo": "",
+        "diagnostico": "",
+        "codigo_cie10": "",
+        "numero_incapacidad": "",
+        "es_historico": "",
+        "ya_radicado": "",
     }
-    df = pd.DataFrame([fila_ejemplo], columns=columnas)
+    fila_ejemplo_alta = {
+        "cedula": "1085043375",
+        "fecha_inicio": "2026-08-15",
+        "estado": "INCOMPLETA",
+        "radicado": "",
+        "fecha_radicacion": "",
+        "realizado_por": "Nombre de quien radicó",
+        "notas": "Incapacidad que nunca entró por el bot ni el frontend",
+        "tipo": "enfermedad_general",
+        "fecha_fin": "2026-08-20",
+        "empresa": "slug-empresa",
+        "email": "",
+        "telefono": "",
+        "subtipo": "",
+        "diagnostico": "",
+        "codigo_cie10": "",
+        "numero_incapacidad": "",
+        "es_historico": "no",
+        "ya_radicado": "no",
+    }
+    fila_ejemplo_alta_radicada = {
+        "cedula": "1085043376",
+        "fecha_inicio": "2026-08-10",
+        "estado": "COMPLETA",
+        "radicado": "RAD-654321",
+        "fecha_radicacion": "2026-08-18",
+        "realizado_por": "Nombre de quien radicó",
+        "notas": "Se radicó por fuera del sistema y ya se tiene el número",
+        "tipo": "enfermedad_general",
+        "fecha_fin": "2026-08-16",
+        "empresa": "slug-empresa",
+        "email": "",
+        "telefono": "",
+        "subtipo": "",
+        "diagnostico": "",
+        "codigo_cie10": "M545",
+        "numero_incapacidad": "",
+        "es_historico": "no",
+        "ya_radicado": "si",
+    }
+    df = pd.DataFrame(
+        [fila_ejemplo, fila_ejemplo_alta, fila_ejemplo_alta_radicada],
+        columns=columnas,
+    )
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -1447,10 +1809,24 @@ async def radicar_manualmente_masiva(
     /radicacion-manual/plantilla) más, opcionalmente, los PDFs corregidos
     nombrados "CEDULA DD MM YYYY..." para emparejar con cada fila.
 
+    Si la fila NO tiene un Case existente con esa cédula+fecha_inicio, y trae
+    los datos mínimos para darlo de alta (tipo, fecha_fin), se CREA el caso
+    desde cero (ver _crear_caso_manual) — como si esa incapacidad hubiera
+    llegado por el frontend, para que cuente en dashboards/reportes/
+    recordatorios igual que cualquier otra. Si la fila trae es_historico=si,
+    el registro queda solo para trazabilidad, sin notificaciones ni
+    recordatorios (gana sobre ya_radicado). Si no es histórico, la columna
+    ya_radicado decide qué pasa con el caso recién creado: ya_radicado=si
+    exige radicado (y opcionalmente fecha_radicacion) y sigue el mismo
+    camino que un caso ya existente; ya_radicado=no/vacío hace que el propio
+    bot encole el caso para radicarlo con los datos de la fila
+    (_encolar_para_radicacion_automatica), sin esperar que alguien vuelva a
+    subir el radicado a mano.
+
     Cada fila se procesa de forma independiente — si una falla (caso no
-    encontrado, datos inválidos, error de Drive) no detiene el resto del
-    lote; el detalle de cada fila queda en la respuesta para trazabilidad,
-    dado que esto puede tratarse de información crítica.
+    encontrado ni creable, datos inválidos, error de Drive) no detiene el
+    resto del lote; el detalle de cada fila queda en la respuesta para
+    trazabilidad, dado que esto puede tratarse de información crítica.
     """
     contents = await plantilla.read()
     try:
@@ -1481,6 +1857,13 @@ async def radicar_manualmente_masiva(
         else:
             archivos_sin_parsear.append(archivo.filename)
 
+    def _celda_str(row, campo: str) -> Optional[str]:
+        valor = row.get(campo)
+        if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+            return None
+        valor = str(valor).strip()
+        return valor or None
+
     resultados = []
     claves_usadas = set()
     for idx, row in df.iterrows():
@@ -1505,12 +1888,6 @@ async def radicar_manualmente_masiva(
             .order_by(Case.id.desc())
             .first()
         )
-        if not caso:
-            resultados.append({
-                "fila": fila_num, "cedula": cedula, "fecha_inicio": fecha_inicio_str, "ok": False,
-                "error": "No se encontró un caso con esa cédula y fecha_inicio",
-            })
-            continue
 
         clave = (cedula, fecha_inicio_dt.date())
         archivo_match = archivos_por_clave.get(clave)
@@ -1519,12 +1896,89 @@ async def radicar_manualmente_masiva(
         archivo_bytes = await archivo_match.read() if archivo_match else None
 
         realizado_por = str(row.get("realizado_por") or realizado_por_defecto or "").strip()
-        radicado = row.get("radicado")
-        radicado = str(radicado).strip() if radicado is not None and not pd.isna(radicado) else None
-        notas = row.get("notas")
-        notas = str(notas).strip() if notas is not None and not pd.isna(notas) else None
+        radicado = _celda_str(row, "radicado")
+        notas = _celda_str(row, "notas")
         fecha_radicacion = _parsear_fecha_excel(row.get("fecha_radicacion"))
+        creado_desde_cero = False
 
+        if not caso:
+            # No existe un caso con esa cédula+fecha_inicio: si la fila trae
+            # datos mínimos (tipo, fecha_fin), la incapacidad nunca entró al
+            # sistema y se crea desde cero — cuenta en todo igual que si
+            # hubiera llegado por el frontend (ver _crear_caso_manual).
+            tipo_fila = _celda_str(row, "tipo")
+            fecha_fin_fila = _parsear_fecha_excel(row.get("fecha_fin"))
+            if not tipo_fila:
+                resultados.append({
+                    "fila": fila_num, "cedula": cedula, "fecha_inicio": fecha_inicio_str, "ok": False,
+                    "error": "No se encontró un caso existente y falta la columna 'tipo' para crear uno nuevo",
+                })
+                continue
+
+            es_historico_fila = str(_celda_str(row, "es_historico") or "").lower() in ("si", "sí", "true", "1", "x")
+            creado = _crear_caso_manual(
+                db, cedula, tipo_fila, fecha_inicio_str, fecha_fin_fila, realizado_por,
+                empresa_slug=_celda_str(row, "empresa"),
+                email=_celda_str(row, "email"),
+                telefono=_celda_str(row, "telefono"),
+                subtipo=_celda_str(row, "subtipo"),
+                diagnostico=_celda_str(row, "diagnostico"),
+                codigo_cie10=_celda_str(row, "codigo_cie10"),
+                numero_incapacidad=_celda_str(row, "numero_incapacidad"),
+                es_historico=es_historico_fila,
+                archivo_bytes=archivo_bytes,
+                archivo_filename=archivo_match.filename if archivo_match else None,
+            )
+            if not creado.get("ok"):
+                resultados.append({
+                    "fila": fila_num, "cedula": cedula, "fecha_inicio": fecha_inicio_str, "ok": False,
+                    "error": creado.get("error", "No se pudo crear el caso"),
+                })
+                continue
+            caso = creado["caso"]
+            creado_desde_cero = True
+
+            if es_historico_fila:
+                try:
+                    caso.estado = EstadoCaso(estado)
+                except ValueError:
+                    resultados.append({
+                        "fila": fila_num, "cedula": cedula, "serial": caso.serial, "fecha_inicio": fecha_inicio_str,
+                        "ok": False, "error": f"Estado inválido: {estado}", "creado_desde_cero": True,
+                    })
+                    continue
+                db.commit()
+                registrar_evento(db, caso.id, "creacion_manual_historica", actor=realizado_por, motivo=notas)
+                resultados.append({
+                    "fila": fila_num, "cedula": cedula, "serial": caso.serial, "fecha_inicio": fecha_inicio_str,
+                    "ok": True, "creado_desde_cero": True, "es_historico": True, "estado": estado,
+                    "mensaje": "Registrado solo para trazabilidad — no genera notificaciones ni recordatorios",
+                })
+                continue
+
+            # Caso activo recién creado: ¿ya está radicado, o lo radica el bot?
+            ya_radicado_fila = str(_celda_str(row, "ya_radicado") or "").lower() in ("si", "sí", "true", "1", "x")
+            if not ya_radicado_fila:
+                resultado_bot = _encolar_para_radicacion_automatica(
+                    db, caso, estado, realizado_por, background_tasks, notas=notas,
+                )
+                resultados.append({
+                    "fila": fila_num, "cedula": cedula, "serial": caso.serial, "fecha_inicio": fecha_inicio_str,
+                    "creado_desde_cero": True, "ya_radicado": False,
+                    "cola_id": resultado_bot.get("cola_id"),
+                    "ok": resultado_bot.get("ok", False),
+                    "error": resultado_bot.get("error"),
+                    "mensaje": resultado_bot.get("mensaje"),
+                })
+                continue
+            # ya_radicado=si: sigue abajo hacia _radicar_manual_core como
+            # cualquier otro, sin volver a subir el archivo (ya quedó en Drive).
+            archivo_bytes = None
+            archivo_match = None
+
+        archivo_emparejado_nombre = archivo_match.filename if archivo_match else (
+            archivos_por_clave.get(clave).filename if creado_desde_cero and clave in archivos_por_clave else None
+        )
         resultado = await _radicar_manual_core(
             db, caso, estado, realizado_por, background_tasks,
             radicado=radicado, fecha_radicacion=fecha_radicacion, notas=notas,
@@ -1535,7 +1989,8 @@ async def radicar_manualmente_masiva(
             "cedula": cedula,
             "serial": caso.serial,
             "fecha_inicio": fecha_inicio_str,
-            "archivo_emparejado": archivo_match.filename if archivo_match else None,
+            "archivo_emparejado": archivo_emparejado_nombre,
+            "creado_desde_cero": creado_desde_cero,
             "ok": resultado.get("ok", False),
             "error": resultado.get("error"),
         })

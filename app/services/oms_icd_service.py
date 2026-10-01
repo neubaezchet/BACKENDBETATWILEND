@@ -42,7 +42,7 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 ICD_API_TOKEN_URL = "https://icdaccessmanagement.who.int/connect/token"
 ICD_API_BASE_URL = "https://id.who.int/icd"
 ICD_API_RELEASE_10 = f"{ICD_API_BASE_URL}/release/10/2019"
-ICD_API_RELEASE_11 = f"{ICD_API_BASE_URL}/release/11/2025-01"
+ICD_API_RELEASE_11 = f"{ICD_API_BASE_URL}/release/11/2026-01"
 
 # ═══════════════════════════════════════════════════════════
 # CARGA DE DATOS LOCALES (singleton)
@@ -181,6 +181,15 @@ def buscar_codigo_oficial(codigo: str) -> Optional[dict]:
     if len(code_upper) >= 4 and "." not in codigo:
         with_dot = code_upper[:3] + "." + code_upper[3:]
         variantes.append(with_dot)
+
+    # MinSalud solo usa 1 digito decimal (A00.0). Un OCR que capture un cero
+    # de mas (S82.30 en vez de S82.3) no debe reportarse como no encontrado:
+    # probamos también con el decimal recortado a 1 digito.
+    for var in list(variantes):
+        if "." in var:
+            base, decimales = var.split(".", 1)
+            if len(decimales) > 1:
+                variantes.append(f"{base}.{decimales[0]}")
 
     for var in variantes:
         if var in oficial:

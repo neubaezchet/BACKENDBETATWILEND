@@ -1143,6 +1143,61 @@ class RecobroFila(Base):
     )
 
 
+class Apelacion(Base):
+    """
+    Seguimiento de una apelación o un reintento de radicación — los dos casos
+    en que una incapacidad ya procesada necesita volver a moverse:
+
+      negacion_apelable    → la EPS/ARL negó por un motivo controvertible
+                              (recobro_service.cruce marcó `negada_apelable`,
+                              vía motivos.clasificar_negacion). Referencia
+                              recobro_fila_id / radicacion_cola_id.
+      incompleta_completada → el caso se radicó (o se iba a radicar) incompleto
+                              y ya se completó; hay que volver a radicarlo.
+                              Referencia case_id.
+
+    Esta tabla es solo el seguimiento del caso a caso (quién decidió apelar,
+    con qué justificación, qué pasó). La clasificación de qué es apelable ya
+    la hace motivos.clasificar_negacion; esto no la duplica. El reenvío real al
+    portal sigue pasando por radicacion_cola — aquí solo queda el enlace
+    (radicacion_cola_id) una vez que alguien decide re-radicar.
+    """
+    __tablename__ = 'apelaciones'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    cedula  = Column(String(50), nullable=False, index=True)
+    empresa = Column(String(200), nullable=False, index=True)
+    eps_key = Column(String(100), nullable=False, index=True)
+
+    tipo = Column(String(30), nullable=False, index=True)  # negacion_apelable | incompleta_completada
+
+    case_id            = Column(Integer, ForeignKey('cases.id', ondelete='SET NULL'), nullable=True, index=True)
+    recobro_fila_id    = Column(Integer, ForeignKey('recobro_filas.id', ondelete='SET NULL'), nullable=True, index=True)
+    radicacion_cola_id = Column(Integer, ForeignKey('radicacion_cola.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    motivo_codigo   = Column(String(20), nullable=True)   # NEG-xx del catálogo, si aplica
+    motivo_original = Column(Text, nullable=True)         # texto de rechazo/observación que originó esto
+    justificacion   = Column(Text, nullable=True)         # lo que argumenta el validador para apelar
+    datos_corregidos = Column(JSONB, default=dict)        # campos que cambiaron frente al envío original
+
+    # pendiente → alguien la creó y falta actuar
+    # radicada  → ya se creó un radicacion_cola_id y se reenvió al portal
+    # resuelta  → la EPS respondió tras la apelación/reenvío (ver resultado)
+    # descartada → un validador decidió no apelar (motivo_original explica por qué)
+    estado = Column(String(30), default='pendiente', index=True)
+    resultado = Column(Text, nullable=True)
+
+    creado_por  = Column(String(200), nullable=True)
+    creado_en   = Column(DateTime, default=get_utc_now, index=True)
+    resuelto_en = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('idx_apelacion_cedula_estado', 'cedula', 'estado'),
+        Index('idx_apelacion_empresa_estado', 'empresa', 'estado'),
+    )
+
+
 class RecobroSync(Base):
     """
     Hasta qué fecha está descargado el reporte de cada empresa/EPS/origen.
@@ -1195,6 +1250,13 @@ class WhatsAppConversacion(Base):
     datos_json = Column(JSON, default=dict)  # numero_documento, employee_id, company_id, nombre...
     intentos_confirmacion = Column(Integer, default=0)
     ultimo_message_id = Column(String(100), nullable=True)
+
+    # Última vez que ESTE número nos escribió. De aquí sale si la ventana de
+    # 24 horas de Meta está abierta (texto libre gratis) o cerrada (hay que
+    # mandar plantilla, y esa sí se factura). Va aparte de `updated_at` porque
+    # `updated_at` se mueve con cualquier escritura del bot, y de este dato
+    # depende el costo de cada aviso. Ver app/services/whatsapp_envio.py.
+    ultimo_entrante_en = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=get_utc_now)
     updated_at = Column(DateTime, default=get_utc_now, onupdate=get_utc_now)
@@ -1542,6 +1604,9 @@ def migrar_columnas_browserbase():
             ("radicacion_cola",    "observacion",            "TEXT"),
             ("radicacion_skills",  "agent_id",                "VARCHAR(100)"),
             ("radicacion_skills",  "agent_id_reportes",       "VARCHAR(100)"),
+            # Ventana de 24h de WhatsApp: decide texto libre (gratis) vs.
+            # plantilla (facturada). Ver app/services/whatsapp_envio.py.
+            ("whatsapp_conversaciones", "ultimo_entrante_en",  "TIMESTAMP"),
         ]
         for tabla, col, tipo in migraciones:
             try:

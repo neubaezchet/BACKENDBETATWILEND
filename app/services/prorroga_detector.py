@@ -48,10 +48,16 @@ from pathlib import Path
 # CONSTANTES NORMATIVA COLOMBIANA
 # ═══════════════════════════════════════════════════════════
 
-LIMITE_DIAS_EPS = 180           # Límite EPS (Ley 776/2002)
-LIMITE_DIAS_PENSION = 540       # Límite máximo con concepto favorable
-ALERTA_TEMPRANA_DIAS = 150      # Alertar a los 150 días
-ALERTA_CRITICA_DIAS = 170      # Alerta crítica a los 170 días
+# Los hitos con su texto, su norma y su pagador viven en `catalogo_motivos.json`
+# (HIT-120, HIT-150, HIT-180, HIT-540, HIT-541 y los HIT-LAB del origen laboral),
+# y `linea_tiempo.py` los aplica según el origen de cada cadena. Aquí quedan solo
+# los umbrales que usa el propio detector de cadenas.
+#
+# OJO: 170 NO es un hito legal. Existía como "alerta crítica" y se eliminó: los
+# días que la norma fija son 120, 150, 180 y 540, y avisar en un día inventado
+# hacía perder los dos que sí obligan a la EPS (120 y 150).
+LIMITE_DIAS_EPS = 180           # Cambio de pagador EPS → AFP en origen común
+ALERTA_TEMPRANA_DIAS = 150      # Fecha límite de envío del concepto a la AFP
 
 # Ventana de corte: >30 días sin incapacidad CORTA la cadena de prórroga
 VENTANA_CORTE_PRORROGA = 30    # Máximo días de brecha para mantener cadena activa
@@ -795,7 +801,8 @@ def _es_prorroga_de(caso_anterior: Case, caso_nuevo: Case) -> dict:
         resultado_base["explicacion"] = (
             f"SIN CORRELACIÓN DIAGNÓSTICA: Ambas incapacidades sin código CIE-10. "
             f"No se puede determinar prórroga sin diagnósticos. Brecha: {brecha}d. "
-            f"⚠️ Esperar confirmación de Kactus con códigos CIE-10."
+            f"⚠️ Revisar el OCR de ambos soportes: el diagnóstico sale del certificado, "
+            f"no de un reporte externo."
         )
         return resultado_base
     
@@ -984,47 +991,86 @@ def _detectar_huecos_entre_cadenas(cadenas: List[dict], casos: List[Case]) -> Li
 
 
 def _generar_alertas_180(cadenas: List[dict], cedula: str, nombre: str, huecos: List[dict] = None) -> List[dict]:
-    """Genera alertas cuando las cadenas se acercan a 180 días o se detectan huecos"""
+    """
+    Genera una alerta por hito legal alcanzado o próximo, cadena por cadena.
+
+    Antes esto contaba solo hacia 180 y solo para cadenas con prórroga. Eso
+    dejaba tres huecos que costaban plata:
+
+      - **El día 120 y el 150 no existían.** Son obligaciones de la EPS (emitir
+        el concepto de rehabilitación y enviarlo a la AFP). Si se dejan pasar
+        sin constancia, se pierde el argumento para exigirle a la EPS que siga
+        pagando después del 180.
+      - **El 540 tampoco.** Alguien en el día 600 recibía la misma alerta que
+        alguien en el 181, cuando son responsables de pago distintos.
+      - **Una sola incapacidad larga no alertaba nunca**, porque no era "cadena
+        de prórroga". Una hospitalización de 200 días en un solo certificado
+        pasaba callada.
+
+    Y sobre todo: el cronograma depende del origen. En laboral paga la ARL y no
+    hay traslado al fondo de pensiones, así que alertar "pase a la AFP" en una
+    cadena laboral manda a radicar a la entidad equivocada.
+    """
+    from app.services.linea_tiempo import barra_de_cadena
+
     alertas = []
-    
+
     for cadena in cadenas:
-        if not cadena["es_cadena_prorroga"]:
-            continue
-        
-        dias = cadena["dias_acumulados"]
-        
-        if dias >= LIMITE_DIAS_EPS:
+        barra = barra_de_cadena(cadena)
+        dias = barra["dias_acumulados"]
+        cumplidos = [h for h in barra["hitos"] if h["estado"] == "cumplido"]
+        proximos = [h for h in barra["hitos"] if h["estado"] == "proximo"]
+
+        # Solo el último hito alcanzado: los anteriores ya se avisaron en su
+        # momento y repetirlos convierte la alerta en ruido que nadie abre.
+        relevantes = ([(cumplidos[-1], True)] if cumplidos else []) + \
+                     ([(proximos[0], False)] if proximos else [])
+
+        for hito, alcanzado in relevantes:
             alertas.append({
-                "tipo": "LIMITE_180_SUPERADO",
-                "severidad": "critica",
-                "cadena_id": cadena["id_cadena"],
+                "tipo": hito["codigo"],
+                "severidad": _severidad_hito(hito["codigo"], alcanzado),
+                "cadena_id": barra["cadena_id"],
+                # El diagnóstico va en la alerta porque una persona puede tener
+                # dos cadenas al tiempo: sin él, dos correos del mismo día 150
+                # son indistinguibles en la bandeja de entrada.
+                "diagnostico_base": barra["diagnostico_base"],
+                "hito_codigo": hito["codigo"],
+                "hito_dia": hito["dia"],
+                "hito_alcanzado": alcanzado,
+                "origen": barra["origen"],
+                "etiqueta": barra["etiqueta"],
+                "escala_dias": barra["escala_dias"],
+                "responsable_actual": barra["responsable_actual"],
+                "nota_responsable": barra["nota_responsable"],
                 "dias_acumulados": dias,
-                "dias_excedidos": dias - LIMITE_DIAS_EPS,
-                "mensaje": f"⛔ {nombre} ({cedula}): {dias} días acumulados. SUPERÓ el límite de {LIMITE_DIAS_EPS} días de la EPS. Debe pasar a Fondo de Pensiones.",
-                "normativa": "Ley 776/2002 Art. 3 — Después de 180 días, el Fondo de Pensiones asume al 50%",
-                "codigos_involucrados": cadena["codigos_cie10"],
+                "dias_restantes": None if alcanzado else hito["dias_faltantes"],
+                "dias_excedidos": (dias - hito["dia"]) if alcanzado else None,
+                "fecha_hito": hito["fecha"],
+                "fecha_proyectada": hito["proyectada"],
+                "casos_especiales": hito.get("casos_especiales"),
+                "mensaje": _mensaje_hito(nombre, cedula, barra, hito, alcanzado),
+                "normativa": _normativa_hito(hito["codigo"]),
+                "codigos_involucrados": barra["codigos_cie10"],
             })
-        elif dias >= ALERTA_CRITICA_DIAS:
+
+        # El origen ambiguo se avisa aparte: no es un hito, es que no sabemos a
+        # quién radicarle, y eso hay que resolverlo antes de que llegue el hito.
+        if barra["confianza_origen"] != "alta" and dias >= ALERTA_TEMPRANA_DIAS:
             alertas.append({
-                "tipo": "ALERTA_CRITICA",
+                "tipo": "ORIGEN_AMBIGUO",
                 "severidad": "alta",
-                "cadena_id": cadena["id_cadena"],
+                "cadena_id": barra["cadena_id"],
+                "diagnostico_base": barra["diagnostico_base"],
+                "origen": barra["origen"],
+                "etiqueta": barra["etiqueta"],
                 "dias_acumulados": dias,
-                "dias_restantes": LIMITE_DIAS_EPS - dias,
-                "mensaje": f"🔴 {nombre} ({cedula}): {dias} días acumulados. Quedan {LIMITE_DIAS_EPS - dias} días para el límite de 180. Preparar trámite ante Fondo de Pensiones.",
-                "codigos_involucrados": cadena["codigos_cie10"],
+                "mensaje": (f"⚠️ {nombre} ({cedula}): cadena de {dias} días con origen sin confirmar. "
+                            f"{barra['nota_origen']} De esto depende si se radica a la EPS/AFP o a la ARL."),
+                "normativa": "El cronograma de pago es distinto según el origen: verificar el soporte.",
+                "codigos_involucrados": barra["codigos_cie10"],
             })
-        elif dias >= ALERTA_TEMPRANA_DIAS:
-            alertas.append({
-                "tipo": "ALERTA_TEMPRANA",
-                "severidad": "media",
-                "cadena_id": cadena["id_cadena"],
-                "dias_acumulados": dias,
-                "dias_restantes": LIMITE_DIAS_EPS - dias,
-                "mensaje": f"🟡 {nombre} ({cedula}): {dias} días acumulados. Se acerca al límite de 180 días ({LIMITE_DIAS_EPS - dias} restantes).",
-                "codigos_involucrados": cadena["codigos_cie10"],
-            })
-    
+
     # ⭐ Alertas de prórroga cortada por huecos (>30 días sin incapacidad)
     if huecos:
         for hueco in huecos:
@@ -1045,6 +1091,65 @@ def _generar_alertas_180(cadenas: List[dict], cedula: str, nombre: str, huecos: 
             })
     
     return alertas
+
+
+def _severidad_hito(codigo: str, alcanzado: bool) -> str:
+    """
+    Qué tan urgente es. Lo que define la severidad es si al pasar ese día
+    alguien deja de pagar: el 180 y el 541 cambian de pagador, así que un
+    descuido ahí es una incapacidad sin cobrar.
+    """
+    criticos = {"HIT-180", "HIT-541"}
+    # HIT-LAB-180 va en altos porque la prórroga del subsidio de la ARL hay que
+    # pedirla: si nadie la solicita, el pago se detiene aunque la ARL siga siendo
+    # la responsable.
+    altos = {"HIT-120", "HIT-150", "HIT-540", "HIT-LAB-180", "HIT-LAB-360"}
+    if codigo in criticos:
+        return "critica" if alcanzado else "alta"
+    if codigo in altos:
+        return "alta" if alcanzado else "media"
+    return "media"
+
+
+def _mensaje_hito(nombre: str, cedula: str, barra: dict, hito: dict, alcanzado: bool) -> str:
+    """El texto de la alerta, con el pagador y la fecha puestos."""
+    iconos = {"critica": "⛔", "alta": "🔴", "media": "🟡"}
+    icono = iconos.get(_severidad_hito(hito["codigo"], alcanzado), "🟡")
+    cabeza = f"{icono} {nombre} ({cedula}) — {barra['etiqueta']}"
+
+    if alcanzado:
+        return (f"{cabeza}: {barra['dias_acumulados']} días acumulados en esta cadena. "
+                f"Alcanzó el día {hito['dia']} ({hito['nombre']}). "
+                f"Hoy responde por el pago: {barra['responsable_actual']}. "
+                f"{hito.get('mensaje') or hito.get('descripcion') or ''}").strip()
+
+    cuando = f" (fecha estimada {hito['fecha']})" if hito.get("fecha") else ""
+    return (f"{cabeza}: {barra['dias_acumulados']} días acumulados. Faltan "
+            f"{hito['dias_faltantes']} días para el día {hito['dia']} — {hito['nombre']}{cuando}. "
+            f"{hito.get('mensaje') or hito.get('descripcion') or ''}").strip()
+
+
+def _normativa_hito(codigo: str) -> str:
+    """
+    La norma que sustenta cada hito.
+
+    Antes todas las alertas citaban "Ley 776/2002 Art. 3", que es la ley de
+    **riesgos laborales**: no sustenta nada en una incapacidad de enfermedad
+    general, que es la mayoría. El traslado a la AFP en origen común sale del
+    art. 142 del Decreto Ley 019 de 2012 y del Decreto 1427 de 2022.
+    """
+    from app.services.motivos import motivo
+    from app.services.normas import citar
+
+    h = motivo(codigo)
+    if h.get("articulo"):
+        return citar(h["articulo"])
+    if codigo.startswith("HIT-LAB"):
+        return "Ley 776 de 2002, art. 3 — subsidio a cargo de la ARL, prorrogable hasta por 180 días más."
+    if codigo == "HIT-180":
+        return ("Decreto Ley 019 de 2012, art. 142 (modifica el art. 41 de la Ley 100 de 1993) — "
+                "desde el día 181 el subsidio lo reconoce el fondo de pensiones.")
+    return ""
 
 
 def _generar_resumen(cadenas: List[dict], alertas: List[dict], dias_total: int, huecos: List[dict] = None) -> dict:

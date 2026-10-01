@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 import logging
 
-from app.database import get_db
+from app.database import get_db, AdminUser
+from app.routes.radicacion import get_current_user
+from app.services.linea_tiempo import linea_de_tiempo
 from app.services.cie10_service import (
     buscar_codigo,
     son_correlacionados,
@@ -244,6 +246,47 @@ async def alerta_180_dias(
         }
     except Exception as e:
         logger.error(f"Error alerta 180 {cedula}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/linea-tiempo/{cedula}")
+async def linea_tiempo_empleado(
+    cedula: str,
+    db: Session = Depends(get_db),
+    user: AdminUser = Depends(get_current_user),
+):
+    """
+    📊 Línea de tiempo del empleado: **una barra por cadena**.
+
+    Por qué no es un solo contador: una persona puede tener dos o tres cadenas
+    abiertas al mismo tiempo por patologías distintas, y cada una corre contra
+    su propio cronograma y su propio pagador. Sumarlas dispara alertas de 180
+    días a quien no las ha causado y esconde a quien sí.
+
+    Cada barra trae lo que el frontend necesita para dibujarla:
+
+    - `etiqueta`: lo que va **encima** de la barra — `"180 GENERAL"`,
+      `"180 LABORAL"` o `"LICENCIA"`.
+    - `origen` / `origen_mixto` / `confianza_origen` / `nota_origen`: de esto
+      depende a quién se le radica. Si la confianza no es `"alta"`, la cadena
+      aparece además en `requiere_revision_origen` y hay que confirmarla a mano.
+    - `escala_dias` (540 en común, 360 en laboral) y `avance_pct`.
+    - `tramos`: quién paga en cada segmento, con `inicio_pct`/`ancho_pct` para
+      pintarlos y `activo` en el tramo de hoy.
+    - `hitos`: 120 / 150 / 180 / 540 / 541 en origen común y 180 / 360 en
+      laboral, cada uno con `estado` (`cumplido` | `proximo` | `pendiente`),
+      la fecha (exacta si ya se cruzó, `proyectada: true` si se estimó) y su
+      `posicion_pct` sobre la barra.
+    - `responsable_actual`: quién debe estar pagando hoy esta cadena.
+
+    Todo se arma con el OCR de los propios soportes (`Case`): no depende de que
+    nadie suba el reporte de nómina.
+    """
+    try:
+        analisis = analizar_historial_empleado(db, cedula)
+        return {"ok": True, **linea_de_tiempo(analisis)}
+    except Exception as e:
+        logger.error(f"Error línea de tiempo {cedula}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
