@@ -1383,14 +1383,21 @@ def _encolar_para_radicacion_automatica(
         actor=realizado_por,
         metadata={"cola_id": cola_id},
     )
+    cubierto_por_serial = getattr(caso, "_traslape_bloqueo_total", None)
     resultado_estado["ok"] = True
     resultado_estado["ya_radicado"] = False
     resultado_estado["cola_id"] = cola_id
-    resultado_estado["mensaje"] = (
-        "Caso creado y encolado para que el bot lo radique automáticamente"
-        if cola_id else
-        "Caso creado, pero no hay un bot configurado para esa EPS/empresa — requiere radicación manual"
-    )
+    resultado_estado["traslape_total"] = bool(cubierto_por_serial)
+    if cola_id:
+        mensaje = "Caso creado y encolado para que el bot lo radique automáticamente"
+    elif cubierto_por_serial:
+        mensaje = (
+            f"Caso creado, pero NO se radica: estas fechas ya están completamente "
+            f"cubiertas por la incapacidad {cubierto_por_serial}, ya radicada"
+        )
+    else:
+        mensaje = "Caso creado, pero no hay un bot configurado para esa EPS/empresa — requiere radicación manual"
+    resultado_estado["mensaje"] = mensaje
     return resultado_estado
 
 

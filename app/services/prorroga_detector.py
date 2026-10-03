@@ -116,8 +116,13 @@ def _validar_ruptura_prorroga(codigo_a: str, codigo_b: str, dias_entre: int) -> 
             resultado["confianza_oms"] = validacion_oms.get("confianza_oms", 0)
             nivel_oms = validacion_oms.get("nivel_oms", "")
             
-            # ⭐ OMS dice que ROMPE prórroga
-            if nivel_oms == "EXCLUIDO_OMS" or validacion_oms.get("confianza_oms", 0) == 0:
+            # ⭐ OMS encontró una EXCLUSIÓN real (incompatibilidad activa) → rompe prórroga.
+            # OJO: "confianza_oms == 0" por sí solo NO es exclusión, es que el mapeo
+            # MinSalud CIE-10↔CIE-11 no tiene datos de este par (ausencia de evidencia,
+            # no evidencia de ausencia). Si se trata igual que EXCLUIDO_OMS, un vacío de
+            # datos del mapeo genérico termina pisando una correlación clínica local
+            # fuerte y documentada (p.ej. grupo_correlacion con respaldo GATISO/GPC).
+            if nivel_oms == "EXCLUIDO_OMS":
                 resultado["puede_ser_prorroga"] = False
                 resultado["razon_ruptura"] = (
                     f"OMS RECHAZA PRÓRROGA: {validacion_oms.get('razon_oms', '')}. "
@@ -126,9 +131,10 @@ def _validar_ruptura_prorroga(codigo_a: str, codigo_b: str, dias_entre: int) -> 
                 resultado["fuente"] = "OMS"
                 resultado["cita_legal"] = validacion_oms.get("cita_legal_oms", "")
                 return resultado
-            
-            # OMS dice que SÍ correlaciona (98%, 92%, 85%, 75%, etc.)
-            # Continuar a validación local como confirmación
+
+            # OMS dice que SÍ correlaciona, o no tiene datos (confianza 0 sin exclusión
+            # explícita) → continuar a validación local, que tiene su propio umbral
+            # (umbral_posible_prorroga) como filtro real contra falsos positivos.
     
     except Exception as e:
         pass  # Si OMS falla, continuar con reglas locales
@@ -658,6 +664,20 @@ def _detectar_cadenas_prorroga(casos: List[Case]) -> List[dict]:
         cadena["total_incapacidades_cadena"] = 1 + len(cadena["prorrogas"])
         cadena["es_cadena_prorroga"] = len(cadena["prorrogas"]) > 0
         cadena["total_huecos_ignorados"] = len(cadena["huecos_ignorados"])
+
+        # Causa real de la cadena: todo caso dentro de ella hereda la del caso
+        # inicial (ver _causa_de_cadena). Se sobreescribe en cada dict de caso
+        # para que cualquier consumidor (Excel, Power BI, linea_tiempo) lea
+        # siempre el valor ya heredado sin tener que repetir esta lógica.
+        causa = _causa_de_cadena(cadena)
+        cadena["origen_determinado"] = causa["origen_determinado"]
+        cadena["motivo_causa"] = causa["motivo_causa"]
+        cadena["causa_fuente_serial"] = causa["causa_fuente_serial"]
+        cadena["caso_inicial"]["origen_determinado"] = causa["origen_determinado"]
+        cadena["caso_inicial"]["motivo_causa"] = causa["motivo_causa"]
+        for p in cadena["prorrogas"]:
+            p["origen_determinado"] = causa["origen_determinado"]
+            p["motivo_causa"] = causa["motivo_causa"]
         
         # Serializar fechas
         cadena["fecha_inicio_cadena"] = cadena["fecha_inicio_cadena"].isoformat() if cadena["fecha_inicio_cadena"] else None
@@ -1290,4 +1310,40 @@ def _caso_a_dict(caso: Case) -> dict:
         "tipo": caso.tipo.value if caso.tipo else None,
         "es_prorroga_db": caso.es_prorroga,
         "numero_incapacidad": caso.numero_incapacidad,
+        # Causa real propia de ESTE caso (antes de heredar la de la cadena) —
+        # ver calificador_service.py. _causa_de_cadena() la puede sobreescribir
+        # más abajo si el caso termina siendo prórroga correlacionada de otro.
+        "origen_determinado": getattr(caso, "origen_determinado", None),
+        "motivo_causa": getattr(caso, "motivo_causa", None),
     }
+
+
+def _causa_de_cadena(cadena: dict) -> dict:
+    """
+    Causa real que le corresponde a TODA la cadena: todo lo que está dentro de
+    `cadena["prorrogas"]` ya es, por construcción, una prórroga correlacionada
+    del caso inicial (si no correlacionara, _detectar_cadenas_prorroga la
+    habría puesto en su propia cadena). Por eso la causa manda desde el caso
+    inicial y se hereda sin volver a preguntarle a la IA — una prórroga de
+    "caída en el puesto de trabajo" (ej. dolor articular derivado) nunca debe
+    aparecer como "general" solo porque, leída sola, su propio resumen no lo diga.
+
+    Si el caso inicial no tiene causa determinada (no hubo capa 2, o el soporte
+    no traía resumen legible), se usa la primera prórroga de la cadena que sí
+    la tenga — mejor una causa real tardía que ninguna.
+    """
+    caso_inicial = cadena.get("caso_inicial") or {}
+    if caso_inicial.get("origen_determinado") or caso_inicial.get("motivo_causa"):
+        return {
+            "origen_determinado": caso_inicial.get("origen_determinado"),
+            "motivo_causa": caso_inicial.get("motivo_causa"),
+            "causa_fuente_serial": caso_inicial.get("serial"),
+        }
+    for p in cadena.get("prorrogas") or []:
+        if p.get("origen_determinado") or p.get("motivo_causa"):
+            return {
+                "origen_determinado": p.get("origen_determinado"),
+                "motivo_causa": p.get("motivo_causa"),
+                "causa_fuente_serial": p.get("serial"),
+            }
+    return {"origen_determinado": None, "motivo_causa": None, "causa_fuente_serial": None}

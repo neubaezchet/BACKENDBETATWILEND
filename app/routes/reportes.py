@@ -862,9 +862,20 @@ async def powerbi_analisis_persona(
         # Análisis de prórrogas completo
         analisis = analizar_historial_empleado(db, cedula)
         
-        # Determinar qué seriales son prórroga según el análisis de cadenas
+        # Determinar qué seriales son prórroga según el análisis de cadenas, y
+        # de paso la causa real por serial (ya heredada por cadena — ver
+        # prorroga_detector._causa_de_cadena): toda la cadena muestra la causa
+        # de su caso inicial, salvo que no se haya podido determinar ninguna.
         seriales_prorroga = set()
+        causa_por_serial = {}
         for cadena in analisis.get("cadenas_prorroga", []):
+            casos_cadena = [cadena.get("caso_inicial") or {}] + list(cadena.get("prorrogas") or [])
+            for p in casos_cadena:
+                if p.get("serial"):
+                    causa_por_serial[p["serial"]] = {
+                        "origen_determinado": cadena.get("origen_determinado"),
+                        "motivo_causa": cadena.get("motivo_causa"),
+                    }
             for p in cadena.get("prorrogas", []):
                 if p.get("serial"):
                     seriales_prorroga.add(p["serial"])
@@ -885,6 +896,7 @@ async def powerbi_analisis_persona(
             if c.fecha_inicio_kactus and c.fecha_fin_kactus:
                 dias_val = (c.fecha_fin_kactus.date() - c.fecha_inicio_kactus.date()).days + 1
 
+            causa_c = causa_por_serial.get(c.serial) or {}
             timeline.append({
                 "serial": c.serial,
                 "fecha_inicio": fi.strftime("%Y-%m-%d") if fi else None,
@@ -899,6 +911,8 @@ async def powerbi_analisis_persona(
                 "empresa": empresa_obj.nombre if empresa_obj else "",
                 "eps": eps_valor,
                 "numero_incapacidad": c.numero_incapacidad or "",
+                "origen_determinado": causa_c.get("origen_determinado") or c.origen_determinado or "",
+                "motivo_causa": causa_c.get("motivo_causa") or c.motivo_causa or "",
             })
 
         # Construir gaps entre incapacidades consecutivas

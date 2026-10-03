@@ -67,6 +67,7 @@ DOC_A_CHECK_FALTANTE = {
 }
 
 _RANK_DECISION = {"ACEPTAR": 0, "REVISAR": 1, "RECHAZAR": 2}
+_ORIGENES_VALIDOS = {"laboral", "comun", "transito", "licencia"}
 
 _PROMPT_LAYER2 = """Eres un auditor experto en soportes de incapacidad laboral en Colombia.
 Analiza el texto OCR de un soporte ya radicado y determina, con base en las reglas dadas,
@@ -101,11 +102,22 @@ Responde SOLO con un JSON válido (sin markdown, sin explicaciones fuera del JSO
   "documentos_detectados": {{"<doc>": true|false, ...}},
   "entidad_formato_transcrito": "nombre de entidad o null si no aplica",
   "semanas_gestacion_detectadas": true|false,
-  "posible_incapacidad_duplicada": true|false
+  "posible_incapacidad_duplicada": true|false,
+  "origen_determinado": "laboral" | "comun" | "transito" | "licencia" | null,
+  "motivo_causa": "frase corta en español con la causa real, ej. 'Caída en el puesto de trabajo' o null"
 }}
 
 "documentos_detectados" debe traer una entrada por cada documento de la lista de requeridos,
-indicando si tu lectura del texto OCR confirma que ese documento SÍ está presente en el soporte."""
+indicando si tu lectura del texto OCR confirma que ese documento SÍ está presente en el soporte.
+
+"origen_determinado" y "motivo_causa" son la causa REAL de la incapacidad, leída del resumen
+de atención/epicrisis/historia clínica (NUNCA de lo que el formulario declaró): "laboral" si el
+resumen describe un accidente de trabajo o enfermedad laboral, "transito" si fue un accidente de
+tránsito, "licencia" si es maternidad/paternidad, "comun" en cualquier otro caso (enfermedad
+general). "motivo_causa" es una frase corta y concreta de QUÉ pasó según el resumen (ej. "Caída
+en el puesto de trabajo", "Accidente de tránsito en moto", "Cuadro gripal"), no un diagnóstico
+médico ni un código CIE-10. Si el texto OCR no trae resumen de atención o no permite inferirlo
+con certeza, responde null en ambos — nunca inventes una causa que el texto no sustente."""
 
 
 def _extraer_texto_ocr(metadata: dict) -> str:
@@ -283,6 +295,8 @@ def evaluar_caso(caso_id: int, db: Session) -> dict:
 
         layer1 = _evaluar_layer1(caso, metadata, plano, texto_ocr)
         capas_ejecutadas = ["layer1"]
+        origen_determinado_ia = None
+        motivo_causa_ia = None
 
         if layer1["entidad_formato_transcrito"]:
             decision = "ACEPTAR"
@@ -312,6 +326,14 @@ def evaluar_caso(caso_id: int, db: Session) -> dict:
                     if "R01" not in reglas_fallidas:
                         reglas_fallidas.append("R01")
                     decision = "RECHAZAR"
+
+                # Causa real leída del resumen/epicrisis (ver _PROMPT_LAYER2). Se
+                # valida contra el vocabulario conocido para no persistir una
+                # alucinación del modelo como si fuera un origen válido.
+                origen_crudo = (layer2.get("origen_determinado") or "").strip().lower()
+                if origen_crudo in _ORIGENES_VALIDOS:
+                    origen_determinado_ia = origen_crudo
+                motivo_causa_ia = (layer2.get("motivo_causa") or "").strip() or None
             else:
                 decision = "REVISAR" if layer1["reglas_fallidas"] else "ACEPTAR"
                 motivo = " ".join(layer1["motivos"]) or "Sin observaciones automáticas (solo capa de código, IA de lectura no disponible)."
@@ -338,6 +360,14 @@ def evaluar_caso(caso_id: int, db: Session) -> dict:
             "entidad_formato_transcrito": layer1["entidad_formato_transcrito"],
             "capas_ejecutadas": capas_ejecutadas,
         }
+
+        # Causa real (solo si la capa 2 corrió y el resumen permitió inferirla):
+        # se persiste en el propio Case para que prorroga_detector.py la pueda
+        # heredar dentro de una cadena y el reporte Excel la pueda exportar sin
+        # tener que releer datos_extraidos de cada ResultadoValidacion.
+        if origen_determinado_ia or motivo_causa_ia:
+            caso.origen_determinado = origen_determinado_ia
+            caso.motivo_causa = motivo_causa_ia
 
         existente = db.query(ResultadoValidacion).filter(ResultadoValidacion.caso_id == caso.id).first()
         if existente:

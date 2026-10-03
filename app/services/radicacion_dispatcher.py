@@ -163,6 +163,10 @@ def _aplicar_traslape_si_corresponde(db: Session, caso: Case) -> bool:
                 f"(ya radicada {anterior.fecha_inicio.date() if anterior.fecha_inicio else '?'}–"
                 f"{anterior.fecha_fin.date()}) — no se radica"
             )
+            # Marca transitoria (no es columna de BD) para que el llamador pueda
+            # distinguir "no se radica por traslape total" de "no hay bot
+            # configurado" — ambos hacen que encolar_caso() devuelva None.
+            caso._traslape_bloqueo_total = anterior.serial
             try:
                 from app.validador import registrar_evento
                 registrar_evento(db, caso.id, "traslape_totalmente_cubierto",

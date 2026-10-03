@@ -277,16 +277,30 @@ class ReporteService:
             # Obtener todos los casos
             casos = query.all()
             
-            # Detectar prórrogas reales por análisis de cadenas
+            # Detectar prórrogas reales por análisis de cadenas, y de paso la
+            # causa real por cadena (origen_determinado/motivo_causa, ya
+            # heredada por prorroga_detector._causa_de_cadena): toda prórroga
+            # correlacionada muestra la causa del caso que inició su cadena,
+            # mientras que una incapacidad no correlacionada (cadena propia)
+            # muestra la suya propia — ver prorroga_detector.py.
             cedulas_unicas = list(set(c.cedula for c in casos if c.cedula))
             seriales_prorroga = set()
+            causa_por_serial = {}
             for ced in cedulas_unicas:
                 try:
                     analisis = analizar_historial_empleado(db, ced)
                     for cadena in analisis.get("cadenas_prorroga", []):
-                        for p in cadena.get("prorrogas", []):
-                            if p.get("serial"):
-                                seriales_prorroga.add(p["serial"])
+                        casos_cadena = [cadena.get("caso_inicial") or {}] + list(cadena.get("prorrogas") or [])
+                        for p in casos_cadena:
+                            serial = p.get("serial")
+                            if not serial:
+                                continue
+                            if p is not (cadena.get("caso_inicial") or {}):
+                                seriales_prorroga.add(serial)
+                            causa_por_serial[serial] = {
+                                "origen_determinado": cadena.get("origen_determinado"),
+                                "motivo_causa": cadena.get("motivo_causa"),
+                            }
                 except Exception:
                     pass
             
@@ -306,6 +320,17 @@ class ReporteService:
                     dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
                     dia_semana = dias[caso.created_at.weekday()]
 
+                causa_caso = causa_por_serial.get(caso.serial) or {}
+                origen_causa = causa_caso.get("origen_determinado") or (caso.origen_determinado if hasattr(caso, "origen_determinado") else None)
+                motivo_causa_txt = causa_caso.get("motivo_causa") or (caso.motivo_causa if hasattr(caso, "motivo_causa") else None)
+                _ETIQUETA_ORIGEN_CAUSA = {"laboral": "Laboral", "comun": "General", "transito": "Tránsito", "licencia": "Licencia"}
+                if origen_causa and motivo_causa_txt:
+                    causa_txt = f"{_ETIQUETA_ORIGEN_CAUSA.get(origen_causa, origen_causa.capitalize())}: {motivo_causa_txt}"
+                elif origen_causa:
+                    causa_txt = _ETIQUETA_ORIGEN_CAUSA.get(origen_causa, origen_causa.capitalize())
+                else:
+                    causa_txt = ""
+
                 datos.append({
                     "SERIAL": caso.serial or f"CASO-{caso.id}",
                     "CEDULA": caso.cedula or "",
@@ -319,6 +344,7 @@ class ReporteService:
                     "EPS": caso.eps or (caso.empleado.eps if caso.empleado and caso.empleado.eps else ""),
                     "CODIGO CIE10": caso.codigo_cie10 or "",
                     "DIAGNOSTICO": caso.diagnostico or "",
+                    "CAUSA": causa_txt,
                     "ES PRORROGA": "SI" if (caso.serial in seriales_prorroga or caso.es_prorroga) else "NO",
                     "FECHA ENVIO": _formatear_fecha_segura(caso.created_at),
                     "DIA ENVIO": dia_semana,

@@ -211,6 +211,15 @@ class Case(Base):
     codigo_cie10 = Column(String(20))
     es_prorroga = Column(Boolean, default=False)
     numero_incapacidad = Column(String(50))
+
+    # ✅ CAUSA REAL (ver app/calificador_service.py, capa 2) — origen inferido por
+    # IA a partir del resumen de atención/epicrisis (ground truth), independiente
+    # de lo que declaró el formulario. "laboral" | "comun" | "transito" | "licencia".
+    # Una prórroga correlacionada hereda esto del caso inicial de su cadena (ver
+    # app/services/prorroga_detector.py, _causa_de_cadena) — nunca se recalcula
+    # por separado para no contradecir al caso que originó la cadena.
+    origen_determinado = Column(String(20), nullable=True)
+    motivo_causa = Column(Text, nullable=True)
     # dias_kactus, medico_tratante, institucion_origen, diagnostico_kactus eliminados - no vienen del Excel Kactus
     
     # ✅ COLUMNA HISTÓRICO - Marca casos históricos que no deben aparecer en dashboard/reportes en vivo
@@ -1397,6 +1406,9 @@ def init_db():
         # ✅ Migrar columnas de Browserbase en empresa_bot_config (seguro de re-ejecutar)
         migrar_columnas_browserbase()
 
+        # ✅ Migrar columnas de causa real (origen_determinado/motivo_causa) (seguro de re-ejecutar)
+        migrar_columnas_causa()
+
         # ✅ Seed de reglas de calificación IA + índice vectorial (seguro de re-ejecutar)
         migrar_reglas_validacion_ia()
 
@@ -1925,6 +1937,45 @@ def migrar_columnas_eps_tracking():
         return True
     except Exception as e:
         print(f"❌ Error en migración de verificación de EPS: {e}")
+        return False
+
+
+def migrar_columnas_causa():
+    """
+    Agrega a cases las columnas de causa real (origen_determinado/motivo_causa),
+    pobladas por el calificador IA (app/calificador_service.py) a partir del
+    resumen de atención/epicrisis. Ver app/services/prorroga_detector.py para
+    cómo se heredan dentro de una cadena de prórrogas.
+    Seguro de re-ejecutar (IF NOT EXISTS en PostgreSQL).
+    """
+    try:
+        db = SessionLocal()
+        print("🔄 Migrando columnas de causa real (origen_determinado/motivo_causa)...")
+
+        columnas = [
+            ("cases", "origen_determinado", "VARCHAR(20)"),
+            ("cases", "motivo_causa",       "TEXT"),
+        ]
+        for tabla, col, tipo in columnas:
+            try:
+                if database_url.startswith("sqlite"):
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT"))
+                else:
+                    db.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {col} {tipo}"))
+                print(f"   ✅ Columna '{col}' en {tabla} agregada")
+            except Exception as e:
+                msg = str(e).lower()
+                if "duplicate column" in msg or "already exists" in msg:
+                    print(f"   ℹ️  Columna '{col}' en {tabla} ya existe")
+                else:
+                    print(f"   ⚠️  {tabla}.{col}: {e}")
+
+        db.commit()
+        print("✅ Migración de causa real completada")
+        db.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error en migración de causa real: {e}")
         return False
 
 
